@@ -19,7 +19,8 @@ committed (see `REVISION_PLAN.md` for per-revision status + gates).
    - lint/format (`uv run ruff check`, `uv run ruff format --check`, seconds)
    - unit/shape smoke tests (`uv run pytest`, ~20s)
    - 2048-step trainer smoke (seconds to a minute)
-   - `parallel_api_test` + `dummy.py` (contract regressions)
+   - PettingZoo `parallel_api_test` via `src.dummy:make_env` + `dummy.py`
+     (contract regressions; also run in CI)
    - scripted-curriculum revalidation (mechanics regressions, ~1 min)
 
 Only after all of those pass, launch a real training run.
