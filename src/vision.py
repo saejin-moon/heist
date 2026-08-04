@@ -97,6 +97,142 @@ def line_is_clear(grid, r0, c0, r1, c1, wall_val, door_val):
             return False
 
 
+@njit(cache=True)
+def bfs_next_step(grid, start_r, start_c, target_r, target_c, wall_val, door_val):
+    """Return the first shortest-path step as ``(row, col)`` or ``(-1, -1)``.
+
+    This is deliberately BFS, rather than A*: movement has uniform cost and
+    the action ordering matches ``ACTION_DELTAS`` (up, down, left, right).
+    Fixed-size NumPy arrays avoid the per-search Python ``deque``/``dict``
+    allocations that made guard movement expensive on large maps.
+    """
+    if start_r == target_r and start_c == target_c:
+        return -1, -1
+
+    height, width = grid.shape
+    size = height * width
+    previous = np.full(size, -2, dtype=np.int32)
+    queue = np.empty(size, dtype=np.int32)
+    head = 0
+    tail = 1
+    start = start_r * width + start_c
+    target = target_r * width + target_c
+    queue[0] = start
+    previous[start] = -1
+
+    while head < tail:
+        current = queue[head]
+        head += 1
+        if current == target:
+            break
+        row = current // width
+        col = current % width
+        for direction in range(4):
+            if direction == 0:
+                nr, nc = row - 1, col
+            elif direction == 1:
+                nr, nc = row + 1, col
+            elif direction == 2:
+                nr, nc = row, col - 1
+            else:
+                nr, nc = row, col + 1
+            if nr < 0 or nr >= height or nc < 0 or nc >= width:
+                continue
+            neighbor = nr * width + nc
+            if previous[neighbor] != -2:
+                continue
+            tile = grid[nr, nc]
+            if tile in (wall_val, door_val):
+                continue
+            previous[neighbor] = current
+            queue[tail] = neighbor
+            tail += 1
+
+    if previous[target] == -2:
+        return -1, -1
+    current = target
+    while previous[current] != start:
+        current = previous[current]
+        if current < 0:
+            return -1, -1
+    return current // width, current % width
+
+
+@njit(cache=True)
+def distance_to_nearest_target(grid, targets, wall_val, door_val):
+    """Return a walkable-cell distance field seeded by every target.
+
+    A single multi-source BFS lets all converging guards follow an optimal
+    route to their nearest reachable agent rather than running one BFS per
+    guard.  ``-1`` marks walls, doors, and unreachable cells.
+    """
+    height, width = grid.shape
+    distance = np.full((height, width), -1, dtype=np.int32)
+    queue = np.empty(height * width, dtype=np.int32)
+    head = 0
+    tail = 0
+    for i in range(targets.shape[0]):
+        row = targets[i, 0]
+        col = targets[i, 1]
+        if row < 0 or row >= height or col < 0 or col >= width:
+            continue
+        if distance[row, col] == -1:
+            distance[row, col] = 0
+            queue[tail] = row * width + col
+            tail += 1
+
+    while head < tail:
+        current = queue[head]
+        head += 1
+        row = current // width
+        col = current % width
+        for direction in range(4):
+            if direction == 0:
+                nr, nc = row - 1, col
+            elif direction == 1:
+                nr, nc = row + 1, col
+            elif direction == 2:
+                nr, nc = row, col - 1
+            else:
+                nr, nc = row, col + 1
+            if nr < 0 or nr >= height or nc < 0 or nc >= width:
+                continue
+            if distance[nr, nc] != -1:
+                continue
+            tile = grid[nr, nc]
+            if tile in (wall_val, door_val):
+                continue
+            distance[nr, nc] = distance[row, col] + 1
+            queue[tail] = nr * width + nc
+            tail += 1
+    return distance
+
+
+@njit(cache=True)
+def next_step_from_distance(distance, row, col):
+    """Pick the first adjacent cell that reduces a BFS distance field."""
+    current_distance = distance[row, col]
+    if current_distance <= 0:
+        return -1, -1
+    height, width = distance.shape
+    for direction in range(4):
+        if direction == 0:
+            nr, nc = row - 1, col
+        elif direction == 1:
+            nr, nc = row + 1, col
+        elif direction == 2:
+            nr, nc = row, col - 1
+        else:
+            nr, nc = row, col + 1
+        if (
+            0 <= nr < height
+            and 0 <= nc < width
+            and distance[nr, nc] == current_distance - 1
+        ):
+            return nr, nc
+    return -1, -1
+
+
 def camera_exposure(
     grid, camera_positions, agent_positions, wall_val=WALL, door_val=DOOR, max_range=12
 ):

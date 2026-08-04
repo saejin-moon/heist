@@ -145,14 +145,28 @@ if ! uv run python -c "import torch; raise SystemExit(0 if torch.cuda.is_availab
     exit 1
 fi
 
-# ── 7. smoke test at the real batch shape ────────────────────────────
+# ── 7. smoke tests at the real batch shape ───────────────────────────
 if [ "$SKIP_SMOKE" -eq 0 ]; then
-    step "7/8  GPU smoke (2048 steps, 8 envs x 256, no checkpoint)"
+    step "7/8  GPU smokes (campaign shapes, no checkpoints)"
     uv run python src/train_ippo.py \
         --total-timesteps 2048 --num-envs 8 --num-steps 256 \
         --eval-every 1000000000 --no-save-model --seed 0 \
         --env-config "$STAGE0" --exp-name smoke_assess
     rm -rf runs/smoke_assess_s0
+    uv run python src/train_mappo.py \
+        --total-timesteps 2048 --num-envs 8 --num-steps 256 \
+        --eval-every 1000000000 --no-save-model --seed 0 \
+        --env-config "$STAGE0" --exp-name smoke_mappo
+    rm -rf runs/smoke_mappo_s0
+    uv run python src/train_qmix.py \
+        --total-steps 2048 --learning-starts 128 --train-freq 4 --eval-every 0 --seed 0 \
+        --env-config "$STAGE0" --exp-name smoke_qmix
+    rm -rf runs/smoke_qmix_s0 checkpoints/smoke_qmix_s0
+    uv run python src/train_comm.py \
+        --total-steps 2048 --num-envs 8 --num-steps 256 \
+        --eval-every 1000000000 --comm-diagnostic-every 0 --seed 0 \
+        --env-config "$STAGE0" --exp-name smoke_comm
+    rm -rf runs/smoke_comm_s0
     log "smoke OK"
 else
     step "7/8  GPU smoke (skipped)"

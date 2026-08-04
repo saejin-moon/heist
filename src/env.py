@@ -32,7 +32,14 @@ from pettingzoo import ParallelEnv
 
 from constants import *
 from map_gen import generate_procedural_map
-from vision import calculate_fov, camera_exposure, line_is_clear
+from vision import (
+    bfs_next_step,
+    calculate_fov,
+    camera_exposure,
+    distance_to_nearest_target,
+    line_is_clear,
+    next_step_from_distance,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +256,7 @@ class HeistEnv(ParallelEnv):
         for agent in self.possible_agents:
             self._reveal_around(agent, self.config["agent_vision"])
 
-        observations = {a: self._get_obs(a) for a in self.agents}
+        observations = self._get_all_obs()
         infos = {a: {} for a in self.agents}
         return observations, infos
 
@@ -339,7 +346,7 @@ class HeistEnv(ParallelEnv):
             for a in self.agents
         }
 
-        observations = {a: self._get_obs(a) for a in self.agents}
+        observations = self._get_all_obs()
 
         # PettingZoo: once the episode is over, drop the agent handles
         if any(terminations.values()) or any(truncations.values()):
@@ -725,6 +732,15 @@ class HeistEnv(ParallelEnv):
                        into a BFS hunt for the nearest agent.
         """
         converge = self.alarm >= self.config["converge_alarm"]
+        # In converge mode all guards pursue the nearest agent.  One
+        # multi-source BFS produces the exact shortest-path distance for every
+        # guard cell, replacing N identical full-grid searches per frame.
+        converge_distance = None
+        if converge:
+            targets = np.asarray(list(self.agent_positions.values()), dtype=np.int32)
+            converge_distance = distance_to_nearest_target(
+                self.grid, targets, WALL, DOOR
+            )
         new_positions = []
         for gi, (gr, gc) in enumerate(self.guard_positions):
             if self.neutralized[gi] > 0:
@@ -755,10 +771,11 @@ class HeistEnv(ParallelEnv):
 
             state = self.guard_states[gi]
             if state == "converge":
+                nr, nc = next_step_from_distance(converge_distance, gr, gc)
+                nxt = None if nr < 0 else (int(nr), int(nc))
                 target = min(
                     self.agent_positions.values(), key=lambda p: manhattan(p, (gr, gc))
                 )
-                nxt = self._bfs_next(gr, gc, target)
                 new_positions.append(
                     nxt
                     if nxt is not None
@@ -816,35 +833,8 @@ class HeistEnv(ParallelEnv):
         straight-line step a dead end; a full BFS on a 50x50 map is ~2500 cells
         and trivially cheap at 6 guards/frame.
         """
-        if (gr, gc) == target:
-            return None
-        from collections import deque
-
-        prev = {}
-        q = deque([(gr, gc)])
-        seen = {(gr, gc)}
-        while q:
-            r, c = q.popleft()
-            if (r, c) == target:
-                # walk back to the first step after the start
-                cur = (r, c)
-                while prev.get(cur) is not None and prev.get(prev.get(cur)) is not None:
-                    cur = prev[cur]
-                return prev[cur] if cur != (gr, gc) else cur
-            for dr, dc in ACTION_DELTAS.values():
-                if dr == 0 and dc == 0:
-                    continue
-                nr, nc = r + dr, c + dc
-                if not (0 <= nr < self.map_h and 0 <= nc < self.map_w):
-                    continue
-                tile = self.grid[nr, nc]
-                if tile in (WALL, DOOR):
-                    continue
-                if (nr, nc) not in seen:
-                    seen.add((nr, nc))
-                    prev[(nr, nc)] = (r, c)
-                    q.append((nr, nc))
-        return None
+        nr, nc = bfs_next_step(self.grid, gr, gc, target[0], target[1], WALL, DOOR)
+        return None if nr < 0 else (int(nr), int(nc))
 
     def _check_caught(self):
         for gi, gpos in enumerate(self.guard_positions):
@@ -954,43 +944,51 @@ class HeistEnv(ParallelEnv):
                     mask[:4] = 0
         return mask
 
-    def _get_obs(self, agent):
+    def _get_all_obs(self):
+        """Build all local observations from one dynamic-grid composition.
+
+        The static map and explored mask are shared by every agent.  Drawing
+        dynamic entities and padding those arrays once avoids four full-grid
+        copies and eight ``np.pad`` calls per environment step.
+        """
         composite = self.grid.copy()
         for gi, gpos in enumerate(self.guard_positions):
             if self.neutralized[gi] == 0:
                 composite[gpos[0], gpos[1]] = GUARD
-        for other, opos in self.agent_positions.items():
-            if other != agent:
-                composite[opos[0], opos[1]] = ALLY
-
-        pos = self.agent_positions[agent]
+        for opos in self.agent_positions.values():
+            composite[opos[0], opos[1]] = ALLY
         pad = OBSERVATION_SIZE[0] // 2  # 2 -> 5x5 window
         pad_grid = np.pad(
             composite, pad_width=pad, mode="constant", constant_values=WALL
         )
-        vpos = (pos[0] + pad, pos[1] + pad)
-        obs = pad_grid[
-            vpos[0] - pad : vpos[0] + pad + 1, vpos[1] - pad : vpos[1] + pad + 1
-        ]
-
         pad_explored = np.pad(
             self.explored_map, pad_width=pad, mode="constant", constant_values=False
         )
-        obs_explored = pad_explored[
-            vpos[0] - pad : vpos[0] + pad + 1, vpos[1] - pad : vpos[1] + pad + 1
-        ]
-        masked = np.where(obs_explored, obs, FOG)
+        observations = {}
+        for agent in self.agents:
+            pos = self.agent_positions[agent]
+            vpos = (pos[0] + pad, pos[1] + pad)
+            obs = pad_grid[
+                vpos[0] - pad : vpos[0] + pad + 1,
+                vpos[1] - pad : vpos[1] + pad + 1,
+            ].copy()
+            # The focal agent is intentionally transparent, matching the old
+            # per-agent composite without rebuilding an entire map per agent.
+            obs[pad, pad] = self.grid[pos[0], pos[1]]
+            obs_explored = pad_explored[
+                vpos[0] - pad : vpos[0] + pad + 1,
+                vpos[1] - pad : vpos[1] + pad + 1,
+            ]
+            observations[agent] = {
+                "observation": np.where(obs_explored, obs, FOG),
+                "action_mask": self._action_mask(agent),
+                "role_id": np.array(ROLE_ONEHOT[agent], dtype=np.int8),
+            }
+        return observations
 
-        mask = self._action_mask(agent)
-
-        # REV-2: one-hot role identity emitted alongside the local observation
-        # so that shared policies can tell which role they are controlling.
-        # REV-7 (REVISION_PLAN.md §6): global_state removed from per-agent obs.
-        # Phase A baseline agents navigate purely from local 5x5 view + fog.
-        # Phase B comm agents learn to share phase status via TarMAC messages.
-        role_id = np.array(ROLE_ONEHOT[agent], dtype=np.int8)
-
-        return {"observation": masked, "action_mask": mask, "role_id": role_id}
+    def _get_obs(self, agent):
+        """Return one observation for callers that use the legacy helper."""
+        return self._get_all_obs()[agent]
 
     def state(self):
         """Rich global state for centralized critics (MAPPO) / QMIX mixing.

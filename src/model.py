@@ -93,8 +93,7 @@ class HeistAgent(nn.Module):
         x = self._process_inputs(obs, role_id)
         logits = self.actor(x)
 
-        HUGE_NEG = torch.tensor(-1e9, device=logits.device)
-        masked_logits = torch.where(action_mask == 1, logits, HUGE_NEG)
+        masked_logits = logits.masked_fill(action_mask != 1, -1e9)
 
         probs = Categorical(logits=masked_logits)
         if action is None:
@@ -133,8 +132,7 @@ class MappoAgent(nn.Module):
     def get_action_and_value(self, obs, role_id, action_mask, state, action=None):
         x = torch.cat((torch.flatten(obs, start_dim=1).float(), role_id.float()), dim=1)
         logits = self.actor(x)
-        HUGE_NEG = torch.tensor(-1e9, device=logits.device)
-        masked_logits = torch.where(action_mask == 1, logits, HUGE_NEG)
+        masked_logits = logits.masked_fill(action_mask != 1, -1e9)
         probs = Categorical(logits=masked_logits)
         if action is None:
             action = probs.sample()
@@ -398,8 +396,7 @@ class CommAgent(nn.Module):
 
         # flatten masks
         flat_mask = torch.cat(action_mask_list, dim=0)  # [B*n, ACTION_DIM]
-        HUGE_NEG = torch.tensor(-1e9, device=logits.device)
-        masked_logits = torch.where(flat_mask == 1, logits, HUGE_NEG)
+        masked_logits = logits.masked_fill(flat_mask != 1, -1e9)
         probs = Categorical(logits=masked_logits)
 
         actions = probs.sample().view(B, n) if action is None else action

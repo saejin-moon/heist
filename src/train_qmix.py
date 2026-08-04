@@ -37,6 +37,7 @@ from constants import (
 )
 from env import AGENTS, HeistEnv, parse_env_config
 from model import QMixMixing, QNetwork
+from ppo_utils import write_completion
 
 
 @dataclass
@@ -81,7 +82,12 @@ def parse_args():
     p.add_argument("--eval-every", type=int, default=Args.eval_every)
     p.add_argument("--eval-episodes", type=int, default=Args.eval_episodes)
     p.add_argument("--env-config", type=str, default="")
-    return p.parse_args()
+    args = p.parse_args()
+    if args.train_freq < 1:
+        p.error("--train-freq must be positive")
+    if args.target_update_freq < 1:
+        p.error("--target-update-freq must be positive")
+    return args
 
 
 # ---------------------------------------------------------------------------
@@ -141,35 +147,28 @@ class ReplayBuffer:
 
     def sample(self, batch_size):
         idx = np.random.randint(0, self.size, size=batch_size)
+
+        def tensor(array, dtype):
+            # Advanced NumPy indexing already materializes a contiguous batch;
+            # from_numpy avoids an additional CPU-side copy before transfer.
+            return torch.from_numpy(array).to(dtype=dtype)
+
         batch = {
-            "obs": {
-                a: torch.tensor(self.obs[a][idx], dtype=torch.float32) for a in AGENTS
-            },
-            "mask": {
-                a: torch.tensor(self.mask[a][idx], dtype=torch.long) for a in AGENTS
-            },
-            "role": {
-                a: torch.tensor(self.role[a][idx], dtype=torch.float32) for a in AGENTS
-            },
-            "actions": {
-                a: torch.tensor(self.actions[a][idx], dtype=torch.long) for a in AGENTS
-            },
-            "rewards": {
-                a: torch.tensor(self.rewards[a][idx], dtype=torch.float32)
-                for a in AGENTS
-            },
+            "obs": {a: tensor(self.obs[a][idx], torch.float32) for a in AGENTS},
+            "mask": {a: tensor(self.mask[a][idx], torch.long) for a in AGENTS},
+            "role": {a: tensor(self.role[a][idx], torch.float32) for a in AGENTS},
+            "actions": {a: tensor(self.actions[a][idx], torch.long) for a in AGENTS},
+            "rewards": {a: tensor(self.rewards[a][idx], torch.float32) for a in AGENTS},
             "next_obs": {
-                a: torch.tensor(self.next_obs[a][idx], dtype=torch.float32)
-                for a in AGENTS
+                a: tensor(self.next_obs[a][idx], torch.float32) for a in AGENTS
             },
             "next_mask": {
-                a: torch.tensor(self.next_mask[a][idx], dtype=torch.long)
-                for a in AGENTS
+                a: tensor(self.next_mask[a][idx], torch.long) for a in AGENTS
             },
-            "terminated": torch.tensor(self.terminated[idx], dtype=torch.float32),
-            "truncated": torch.tensor(self.truncated[idx], dtype=torch.float32),
-            "states": torch.tensor(self.states[idx], dtype=torch.float32),
-            "next_states": torch.tensor(self.next_states[idx], dtype=torch.float32),
+            "terminated": tensor(self.terminated[idx], torch.float32),
+            "truncated": tensor(self.truncated[idx], torch.float32),
+            "states": tensor(self.states[idx], torch.float32),
+            "next_states": tensor(self.next_states[idx], torch.float32),
         }
         return batch
 
@@ -351,16 +350,24 @@ def train(args: Args):
                 nn.utils.clip_grad_norm_(params, 10.0)
                 optimizer.step()
 
-                # polyak target update
-                for a in AGENTS:
+                # Apply Polyak updates at the configured cadence.  Compound
+                # tau across skipped gradient steps so the target lag remains
+                # comparable to the prior every-step implementation.
+                if global_step % args.target_update_freq == 0:
+                    update_tau = 1 - (1 - args.tau) ** args.target_update_freq
+                    for a in AGENTS:
+                        for tp, p in zip(
+                            target_nets[a].parameters(),
+                            q_nets[a].parameters(),
+                            strict=True,
+                        ):
+                            tp.data.copy_(
+                                update_tau * p.data + (1 - update_tau) * tp.data
+                            )
                     for tp, p in zip(
-                        target_nets[a].parameters(), q_nets[a].parameters(), strict=True
+                        target_mixing.parameters(), mixing.parameters(), strict=True
                     ):
-                        tp.data.copy_(args.tau * p.data + (1 - args.tau) * tp.data)
-                for tp, p in zip(
-                    target_mixing.parameters(), mixing.parameters(), strict=True
-                ):
-                    tp.data.copy_(args.tau * p.data + (1 - args.tau) * tp.data)
+                        tp.data.copy_(update_tau * p.data + (1 - update_tau) * tp.data)
 
                 writer.add_scalar("losses/q_loss", loss.item(), global_step)
 
@@ -389,6 +396,7 @@ def train(args: Args):
     for a in AGENTS:
         torch.save(q_nets[a].state_dict(), f"checkpoints/{run_name}/{a}_q.pt")
     torch.save(mixing.state_dict(), f"checkpoints/{run_name}/mixing.pt")
+    write_completion(run_name, "qmix", args.total_steps, global_step)
     writer.close()
     print("training done.")
 

@@ -37,6 +37,7 @@ from constants import (
 )
 from env import AGENTS, parse_env_config
 from model import HeistAgent
+from ppo_utils import compute_gae, write_completion
 from vec_env import VectorEnv
 
 
@@ -245,34 +246,56 @@ def train(args: Args):
         for step in range(args.num_steps):
             global_step += 1
             actions_dict = {}
-            for a in AGENTS:
-                with torch.no_grad():
-                    obs_t = torch.tensor(next_obs[a]["observation"], device=device)
-                    role_t = torch.tensor(next_obs[a]["role_id"], device=device)
-                    mask_t = torch.tensor(next_obs[a]["action_mask"], device=device)
-                    action, logprob, _, value = policies[a].get_action_and_value(
-                        obs_t, role_t, mask_t
+            stacked = next_obs["_stacked"]
+            obs_all = torch.as_tensor(stacked["observation"], device=device)
+            role_all = torch.as_tensor(stacked["role_id"], device=device)
+            mask_all = torch.as_tensor(stacked["action_mask"], device=device)
+            with torch.no_grad():
+                if args.shared:
+                    flat_obs = obs_all.flatten(0, 1)
+                    flat_role = role_all.flatten(0, 1)
+                    flat_mask = mask_all.flatten(0, 1)
+                    all_actions, all_logprobs, _, all_values = (
+                        shared_policy.get_action_and_value(
+                            flat_obs, flat_role, flat_mask
+                        )
                     )
-                buffers[a]["obs"][step] = obs_t
-                buffers[a]["role_id"][step] = role_t
-                buffers[a]["action_mask"][step] = mask_t
-                buffers[a]["actions"][step] = action
-                buffers[a]["logprobs"][step] = logprob
-                buffers[a]["values"][step] = value.flatten()
-                actions_dict[a] = action.cpu().numpy()
+                    all_actions = all_actions.view(len(AGENTS), args.num_envs)
+                    all_logprobs = all_logprobs.view(len(AGENTS), args.num_envs)
+                    all_values = all_values.view(len(AGENTS), args.num_envs)
+                for i, a in enumerate(AGENTS):
+                    if not args.shared:
+                        action, logprob, _, value = policies[a].get_action_and_value(
+                            obs_all[i], role_all[i], mask_all[i]
+                        )
+                    else:
+                        action, logprob, value = (
+                            all_actions[i],
+                            all_logprobs[i],
+                            all_values[i],
+                        )
+                    buffers[a]["obs"][step] = obs_all[i]
+                    buffers[a]["role_id"][step] = role_all[i]
+                    buffers[a]["action_mask"][step] = mask_all[i]
+                    buffers[a]["actions"][step] = action
+                    buffers[a]["logprobs"][step] = logprob
+                    buffers[a]["values"][step] = value.flatten()
+                    actions_dict[a] = action.cpu().numpy()
 
             next_obs, rewards, terminations, truncations, infos = vec_env.step(
                 actions_dict
             )
-            next_terminations = torch.tensor(
+            next_terminations = torch.as_tensor(
                 terminations["scout"], device=device
             ).float()
-            next_truncations = torch.tensor(truncations["scout"], device=device).float()
+            next_truncations = torch.as_tensor(
+                truncations["scout"], device=device
+            ).float()
             last_infos = infos
             for a in AGENTS:
-                buffers[a]["rewards"][step] = torch.tensor(rewards[a], device=device)
-                term_t = torch.tensor(terminations[a], device=device).float()
-                trunc_t = torch.tensor(truncations[a], device=device).float()
+                buffers[a]["rewards"][step] = torch.as_tensor(rewards[a], device=device)
+                term_t = torch.as_tensor(terminations[a], device=device).float()
+                trunc_t = torch.as_tensor(truncations[a], device=device).float()
                 buffers[a]["terminated"][step] = term_t
                 buffers[a]["truncated"][step] = trunc_t
                 # REV-3: store the bootstrap value for envs done this step.
@@ -307,15 +330,20 @@ def train(args: Args):
                         buffers[a]["bootstrap"][step][t_idx] = val
 
         # ---------------- GAE + returns ----------------
-        returns = {}
-        advantages = {}
-        for a in AGENTS:
+        next_values = []
+        for agent_index, a in enumerate(AGENTS):
             with torch.no_grad():
                 next_value = (
                     policies[a]
                     .get_value(
-                        torch.tensor(next_obs[a]["observation"], device=device),
-                        torch.tensor(next_obs[a]["role_id"], device=device),
+                        torch.as_tensor(
+                            next_obs["_stacked"]["observation"][agent_index],
+                            device=device,
+                        ),
+                        torch.as_tensor(
+                            next_obs["_stacked"]["role_id"][agent_index],
+                            device=device,
+                        ),
                     )
                     .flatten()
                 )
@@ -347,30 +375,20 @@ def train(args: Args):
                     next_value[t_idx] = policies[a].get_value(t_obs, t_role).flatten()
                 # terminated envs bootstrap to 0
                 next_value = next_value * (1.0 - next_terminations)
-            adv = torch.zeros_like(buffers[a]["rewards"])
-            lastgaelam = 0.0
-            for t in reversed(range(args.num_steps)):
-                if t == args.num_steps - 1:
-                    nextnonterminal = 1.0 - next_terminations
-                    nextvalues = next_value
-                else:
-                    nextnonterminal = 1.0 - buffers[a]["terminated"][t + 1]
-                    # REV-3: truncations bootstrap from the stored terminal value
-                    nextvalues = torch.where(
-                        buffers[a]["truncated"][t + 1].bool(),
-                        buffers[a]["bootstrap"][t + 1],
-                        buffers[a]["values"][t + 1],
-                    )
-                delta = (
-                    buffers[a]["rewards"][t]
-                    + args.gamma * nextvalues * nextnonterminal
-                    - buffers[a]["values"][t]
-                )
-                adv[t] = lastgaelam = (
-                    delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                )
-            advantages[a] = adv
-            returns[a] = adv + buffers[a]["values"]
+            next_values.append(next_value)
+        stacked_advantages, stacked_returns = compute_gae(
+            torch.stack([buffers[a]["rewards"] for a in AGENTS]),
+            torch.stack([buffers[a]["values"] for a in AGENTS]),
+            torch.stack([buffers[a]["terminated"] for a in AGENTS]),
+            torch.stack([buffers[a]["truncated"] for a in AGENTS]),
+            torch.stack([buffers[a]["bootstrap"] for a in AGENTS]),
+            torch.stack(next_values),
+            next_terminations.unsqueeze(0),
+            args.gamma,
+            args.gae_lambda,
+        )
+        advantages = {a: stacked_advantages[i] for i, a in enumerate(AGENTS)}
+        returns = {a: stacked_returns[i] for i, a in enumerate(AGENTS)}
 
         # ---------------- policy update ----------------
         # each agent updates its own policy on its own data (IPPO);
@@ -378,32 +396,26 @@ def train(args: Args):
         groups = [("all", AGENTS)] if args.shared else [(a, [a]) for a in AGENTS]
 
         for group_name, agent_list in groups:
+            b_obs = torch.cat(
+                [buffers[a]["obs"].reshape(-1, obs_h, obs_w) for a in agent_list]
+            )
+            b_mask = torch.cat(
+                [buffers[a]["action_mask"].reshape(-1, ACTION_DIM) for a in agent_list]
+            )
+            b_role = torch.cat(
+                [buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in agent_list]
+            )
+            b_actions = torch.cat(
+                [buffers[a]["actions"].reshape(-1) for a in agent_list]
+            )
+            b_logprobs = torch.cat(
+                [buffers[a]["logprobs"].reshape(-1) for a in agent_list]
+            )
+            b_advantages = torch.cat([advantages[a].reshape(-1) for a in agent_list])
+            b_returns = torch.cat([returns[a].reshape(-1) for a in agent_list])
+            minibatch_size = b_obs.shape[0] // args.num_minibatches
             for _ in range(args.update_epochs):
-                b_obs = torch.cat(
-                    [buffers[a]["obs"].reshape(-1, obs_h, obs_w) for a in agent_list]
-                )
-                b_mask = torch.cat(
-                    [
-                        buffers[a]["action_mask"].reshape(-1, ACTION_DIM)
-                        for a in agent_list
-                    ]
-                )
-                b_role = torch.cat(
-                    [buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in agent_list]
-                )
-                b_actions = torch.cat(
-                    [buffers[a]["actions"].reshape(-1) for a in agent_list]
-                )
-                b_logprobs = torch.cat(
-                    [buffers[a]["logprobs"].reshape(-1) for a in agent_list]
-                )
-                b_advantages = torch.cat(
-                    [advantages[a].reshape(-1) for a in agent_list]
-                )
-                b_returns = torch.cat([returns[a].reshape(-1) for a in agent_list])
-                b_inds = np.arange(b_obs.shape[0])
-                np.random.shuffle(b_inds)
-                minibatch_size = b_obs.shape[0] // args.num_minibatches
+                b_inds = torch.randperm(b_obs.shape[0], device=device)
 
                 for start in range(0, b_obs.shape[0], minibatch_size):
                     end = start + minibatch_size
@@ -469,6 +481,12 @@ def train(args: Args):
         os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
         for a, p in policies.items():
             torch.save(p.state_dict(), f"checkpoints/{run_name}/{a}.pt")
+        write_completion(
+            run_name,
+            "ippo",
+            args.total_timesteps,
+            num_updates * args.num_steps * args.num_envs,
+        )
     print("training done.")
 
 

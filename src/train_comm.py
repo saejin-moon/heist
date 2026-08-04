@@ -35,6 +35,7 @@ from constants import (
 )
 from env import AGENTS, parse_env_config
 from model import CommAgent
+from ppo_utils import compute_gae, write_completion
 
 
 def parse_args():
@@ -74,7 +75,10 @@ def parse_args():
         help="Run message-outcome correlation diagnostic every N steps.",
     )
     args = p.parse_args()
-    args.num_minibatches = args.num_steps // args.num_minibatches
+    if args.num_minibatches < 1:
+        p.error("--num-minibatches must be positive")
+    if args.num_steps * args.num_envs % args.num_minibatches:
+        p.error("num-envs * num-steps must be divisible by --num-minibatches")
     return args
 
 
@@ -84,15 +88,13 @@ def _stack_obs(next_obs, agent_list=AGENTS):
     next_obs[a] arrays are [num_envs, H, W] / [num_envs, A] etc.; CommAgent
     flattens with start_dim=1 so they map directly to [B, 25] per agent.
     """
-    obs_list = [
-        torch.tensor(next_obs[a]["observation"], device=device) for a in agent_list
-    ]
-    role_list = [
-        torch.tensor(next_obs[a]["role_id"], device=device) for a in agent_list
-    ]
-    mask_list = [
-        torch.tensor(next_obs[a]["action_mask"], device=device) for a in agent_list
-    ]
+    stacked = next_obs["_stacked"]
+    obs = torch.as_tensor(stacked["observation"], device=device)
+    role = torch.as_tensor(stacked["role_id"], device=device)
+    mask = torch.as_tensor(stacked["action_mask"], device=device)
+    obs_list = [obs[i] for i in range(len(agent_list))]
+    role_list = [role[i] for i in range(len(agent_list))]
+    mask_list = [mask[i] for i in range(len(agent_list))]
     return obs_list, role_list, mask_list
 
 
@@ -163,7 +165,7 @@ if __name__ == "__main__":
         # ---------------- rollout ----------------
         for step in range(args.num_steps):
             global_step += 1
-            state_t = torch.tensor(next_state, device=device)
+            state_t = torch.as_tensor(next_state, device=device)
             if args.centralized:
                 buf_state[step] = state_t
             obs_list, role_list, mask_list = _stack_obs(next_obs)
@@ -176,16 +178,10 @@ if __name__ == "__main__":
                 )
             # actions/logprobs/values: [num_envs, n_agents]
 
-            for i, a in enumerate(AGENTS):
-                buf_obs[step, :, i] = torch.tensor(
-                    next_obs[a]["observation"], device=device
-                )
-                buf_role[step, :, i] = torch.tensor(
-                    next_obs[a]["role_id"], device=device
-                )
-                buf_mask[step, :, i] = torch.tensor(
-                    next_obs[a]["action_mask"], device=device
-                )
+            for i, _a in enumerate(AGENTS):
+                buf_obs[step, :, i] = obs_list[i]
+                buf_role[step, :, i] = role_list[i]
+                buf_mask[step, :, i] = mask_list[i]
                 buf_actions[step, :, i] = actions[:, i]
                 buf_logprobs[step, :, i] = logprobs[:, i]
                 buf_values[step, :, i] = values[:, i]
@@ -197,18 +193,20 @@ if __name__ == "__main__":
             next_obs, rewards, terminations, truncations, infos = vec_env.step(
                 actions_dict
             )
-            next_terminations = torch.tensor(
+            next_terminations = torch.as_tensor(
                 terminations["scout"], device=device
             ).float()
-            next_truncations = torch.tensor(truncations["scout"], device=device).float()
+            next_truncations = torch.as_tensor(
+                truncations["scout"], device=device
+            ).float()
             last_infos = infos
 
             for i, a in enumerate(AGENTS):
-                buf_rewards[step, :, i] = torch.tensor(rewards[a], device=device)
-            buf_terminated[step] = torch.tensor(
+                buf_rewards[step, :, i] = torch.as_tensor(rewards[a], device=device)
+            buf_terminated[step] = torch.as_tensor(
                 terminations["scout"], device=device
             ).float()
-            buf_truncated[step] = torch.tensor(
+            buf_truncated[step] = torch.as_tensor(
                 truncations["scout"], device=device
             ).float()
 
@@ -252,7 +250,7 @@ if __name__ == "__main__":
         # ---------------- GAE + returns ----------------
         with torch.no_grad():
             obs_list, role_list, mask_list = _stack_obs(next_obs)
-            next_state_t = torch.tensor(next_state, device=device)
+            next_state_t = torch.as_tensor(next_state, device=device)
             _, _, _, next_values = policy.get_action_and_value(
                 obs_list,
                 role_list,
@@ -293,32 +291,17 @@ if __name__ == "__main__":
             # terminated envs bootstrap to 0
             next_values = next_values * (1.0 - next_terminations).unsqueeze(1)
 
-        advantages = {}
-        returns = {}
-        for ai in range(n):
-            adv = torch.zeros(args.num_steps, args.num_envs, device=device)
-            lastgaelam = 0.0
-            for t in reversed(range(args.num_steps)):
-                if t == args.num_steps - 1:
-                    nextnonterminal = 1.0 - next_terminations
-                    nextvalues = next_values[:, ai]  # [num_envs]
-                else:
-                    nextnonterminal = 1.0 - buf_terminated[t + 1]
-                    nextvalues = torch.where(
-                        buf_truncated[t + 1].bool(),
-                        buf_bootstrap[t + 1, :, ai],
-                        buf_values[t + 1, :, ai],
-                    )
-                delta = (
-                    buf_rewards[t, :, ai]
-                    + args.gamma * nextvalues * nextnonterminal
-                    - buf_values[t, :, ai]
-                )
-                adv[t] = lastgaelam = (
-                    delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                )
-            advantages[ai] = adv
-            returns[ai] = adv + buf_values[:, :, ai]
+        stacked_advantages, stacked_returns = compute_gae(
+            buf_rewards.permute(2, 0, 1),
+            buf_values.permute(2, 0, 1),
+            buf_terminated.unsqueeze(0).expand(n, -1, -1),
+            buf_truncated.unsqueeze(0).expand(n, -1, -1),
+            buf_bootstrap.permute(2, 0, 1),
+            next_values.transpose(0, 1),
+            next_terminations.unsqueeze(0),
+            args.gamma,
+            args.gae_lambda,
+        )
 
         # ---------------- policy update ----------------
         # flatten to (T * num_envs * n_agents, ...) for minibatch SGD
@@ -328,8 +311,8 @@ if __name__ == "__main__":
         flat_mask = buf_mask.reshape(B, n, ACTION_DIM)
         flat_actions = buf_actions.reshape(B, n)
         flat_logprobs = buf_logprobs.reshape(B, n)
-        flat_adv = torch.stack([advantages[ai].reshape(B) for ai in range(n)], dim=1)
-        flat_returns = torch.stack([returns[ai].reshape(B) for ai in range(n)], dim=1)
+        flat_adv = stacked_advantages.permute(1, 2, 0).reshape(B, n)
+        flat_returns = stacked_returns.permute(1, 2, 0).reshape(B, n)
         # centralized critic consumes one state per (step, env), aligned with B
         flat_state = buf_state.reshape(B, state_dim)
 
@@ -338,11 +321,10 @@ if __name__ == "__main__":
         # CommAgent expects [batch, n_agents, ...], so keep B-dim and process
         # (B, n, ...) in minibatches.
 
-        b_inds = np.arange(B)
         minibatch_size = B // args.num_minibatches
 
         for _ in range(args.update_epochs):
-            np.random.shuffle(b_inds)
+            b_inds = torch.randperm(B, device=device)
             for start in range(0, B, minibatch_size):
                 end = start + minibatch_size
                 mb = b_inds[start:end]
@@ -413,8 +395,9 @@ if __name__ == "__main__":
 
         # ---------------- periodic eval + diagnostics ----------------
         if update % max(args.eval_every // (args.num_steps * args.num_envs), 1) == 0:
-            os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
-            torch.save(policy.state_dict(), f"checkpoints/{run_name}/comm.pt")
+            if args.save_model:
+                os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
+                torch.save(policy.state_dict(), f"checkpoints/{run_name}/comm.pt")
             from evaluate import evaluate_comm_policies
 
             metrics = evaluate_comm_policies(
@@ -470,4 +453,13 @@ if __name__ == "__main__":
 
     vec_env.close()
     writer.close()
+    if args.save_model:
+        os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
+        torch.save(policy.state_dict(), f"checkpoints/{run_name}/comm.pt")
+        write_completion(
+            run_name,
+            "comm",
+            args.total_steps,
+            num_updates * args.num_steps * args.num_envs,
+        )
     print("training done.")

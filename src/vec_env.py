@@ -32,14 +32,28 @@ class VectorEnv:
     # ------------------------------------------------------------------
     def _pack(self, obs_list):
         packed = {}
+        observations, masks, roles = [], [], []
         for a in AGENTS:
+            observation = np.stack([o[a]["observation"] for o in obs_list])
+            action_mask = np.stack([o[a]["action_mask"] for o in obs_list])
+            role_id = np.stack([o[a]["role_id"] for o in obs_list])
             packed[a] = {
-                "observation": np.stack([o[a]["observation"] for o in obs_list]),
-                "action_mask": np.stack([o[a]["action_mask"] for o in obs_list]),
+                "observation": observation,
+                "action_mask": action_mask,
                 # REV-7 (REVISION_PLAN.md §6): global_state deleted from the
                 # per-agent obs contract; central critics still get env.state().
-                "role_id": np.stack([o[a]["role_id"] for o in obs_list]),
+                "role_id": role_id,
             }
+            observations.append(observation)
+            masks.append(action_mask)
+            roles.append(role_id)
+        # PPO-family trainers consume this agent-major layout directly.  Keep
+        # the named-agent entries for evaluation and existing callers.
+        packed["_stacked"] = {
+            "observation": np.stack(observations),
+            "action_mask": np.stack(masks),
+            "role_id": np.stack(roles),
+        }
         return packed
 
     def reset(self, seed=None):

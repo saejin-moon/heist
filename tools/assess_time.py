@@ -71,7 +71,9 @@ ALGOS = {
     },
     "qmix": {
         "script": "src/train_qmix.py",
-        "flags": [],  # single-env, always saves; cleaned up afterwards
+        # Match the campaign's lower update-to-data ratio.  QMIX remains
+        # single-env here; vectorized collection is a separate experiment.
+        "flags": ["--train-freq", "4"],
         "step_flag": "--total-steps",
         "vec": False,
     },
@@ -172,40 +174,43 @@ def vec_rollout_bench(steps: int = 20, num_envs: int = 8) -> list[dict]:
     for s, cfg in enumerate(CURRICULUM):
         vec = VectorEnv(num_envs, config=cfg, base_seed=200 + s)
         obs, _ = vec.reset(seed=200 + s)
-        policies = {a: HeistAgent().to(device) for a in AGENTS}
+        # Match the optimized shared-policy rollout path: VectorEnv provides
+        # agent-major arrays, which are transferred once per observation
+        # component and evaluated by one [agents * envs, ...] forward pass.
+        policy = HeistAgent().to(device)
         for _ in range(3):  # warmup
-            obs_t = {
-                a: torch.tensor(obs[a]["observation"], device=device) for a in AGENTS
-            }
-            role_t = {a: torch.tensor(obs[a]["role_id"], device=device) for a in AGENTS}
-            mask_t = {
-                a: torch.tensor(obs[a]["action_mask"], device=device) for a in AGENTS
-            }
-            actions = {}
+            stacked = obs["_stacked"]
+            obs_t = torch.as_tensor(stacked["observation"], device=device)
+            role_t = torch.as_tensor(stacked["role_id"], device=device)
+            mask_t = torch.as_tensor(stacked["action_mask"], device=device)
             with torch.no_grad():
-                for a in AGENTS:
-                    act, *_ = policies[a].get_action_and_value(
-                        obs_t[a], role_t[a], mask_t[a]
-                    )
-                    actions[a] = act.cpu().numpy()
+                act, *_ = policy.get_action_and_value(
+                    obs_t.flatten(0, 1),
+                    role_t.flatten(0, 1),
+                    mask_t.flatten(0, 1),
+                )
+            actions = {
+                a: act.view(len(AGENTS), num_envs)[i].cpu().numpy()
+                for i, a in enumerate(AGENTS)
+            }
             obs, *_ = vec.step(actions)
 
         t0 = time.perf_counter()
         for _ in range(steps):
-            obs_t = {
-                a: torch.tensor(obs[a]["observation"], device=device) for a in AGENTS
-            }
-            role_t = {a: torch.tensor(obs[a]["role_id"], device=device) for a in AGENTS}
-            mask_t = {
-                a: torch.tensor(obs[a]["action_mask"], device=device) for a in AGENTS
-            }
-            actions = {}
+            stacked = obs["_stacked"]
+            obs_t = torch.as_tensor(stacked["observation"], device=device)
+            role_t = torch.as_tensor(stacked["role_id"], device=device)
+            mask_t = torch.as_tensor(stacked["action_mask"], device=device)
             with torch.no_grad():
-                for a in AGENTS:
-                    act, *_ = policies[a].get_action_and_value(
-                        obs_t[a], role_t[a], mask_t[a]
-                    )
-                    actions[a] = act.cpu().numpy()
+                act, *_ = policy.get_action_and_value(
+                    obs_t.flatten(0, 1),
+                    role_t.flatten(0, 1),
+                    mask_t.flatten(0, 1),
+                )
+            actions = {
+                a: act.view(len(AGENTS), num_envs)[i].cpu().numpy()
+                for i, a in enumerate(AGENTS)
+            }
             obs, *_ = vec.step(actions)
         per_step_s = (time.perf_counter() - t0) / steps
         vec.close()

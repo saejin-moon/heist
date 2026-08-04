@@ -39,26 +39,30 @@ LOG="log/experiment_stage0_300k.log"
 mkdir -p log
 
 STAGE0='{"map_size": [11, 11], "num_rooms_range": [1, 2], "guard_count": 0, "camera_count": 0, "door_count": 0, "max_steps": 60, "spawn_mode": "role"}'
+# PPO-family rollouts must be whole 8-env × 256-step batches.  Keep every
+# algorithm on the same exact collection budget rather than silently asking
+# PPO for 300,000 and receiving only 299,008 steps.
+CAMPAIGN_STEPS=299008
 
 run() {
     local label="$1"; shift
     echo "========================================================================" | tee -a "$LOG"
     echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] START $label" | tee -a "$LOG"
     echo "========================================================================" | tee -a "$LOG"
-    PYTHONUNBUFFERED=1 "$@" 2>&1 | tee -a "$LOG"
-    local rc=${PIPESTATUS[0]}
-    if [ "$rc" -eq 0 ]; then
+    if PYTHONUNBUFFERED=1 "$@" 2>&1 | tee -a "$LOG"; then
         echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] OK   $label" | tee -a "$LOG"
     else
+        local rc=${PIPESTATUS[0]}
         echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] FAIL $label (exit $rc)" | tee -a "$LOG"
+        return "$rc"
     fi
 }
 
-# Skip a run whose checkpoint dir already exists (resume support).
-# Trainers save to checkpoints/<run_name> (repo root), see train_*.py.
+# Skip only a run that wrote its atomic completion marker.  Intermediate
+# evaluation checkpoints are recoverable artifacts, not proof of success.
 already_done() {
     local dir="$1"; shift
-    [ -n "$(ls -A "checkpoints/$dir" 2>/dev/null)" ]
+    [ -f "checkpoints/$dir/complete.json" ]
 }
 
 SEEDS=(0 1 2)
@@ -74,7 +78,7 @@ for seed in "${SEEDS[@]}"; do
     fi
     run "ippo s${seed}" \
         uv run python src/train_ippo.py \
-        --total-timesteps 300000 --num-envs 8 --num-steps 256 \
+        --total-timesteps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 \
         --eval-every 20 --eval-episodes 20 --seed "$seed" \
         --env-config "$STAGE0" \
         --exp-name ippo_s0
@@ -88,7 +92,7 @@ for seed in "${SEEDS[@]}"; do
     fi
     run "mappo s${seed}" \
         uv run python src/train_mappo.py \
-        --total-timesteps 300000 --num-envs 8 --num-steps 256 \
+        --total-timesteps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 \
         --eval-every 20 --eval-episodes 20 --seed "$seed" \
         --env-config "$STAGE0" \
         --exp-name mappo_s0
@@ -102,7 +106,7 @@ for seed in "${SEEDS[@]}"; do
     fi
     run "qmix s${seed}" \
         uv run python src/train_qmix.py \
-        --total-steps 300000 --eval-every 5000 --eval-episodes 20 --seed "$seed" \
+        --total-steps "$CAMPAIGN_STEPS" --train-freq 4 --eval-every 5000 --eval-episodes 20 --seed "$seed" \
         --env-config "$STAGE0" \
         --exp-name qmix_s0
 done
@@ -115,7 +119,7 @@ for seed in "${SEEDS[@]}"; do
     fi
     run "comm s${seed}" \
         uv run python src/train_comm.py \
-        --total-steps 300000 --num-envs 8 --num-steps 256 \
+        --total-steps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 \
         --eval-every 5000 --eval-episodes 20 --seed "$seed" \
         --env-config "$STAGE0" \
         --exp-name comm_s0
