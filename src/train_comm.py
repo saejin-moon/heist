@@ -205,7 +205,7 @@ if __name__ == "__main__":
             for t in reversed(range(args.num_steps)):
                 if t == args.num_steps - 1:
                     nextnonterminal = 1.0 - next_terminations
-                    nextvalues = next_values[ai]
+                    nextvalues = next_values[:, ai]  # [num_envs]
                 else:
                     nextnonterminal = 1.0 - buf_terminated[t + 1]
                     nextvalues = torch.where(
