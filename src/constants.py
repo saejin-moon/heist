@@ -82,7 +82,7 @@ DOOR_COUNT = 4
 # Causal-chain mechanics
 # ---------------------------------------------------------------------------
 HACK_TURNS = 3                   # multi-turn hack before terminal is disabled
-EXTRACTION_COUNTDOWN = 30        # turns to gather at extract after loot secured
+EXTRACTION_COUNTDOWN = 45        # turns to gather at extract after loot secured
 
 # ---------------------------------------------------------------------------
 # Reward structure (design doc section 5)
@@ -92,6 +92,11 @@ REWARD_LOSE = -10.0              # shared terminal reward: caught / alarm / time
 REWARD_TASK = 2.0                # key task completions (hack, loot, extract call)
 REWARD_TAG = 0.5                 # scout revealing a point of interest
 REWARD_TIME_BLEED = -0.01        # baseline penalty per step
+CONVERGE_BONUS = 0.2             # per-step proximity bonus to the extract tile
+                                 # once extraction is called (shapes the final phase)
+CONVERGE_RADIUS = 4              # manhattan distance that counts as "converging"
+WIN_CONVERGE_RADIUS = 2          # all agents within this radius of extract to win
+                                 # (0 = strict stacking on the tile)
 
 # ---------------------------------------------------------------------------
 # Alarm system
@@ -105,8 +110,17 @@ ALARM_HACK_TURN = 2.0            # per turn of hacking a terminal
 ALARM_BYPASS = 6.0               # door bypassed by force
 ALARM_NEUTRALIZE = 15.0          # guard knocked out (delay until noticed)
 ALARM_GUARD_SPOT = 25.0          # guard gets within catch distance
-ALARM_EXTRACTION_TIMEOUT = 100.0 # extraction countdown expired
+ALARM_EXTRACTION_TIMEOUT = 25.0  # extraction countdown expired (fires once)
 CAMERA_RANGE = 12                # max line-of-sight distance for cameras
+
+# ---------------------------------------------------------------------------
+# Observation encoding
+# ---------------------------------------------------------------------------
+# global_state layout: [step, alarm, terminal_disabled, loot_acquired] then
+# per-objective relative displacement (dx, dy) for the terminal, loot, and
+# extract tiles.  Agent-relative coordinates keep the state Markovian and
+# give every agent a navigation signal toward the objectives.
+GLOBAL_STATE_DIM = 4 + 3 * 2
 
 # ---------------------------------------------------------------------------
 # Guard behavior

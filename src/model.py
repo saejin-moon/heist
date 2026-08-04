@@ -21,8 +21,10 @@ import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
 
-# obs (25) + global_state (4) fused into the local feature vector
-LOCAL_INPUT_DIM = 25 + 4
+from constants import GLOBAL_STATE_DIM
+
+# obs (25) + global_state (GLOBAL_STATE_DIM) fused into the local feature vector
+LOCAL_INPUT_DIM = 25 + GLOBAL_STATE_DIM
 ACTION_DIM = 6
 HIDDEN_DIM = 64
 

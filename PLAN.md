@@ -139,8 +139,34 @@ In an RG-Dec-POMDP, this assumption breaks down due to **Causal Credit Dilution*
   * *Resolved:* Curriculum learning implemented (`curriculum.py`) with 5 staged configs (11x11 no-security up to full 50x50). Intrinsic-motivation exploration bonuses remain an optional future enhancement.
 * **QMIX Triton warmup:** the first GPU run spends minutes JIT-compiling new ops; use `--no-cuda` for quick tests or budget a long first-run timeout.
 
+### Baseline Validation Campaign (v1-v5): The Sparsity Wall, Empirically Confirmed
+
+Before trusting CAI/counterfactual numbers, we validated that the training baselines actually learn the stage-0 task. This validation found two exploitable design bugs and produced a clean empirical record of the "Sparsity Wall".
+
+**Design bugs found by validation (all fixed):**
+1. **Eval win bug:** `run_episode` counted `terminal_reward > 0` as a win; at truncation, the last-step shaped reward (e.g., scout +0.49 tag) falsely reported wins (0.55 "win rate" vs 0.000 real). Fixed to read `infos[AGENTS[0]]["win"]` only on real termination.
+2. **Scout tag farming:** `_scout_tag` paid +0.5 every step with no cooldown; IPPO learned to sit beside the terminal spamming INTERACT. Fixed with a per-episode `tagged_pois` set (each POI taggable once).
+3. **Missing causal gate:** the HACK action was not gated on scout tagging; added `terminal_pos in self.tagged_pois` to both the action mask and `_hacker_hack`.
+4. **Extraction timeout** fired every step after loot (100 -> 25, fires exactly once); countdown 30 -> 45.
+
+**Env is solvable (controller ablation, stage-0, max_steps 90):** greedy Manhattan 10/30 wins; BFS pathfinding 14/30; BFS + wait-on-target 29/30. The env is sound; the learning is the bottleneck.
+
+**Learning results (stage-0: 11x11, no guards/cameras/doors, max_steps 90):**
+
+| Campaign | Changes vs prev | Win rate | Chain completion | Return |
+|---|---|---|---|---|
+| v2 IPPO | strict stacking win | 0.000 | terminal 90% / loot 85% | ~5.7 |
+| v3 IPPO | zone win (radius 2) | 0.000 | terminal ~70% | 1-5 |
+| v4 IPPO/MAPPO | + objective bearings (gs 4->10), + PBRS converge bonus | 0.000 | terminal 75% / loot 62% / extraction 62% | ~0 |
+| v5 IPPO (300k) | more compute on v4 config | TBD | TBD | TBD |
+
+**Root-cause analysis (traced v4 episodes):** `spawn_mode="role"` places scout+hacker adjacent to the terminal and muscle+extractor adjacent to the loot, so the early causal chain is nearly free (extraction triggered by step 5-6 in many episodes) and needs no navigation. The extract tile is placed far away, so the decisive skill is cross-map convergence after loot, which simple 64-unit MLP policies do not acquire in 100k steps (agents hover 0-2 tiles from extract but the extractor never steps onto the tile). This is the Sparsity Wall in its cleanest form: the local, easy phases reward early learning; the global, late phase does not get learned.
+
+**Implications for the research claim:** the causal chain, action gating, and win mechanics are verified (scripted controller wins 29/30). The baseline failure *is* the motivating observation for Causal Credit Dilution research; the next step is to show QMIX/counterfactual diagnostics on longer runs and to ship the curriculum (stage-1+ with cameras/guards) plus intrinsic-motivation bonuses as the planned mitigation.
+
 ### Known Issues & Next Steps
+* **Baseline compute:** simple IPPO needs >100k steps to approach the final converge; run the full 300k v5 campaign and, if still flat, switch to `spawn_mode="random"` (forces navigation in early phases too) or add an intrinsic exploration bonus.
 * **Throughput:** ~40-70 SPS on CUDA; the per-env Python loop in `vec_env.step` and per-agent tensor moves dominate. Next step: batch env stepping or move the sim loop into NumPy/Numba.
 * **Reward/alarm balance:** alarm builds fast enough that a 3-turn hack chain raises it ~7 units; longer runs are needed to tune this so mid-difficulty stages are solvable but not trivial.
 * **Baseline comparison:** run IPPO / MAPPO / QMIX to convergence on each curriculum stage and emit the CAI + counterfactual tables for the research writeup.
-* **Initial commit:** the repository is now version-controlled with an initial commit; long training runs and result tables are the remaining evidence-gathering step.
+* **Result tables:** `src/run_eval.py` emits win-rate/CAI/counterfactual tables (optionally JSON); run it on final checkpoints per stage once baselines converge.

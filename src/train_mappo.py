@@ -23,7 +23,7 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
 from env import AGENTS, parse_env_config
-from constants import OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM
+from constants import OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, GLOBAL_STATE_DIM
 from model import MappoAgent
 from vec_env import VectorEnv
 
@@ -113,7 +113,7 @@ def train(args: Args):
     for a in AGENTS:
         buffers[a] = {
             "obs": torch.zeros((args.num_steps, args.num_envs, obs_h, obs_w), device=device),
-            "global_state": torch.zeros((args.num_steps, args.num_envs, 4), device=device),
+            "global_state": torch.zeros((args.num_steps, args.num_envs, GLOBAL_STATE_DIM), device=device),
             "action_mask": torch.zeros((args.num_steps, args.num_envs, ACTION_DIM), device=device),
             "actions": torch.zeros((args.num_steps, args.num_envs), dtype=torch.long, device=device),
             "logprobs": torch.zeros((args.num_steps, args.num_envs), device=device),
@@ -199,7 +199,7 @@ def train(args: Args):
 
         # ---------------- policy update (concatenated across agents) ---------
         b_obs = torch.cat([buffers[a]["obs"].reshape(-1, obs_h, obs_w) for a in AGENTS])
-        b_gs = torch.cat([buffers[a]["global_state"].reshape(-1, 4) for a in AGENTS])
+        b_gs = torch.cat([buffers[a]["global_state"].reshape(-1, GLOBAL_STATE_DIM) for a in AGENTS])
         b_mask = torch.cat([buffers[a]["action_mask"].reshape(-1, ACTION_DIM) for a in AGENTS])
         b_actions = torch.cat([buffers[a]["actions"].reshape(-1) for a in AGENTS])
         b_logprobs = torch.cat([buffers[a]["logprobs"].reshape(-1) for a in AGENTS])

@@ -73,6 +73,7 @@ DEFAULT_CONFIG = {
     "alarm_bypass": ALARM_BYPASS,
     "alarm_neutralize": ALARM_NEUTRALIZE,
     "alarm_guard_spot": ALARM_GUARD_SPOT,
+    "alarm_extraction_timeout": ALARM_EXTRACTION_TIMEOUT,
     "alarm_max": ALARM_MAX,
     "camera_range": CAMERA_RANGE,
     "reward_win": REWARD_WIN,
@@ -80,6 +81,9 @@ DEFAULT_CONFIG = {
     "reward_task": REWARD_TASK,
     "reward_tag": REWARD_TAG,
     "reward_time_bleed": REWARD_TIME_BLEED,
+    "converge_bonus": CONVERGE_BONUS,
+    "converge_radius": CONVERGE_RADIUS,
+    "win_converge_radius": WIN_CONVERGE_RADIUS,
 }
 
 
@@ -131,6 +135,8 @@ class HeistEnv(ParallelEnv):
         self.extraction_triggered = False
         self.extraction_countdown = self.config["extraction_countdown"]
         self.hack_progress = 0
+        self.tagged_pois = set()
+        self._prev_extract_dist = {}
 
     # ------------------------------------------------------------------
     # PettingZoo API
@@ -146,6 +152,8 @@ class HeistEnv(ParallelEnv):
         self.extraction_triggered = False
         self.extraction_countdown = self.config["extraction_countdown"]
         self.hack_progress = 0
+        self.tagged_pois = set()
+        self._prev_extract_dist = {}
         self.agents = self.possible_agents[:]
         self.explored_map = np.zeros((self.map_h, self.map_w), dtype=bool)
 
@@ -227,8 +235,24 @@ class HeistEnv(ParallelEnv):
         # ------------------ extraction countdown ------------------
         if self.extraction_triggered:
             self.extraction_countdown -= 1
-            if self.extraction_countdown <= 0:
-                self._add_alarm(ALARM_EXTRACTION_TIMEOUT)
+            # timeout fires exactly once: it is a penalty for a slow gather,
+            # not an automatic loss
+            if self.extraction_countdown == 0:
+                self._add_alarm(self.config["alarm_extraction_timeout"])
+
+        # ------------------ extraction-phase shaping (PBRS) ------------------
+        # Once the loot is secured, steer every agent toward the extract tile.
+        # Potential-based shaping with phi = -dist(agent, extract) is
+        # policy-invariant (guaranteed not to change the optimal policy) while
+        # giving the final convergence phase a dense gradient that the sparse
+        # shared terminal reward cannot provide.  It is gated on loot_acquired
+        # so it cannot be farmed before the heist's final phase.
+        if self.loot_acquired:
+            for a in self.agents:
+                d_cur = manhattan(self.agent_positions[a], self.extract_pos)
+                d_prev = self._prev_extract_dist.get(a, d_cur)
+                rewards[a] += self.config["converge_bonus"] * (d_prev - d_cur)
+                self._prev_extract_dist[a] = d_cur
 
         # ------------------ episode outcome ------------------
         win = self._win_condition()
@@ -399,15 +423,28 @@ class HeistEnv(ParallelEnv):
             self._extractor_act(pos, rewards)
 
     def _scout_tag(self, pos, rewards):
-        """Scout broadcasts intel on a nearby point of interest."""
+        """Scout broadcasts intel on a nearby point of interest.
+
+        Each point of interest can only be tagged once per episode.  Without
+        this guard the scout can stand next to a single POI and farm +0.5 per
+        step, which collapses the policy into reward-hacking instead of
+        executing the causal chain.
+        """
         pois = [self.terminal_pos, self.loot_pos, self.extract_pos] \
                + self.camera_positions + self.door_positions
-        if any(manhattan(pos, p) <= 1 for p in pois):
-            rewards["scout"] += self.config["reward_tag"]
+        for p in pois:
+            if p not in self.tagged_pois and manhattan(pos, p) <= 1:
+                self.tagged_pois.add(p)
+                rewards["scout"] += self.config["reward_tag"]
 
     def _hacker_hack(self, pos, rewards):
-        """Multi-turn terminal hack; interruption resets progress."""
-        if not self.terminal_disabled and manhattan(pos, self.terminal_pos) <= 1:
+        """Multi-turn terminal hack; interruption resets progress.
+
+        The terminal must first be tagged by the scout (causal gate), so
+        the scout's action is a strict prerequisite for the whole chain.
+        """
+        if (not self.terminal_disabled and self.terminal_pos in self.tagged_pois
+                and manhattan(pos, self.terminal_pos) <= 1):
             self.hack_progress += 1
             self._add_alarm(self.config["alarm_hack_turn"])
             if self.hack_progress >= self.config["hack_turns"]:
@@ -500,7 +537,14 @@ class HeistEnv(ParallelEnv):
         return (
             self.loot_acquired
             and self.extraction_triggered
-            and all(self.agent_positions[a] == self.extract_pos for a in self.possible_agents)
+            # the extractor must carry the loot out through the tile itself
+            and self.agent_positions["extractor"] == self.extract_pos
+            # everyone else gathers within the convergence zone
+            and all(
+                manhattan(self.agent_positions[a], self.extract_pos)
+                <= self.config["win_converge_radius"]
+                for a in self.possible_agents
+            )
         )
 
     def _lose_condition(self):
@@ -530,7 +574,10 @@ class HeistEnv(ParallelEnv):
             if any(manhattan(pos, p) <= 1 for p in pois):
                 mask[INTERACT] = 1
         elif agent == "hacker":
+            # causal gate: the terminal must have been tagged by the scout
+            # before the hacker can act on it (RG-Dec-POMDP chain step 1)
             near_terminal = (not self.terminal_disabled
+                             and self.terminal_pos in self.tagged_pois
                              and manhattan(pos, self.terminal_pos) <= 1)
             near_door = any(
                 0 <= pos[0] + dr < self.map_h and 0 <= pos[1] + dc < self.map_w
@@ -573,11 +620,16 @@ class HeistEnv(ParallelEnv):
         masked = np.where(obs_explored, obs, FOG)
 
         mask = self._action_mask(agent)
+        pr, pc = pos
         global_state = np.array([
             self.current_step,
             int(min(self.alarm, 100)),
             int(self.terminal_disabled),
             int(self.loot_acquired),
+            # relative bearings to the three objectives (navigation signal)
+            self.terminal_pos[0] - pr, self.terminal_pos[1] - pc,
+            self.loot_pos[0] - pr, self.loot_pos[1] - pc,
+            self.extract_pos[0] - pr, self.extract_pos[1] - pc,
         ], dtype=np.int32)
 
         return {"observation": masked, "action_mask": mask, "global_state": global_state}

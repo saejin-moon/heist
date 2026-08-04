@@ -38,6 +38,11 @@ class DummyActor(nn.Module):
         return action.item(), dist.probs
 
 
+def make_env():
+    """Factory used by `pettingzoo.test.parallel_test -e dummy:make_env`."""
+    return HeistEnv()
+
+
 if __name__ == "__main__":
     env = HeistEnv()
     obs, _ = env.reset(seed=0)

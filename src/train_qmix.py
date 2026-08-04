@@ -29,7 +29,7 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
 from env import HeistEnv, AGENTS, parse_env_config
-from constants import OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM
+from constants import OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, GLOBAL_STATE_DIM
 from model import QNetwork, QMixMixing
 
 
@@ -87,12 +87,12 @@ class ReplayBuffer:
         self.pos = 0
         self.size = 0
         self.obs = {a: np.zeros((capacity, *obs_shape), dtype=np.int32) for a in AGENTS}
-        self.gs = {a: np.zeros((capacity, 4), dtype=np.int32) for a in AGENTS}
+        self.gs = {a: np.zeros((capacity, GLOBAL_STATE_DIM), dtype=np.int32) for a in AGENTS}
         self.mask = {a: np.zeros((capacity, ACTION_DIM), dtype=np.int8) for a in AGENTS}
         self.actions = {a: np.zeros(capacity, dtype=np.int64) for a in AGENTS}
         self.rewards = {a: np.zeros(capacity, dtype=np.float32) for a in AGENTS}
         self.next_obs = {a: np.zeros((capacity, *obs_shape), dtype=np.int32) for a in AGENTS}
-        self.next_gs = {a: np.zeros((capacity, 4), dtype=np.int32) for a in AGENTS}
+        self.next_gs = {a: np.zeros((capacity, GLOBAL_STATE_DIM), dtype=np.int32) for a in AGENTS}
         self.next_mask = {a: np.zeros((capacity, ACTION_DIM), dtype=np.int8) for a in AGENTS}
         self.dones = np.zeros(capacity, dtype=np.float32)
         self.states = np.zeros((capacity, state_dim), dtype=np.float32)

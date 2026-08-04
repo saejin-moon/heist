@@ -71,6 +71,7 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
     # per-agent shaped credit (excludes shared terminal reward)
     credit = {a: 0.0 for a in AGENTS}
     terminal_reward = 0.0
+    win = False
 
     for _ in range(env.config["max_steps"]):
         actions = {}
@@ -88,12 +89,18 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
                 actions[a] = int(np.random.choice(legal))
         obs, rewards, terms, truncs, infos = env.step(actions)
         length += 1
-        done = bool(any(terms.values()) or any(truncs.values()))
+        terminated = bool(any(terms.values()))
+        truncated = bool(any(truncs.values()))
+        done = terminated or truncated
 
-        # separate shared terminal reward from per-agent shaped credit
-        if done:
+        # separate shared terminal reward from per-agent shaped credit.
+        # Only a real termination carries the +/-10 terminal reward; a
+        # truncation (timeout) is neither a win nor a loss here, and the
+        # per-step rewards at that boundary must not be treated as terminal.
+        if terminated:
             terminal_reward = rewards[AGENTS[0]]
-        else:
+            win = bool(infos[AGENTS[0]].get("win", False))
+        elif not done:
             for a in AGENTS:
                 credit[a] += rewards[a]
 
@@ -105,7 +112,7 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
         "return": total_return,
         "length": length,
         "terminal_reward": terminal_reward,
-        "win": terminal_reward > 0,
+        "win": win,
         "credit": credit,
         "alarm": env.alarm,
         "terminal_disabled": env.terminal_disabled,
