@@ -19,7 +19,7 @@ import os
 import torch
 
 from env import HeistEnv, AGENTS
-from model import HeistAgent, MappoAgent
+from model import HeistAgent, MappoAgent, QNetwork
 from evaluate import evaluate_policies, credit_attribution_index, counterfactual_importance
 
 
@@ -32,6 +32,16 @@ def load_policies(algo, run_dir, state_dim, device):
         p.load_state_dict(sd)
         p.to(device).eval()
         return {a: p for a in AGENTS}
+    if algo == "qmix":
+        # QMIX saves per-agent DQN heads ({agent}_q.pt) plus mixing.pt.
+        # Greedy action selection only needs the per-agent Q-networks.
+        for a in AGENTS:
+            p = QNetwork()
+            sd = torch.load(os.path.join(run_dir, f"{a}_q.pt"), map_location=device, weights_only=True)
+            p.load_state_dict(sd)
+            p.to(device).eval()
+            policies[a] = p
+        return policies
     for a in AGENTS:
         p = HeistAgent()
         sd = torch.load(os.path.join(run_dir, f"{a}.pt"), map_location=device, weights_only=True)

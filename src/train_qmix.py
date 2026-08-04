@@ -296,6 +296,9 @@ def train(args: Args):
                     torch.save(q_nets[a].state_dict(), f"checkpoints/{run_name}/{a}_q.pt")
                 torch.save(mixing.state_dict(), f"checkpoints/{run_name}/mixing.pt")
                 eval_policies(global_step)
+                # eval resets the live env, invalidating the current training
+                # episode.  Break out so the outer loop does a fresh reset.
+                done = True
 
     # final save
     os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
