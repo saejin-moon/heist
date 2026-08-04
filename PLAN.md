@@ -159,7 +159,12 @@ Before trusting CAI/counterfactual numbers, we validated that the training basel
 | v3 IPPO | zone win (radius 2) | 0.000 | terminal ~70% | 1-5 |
 | v4 IPPO/MAPPO | + objective bearings (gs 4->10), + PBRS converge bonus | 0.000 | terminal 75% / loot 62% / extraction 62% | ~0 |
 | v5 IPPO (300k) | more compute on v4 config | 0.03-0.10 | terminal 97% / loot 87% / extraction 87% | 0.7-1.5 |
-| v5 MAPPO (300k) | more compute on v4 config | TBD | TBD | TBD |
+| v5 MAPPO (300k) | more compute on v4 config | 0.067 | terminal 67% / loot 42% / extraction 42% | 0.59 |
+
+**IPPO vs MAPPO contrast (v5, 60-episode re-eval, seed 555):**
+- IPPO completes the chain far more often (97%/87%/87% vs 67%/42%/42%) but both reach similar win rates (~3-7%), because MAPPO's fewer completions are more coordinated (mean_alarm 12.8 vs 25.8 — MAPPO avoids the countdown-expiry penalty).
+- CAI: IPPO ranks scout +0.56 > muscle +0.32 > extractor/hacker +0.10/+0.24. MAPPO ranks scout +0.84, muscle +0.76 > extractor +0.38, hacker +0.35. The shared-actor architecture collapses credit toward the most variable agents (scout/muscle), consistent with the expected MAPPO signature.
+- Counterfactual: in both algorithms, scout/hacker/extractor are each strictly necessary; muscle is nearly so. Every agent is causally essential to the final win.
 
 **v5 result (stage-0, 60-episode diagnostic, `results_stage0_ippo_v5.json`):** 300k steps lifts IPPO from 0% to a noisy 3-10% win rate (eval 20-episode peak 0.10; 60-episode re-eval 0.033). The causal chain now almost always completes (terminal 96.7%, loot 86.7%, extraction 86.7%), so the remaining bottleneck is exactly the final convergence. CAI ranks scout +0.561 > muscle +0.318 > hacker +0.245 > extractor +0.101; counterfactual no-ops show scout/hacker/extractor are each strictly necessary (win 0.10 -> 0.00) and muscle nearly so (0.10 -> 0.03). This is the intended Causal Credit Dilution signal: near-complete phase execution with rare wins, upstream agents causally essential.
 
@@ -171,5 +176,5 @@ Before trusting CAI/counterfactual numbers, we validated that the training basel
 * **Baseline compute:** simple IPPO needs ~300k steps to reach a noisy 3-10% win at stage-0; scale campaigns to 1-2M steps, or switch to `spawn_mode="random"` (forces navigation in early phases too) and/or add an intrinsic exploration bonus to break the final-converge plateau.
 * **Throughput:** ~40-70 SPS on CUDA; the per-env Python loop in `vec_env.step` and per-agent tensor moves dominate. Next step: batch env stepping or move the sim loop into NumPy/Numba.
 * **Reward/alarm balance:** alarm builds fast enough that a 3-turn hack chain raises it ~7 units; longer runs are needed to tune this so mid-difficulty stages are solvable but not trivial.
-* **Baseline comparison:** run IPPO / MAPPO / QMIX to convergence on each curriculum stage and emit the CAI + counterfactual tables for the research writeup.
+* **Baseline comparison:** IPPO/MAPPO stage-0 tables are in `results_stage0_ippo_v5.json` / `results_stage0_mappo_v5.json`; run QMIX to 300k+ and re-emit all three for the research writeup, then extend to curriculum stages 1-2.
 * **Result tables:** `src/run_eval.py` emits win-rate/CAI/counterfactual tables (optionally JSON); run it on final checkpoints per stage once baselines converge.

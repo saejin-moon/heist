@@ -25,13 +25,16 @@ from evaluate import evaluate_policies, credit_attribution_index, counterfactual
 
 def load_policies(algo, run_dir, state_dim, device):
     policies = {}
+    if algo == "mappo":
+        # Shared-actor MAPPO saves one policy.pt; all agents use the same weights.
+        p = MappoAgent(state_dim=state_dim)
+        sd = torch.load(os.path.join(run_dir, "policy.pt"), map_location=device, weights_only=True)
+        p.load_state_dict(sd)
+        p.to(device).eval()
+        return {a: p for a in AGENTS}
     for a in AGENTS:
-        path = os.path.join(run_dir, f"{a}.pt")
-        if algo == "mappo":
-            p = MappoAgent(state_dim=state_dim)
-        else:
-            p = HeistAgent()
-        sd = torch.load(path, map_location=device, weights_only=True)
+        p = HeistAgent()
+        sd = torch.load(os.path.join(run_dir, f"{a}.pt"), map_location=device, weights_only=True)
         p.load_state_dict(sd)
         p.to(device).eval()
         policies[a] = p

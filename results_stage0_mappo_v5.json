@@ -1,0 +1,45 @@
+{
+  "metrics": {
+    "win_rate": 0.06666666666666667,
+    "mean_return": 0.5914166666666663,
+    "mean_length": 84.63333333333334,
+    "mean_alarm": 12.816666666666666,
+    "terminal_rate": 0.6666666666666666,
+    "loot_rate": 0.4166666666666667,
+    "extraction_rate": 0.4166666666666667,
+    "mean_hack_progress": 0.03333333333333333
+  },
+  "cai": {
+    "scout": 0.8375679139414591,
+    "hacker": 0.34944609553064376,
+    "muscle": 0.7613944751150645,
+    "extractor": 0.3773698024859768
+  },
+  "counterfactual": {
+    "baseline_win_rate": 0.2,
+    "importance": {
+      "scout": 0.2,
+      "hacker": 0.2,
+      "muscle": 0.1,
+      "extractor": 0.2
+    }
+  },
+  "algo": "mappo",
+  "run_dir": "checkpoints/mappo_s0",
+  "env_config": {
+    "map_size": [
+      11,
+      11
+    ],
+    "num_rooms_range": [
+      1,
+      2
+    ],
+    "guard_count": 0,
+    "camera_count": 0,
+    "door_count": 0,
+    "max_steps": 90
+  },
+  "episodes": 60,
+  "seed": 555
+}
