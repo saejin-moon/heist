@@ -104,13 +104,14 @@ summarize({a: HeistAgent() for a in env.agents}, env, episodes=30, seed=0, devic
 
 ## Known Issues
 
-* **Baselines hit the Sparsity Wall at stage-0.** IPPO/MAPPO learn the easy
-  early phases (up to 90% terminal / 85% loot) but not the final cross-map
-  convergence: 0% win rate across all 100k-step campaigns. The env itself is
-  solvable (a BFS+wait scripted controller wins 29/30). With `spawn_mode="role"`
-  the early chain is nearly free (agents spawn beside terminal/loot) while the
-  extract tile is far, so the decisive skill is navigation the small MLPs never
-  acquire. See PLAN.md "Baseline Validation Campaign" for the full record.
+* **Baselines learn slowly at stage-0.** With 300k steps IPPO reaches a
+  noisy 3-10% win rate; the causal chain completes 97%/87%/87%
+  (terminal/loot/extraction) but the final convergence is the bottleneck.
+  The env itself is solvable (a BFS+wait scripted controller wins 29/30).
+  With `spawn_mode="role"` the early chain is nearly free (agents spawn
+  beside terminal/loot) while the extract tile is far, so the decisive
+  skill is navigation the small MLPs acquire slowly. Full campaign record
+  in PLAN.md "Baseline Validation Campaign".
 * **QMIX first GPU run** spends minutes in triton JIT compilation; either
   pass `--no-cuda` for short smoke tests or raise the timeout for the first
   real run.

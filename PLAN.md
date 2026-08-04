@@ -158,14 +158,17 @@ Before trusting CAI/counterfactual numbers, we validated that the training basel
 | v2 IPPO | strict stacking win | 0.000 | terminal 90% / loot 85% | ~5.7 |
 | v3 IPPO | zone win (radius 2) | 0.000 | terminal ~70% | 1-5 |
 | v4 IPPO/MAPPO | + objective bearings (gs 4->10), + PBRS converge bonus | 0.000 | terminal 75% / loot 62% / extraction 62% | ~0 |
-| v5 IPPO (300k) | more compute on v4 config | TBD | TBD | TBD |
+| v5 IPPO (300k) | more compute on v4 config | 0.03-0.10 | terminal 97% / loot 87% / extraction 87% | 0.7-1.5 |
+| v5 MAPPO (300k) | more compute on v4 config | TBD | TBD | TBD |
+
+**v5 result (stage-0, 60-episode diagnostic, `results_stage0_ippo_v5.json`):** 300k steps lifts IPPO from 0% to a noisy 3-10% win rate (eval 20-episode peak 0.10; 60-episode re-eval 0.033). The causal chain now almost always completes (terminal 96.7%, loot 86.7%, extraction 86.7%), so the remaining bottleneck is exactly the final convergence. CAI ranks scout +0.561 > muscle +0.318 > hacker +0.245 > extractor +0.101; counterfactual no-ops show scout/hacker/extractor are each strictly necessary (win 0.10 -> 0.00) and muscle nearly so (0.10 -> 0.03). This is the intended Causal Credit Dilution signal: near-complete phase execution with rare wins, upstream agents causally essential.
 
 **Root-cause analysis (traced v4 episodes):** `spawn_mode="role"` places scout+hacker adjacent to the terminal and muscle+extractor adjacent to the loot, so the early causal chain is nearly free (extraction triggered by step 5-6 in many episodes) and needs no navigation. The extract tile is placed far away, so the decisive skill is cross-map convergence after loot, which simple 64-unit MLP policies do not acquire in 100k steps (agents hover 0-2 tiles from extract but the extractor never steps onto the tile). This is the Sparsity Wall in its cleanest form: the local, easy phases reward early learning; the global, late phase does not get learned.
 
 **Implications for the research claim:** the causal chain, action gating, and win mechanics are verified (scripted controller wins 29/30). The baseline failure *is* the motivating observation for Causal Credit Dilution research; the next step is to show QMIX/counterfactual diagnostics on longer runs and to ship the curriculum (stage-1+ with cameras/guards) plus intrinsic-motivation bonuses as the planned mitigation.
 
 ### Known Issues & Next Steps
-* **Baseline compute:** simple IPPO needs >100k steps to approach the final converge; run the full 300k v5 campaign and, if still flat, switch to `spawn_mode="random"` (forces navigation in early phases too) or add an intrinsic exploration bonus.
+* **Baseline compute:** simple IPPO needs ~300k steps to reach a noisy 3-10% win at stage-0; scale campaigns to 1-2M steps, or switch to `spawn_mode="random"` (forces navigation in early phases too) and/or add an intrinsic exploration bonus to break the final-converge plateau.
 * **Throughput:** ~40-70 SPS on CUDA; the per-env Python loop in `vec_env.step` and per-agent tensor moves dominate. Next step: batch env stepping or move the sim loop into NumPy/Numba.
 * **Reward/alarm balance:** alarm builds fast enough that a 3-turn hack chain raises it ~7 units; longer runs are needed to tune this so mid-difficulty stages are solvable but not trivial.
 * **Baseline comparison:** run IPPO / MAPPO / QMIX to convergence on each curriculum stage and emit the CAI + counterfactual tables for the research writeup.
