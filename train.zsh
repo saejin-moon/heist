@@ -30,6 +30,11 @@ REPO_URL="${HEIST_REPO_URL:-https://github.com/saejin-moon/heist.git}"
 CAMPAIGN_STEPS=299008
 CIR_COEF=0.5
 CAR_COEF=0.5
+STAGES="0"
+SKIP_SMOKE=0
+DO_PULL=0
+DAEMON=0
+RUN_EVAL=0
 
 usage() {
     cat << 'EOF'
@@ -207,5 +212,9 @@ else
         run_stage "$stg"
     done
     log "All selected stages finished successfully!"
+    if [ "$RUN_EVAL" -eq 1 ]; then
+        log "Running evaluation..."
+        uv run python src/eval_stage0_300k.py || true
+    fi
     print "Check final status with: uv run python tools/status.py"
 fi
