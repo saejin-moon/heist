@@ -1,0 +1,32 @@
+{
+  "metrics": {
+    "win_rate": 0.0,
+    "mean_return": -7.94825,
+    "mean_length": 16.25,
+    "mean_alarm": 98.33999999999999,
+    "terminal_rate": 0.7833333333333333,
+    "loot_rate": 0.6333333333333333,
+    "extraction_rate": 0.38333333333333336,
+    "mean_hack_progress": 0.2833333333333333
+  },
+  "cai": {
+    "scout": -0.9846578945669151,
+    "hacker": -0.39943457875390287,
+    "muscle": -0.4000341331777406,
+    "extractor": -0.2387385453963855
+  },
+  "counterfactual": {
+    "baseline_win_rate": 0.0,
+    "importance": {
+      "scout": 0.0,
+      "hacker": 0.0,
+      "muscle": 0.0,
+      "extractor": 0.0
+    }
+  },
+  "algo": "mappo",
+  "run_dir": "checkpoints/mappo_car_s0_s0",
+  "env_config": {},
+  "episodes": 60,
+  "seed": 777
+}
