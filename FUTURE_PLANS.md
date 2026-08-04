@@ -30,6 +30,12 @@ Only after all of those pass, launch a real training run.
 > in smokes so shape-sensitive paths (truncation bootstrapping) are
 > exercised with more than one env per batch.
 
+Enforcement: `.github/workflows/ci.yml` runs `ruff check`, `ruff format
+--check`, `pytest`, and the PettingZoo parallel-API smoke on every push to
+main and on PRs.  `uv sync --locked` in CI guarantees the lockfile matches
+`pyproject.toml`, so a stale `uv.lock` fails the build instead of silently
+installing a different tree.
+
 ---
 
 ## Next steps (in priority order)
