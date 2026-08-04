@@ -424,7 +424,7 @@ flowchart LR
 | G1 | After REV-1/2 | G0 passes; `train_ippo.py --total-timesteps 2048 --num-envs 2 --num-steps 128 --eval-every 2 --eval-episodes 2` (README smoke) |
 | G2 | After REV-3/4 | Synthetic win-at-step-5 vs truncate-at-`max_steps` traces show distinct TD behavior; stage-0 smoke with small `max_steps` (truncations common) |
 | G3 | After M1 | `run_scripted_curriculum.py` stage win rates stay monotonic; `manual_control.py` shows breach, slow extractor, LOS guards, delayed alarm |
-| G4 | After REV-7 | ✅ All baselines re-run without `global_state` (2048-step smokes pass); comm variant trains end-to-end; message→outcome correlation diagnostic logs `max_terminal_corr`
+| G4 | After REV-7 | ✅ Baselines re-run without `global_state` (2048-step + 60k-step smokes pass); comm variant trains end-to-end (60k steps, no crash); message→outcome correlation logged.  60k-step stage-0 comparison: IPPO floor win=0.00 / terminal=0.70 / loot=0.15 / return=-4.03; comm win=0.00 / terminal=0.45 / loot=0.15 / return=-4.49 (comparable).  Comm diagnostic: max message↔terminal corr 0.92, mean 0.32–0.47, non-uniform attention (hacker→muscle 0.54).  Full convergence claim (≥ floor over multi-hundred-k steps) remains a longer experiment; machinery and initial signal in place |
 
 ## 11. Documentation update checklist
 

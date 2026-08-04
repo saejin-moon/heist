@@ -19,12 +19,23 @@ import os
 import torch
 
 from env import HeistEnv, AGENTS
-from model import HeistAgent, MappoAgent, QNetwork
-from evaluate import evaluate_policies, credit_attribution_index, counterfactual_importance
+from model import HeistAgent, MappoAgent, QNetwork, CommAgent
+from evaluate import (
+    evaluate_policies, credit_attribution_index, counterfactual_importance,
+    evaluate_comm_policies, message_outcome_correlation,
+)
 
 
 def load_policies(algo, run_dir, state_dim, device):
     policies = {}
+    if algo == "comm":
+        # REV-7: shared CommAgent with TarMAC messages, saved as comm.pt.
+        p = CommAgent(state_dim=state_dim, centralized=False)
+        sd = torch.load(os.path.join(run_dir, "comm.pt"), map_location=device,
+                        weights_only=True)
+        p.load_state_dict(sd)
+        p.to(device).eval()
+        return p
     if algo == "mappo":
         # Shared-actor MAPPO saves one policy.pt; all agents use the same weights.
         p = MappoAgent(state_dim=state_dim)
@@ -54,7 +65,8 @@ def load_policies(algo, run_dir, state_dim, device):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", required=True)
-    ap.add_argument("--algo", default="ippo", choices=["ippo", "mappo", "qmix"])
+    ap.add_argument("--algo", default="ippo",
+                    choices=["ippo", "mappo", "qmix", "comm"])
     ap.add_argument("--env-config", type=str, default="{}")
     ap.add_argument("--episodes", type=int, default=50)
     ap.add_argument("--seed", type=int, default=777)
@@ -65,6 +77,38 @@ def main():
     env = HeistEnv(json.loads(args.env_config))
     state_dim = env.state().shape[0]
     policies = load_policies(args.algo, args.run_dir, state_dim, args.device)
+
+    if args.algo == "comm":
+        print("=" * 64)
+        print(f"HEIST evaluation: algo={args.algo} run={args.run_dir}")
+        print("=" * 64)
+        metrics = evaluate_comm_policies(policies, env, episodes=args.episodes,
+                                         seed=args.seed, device=args.device)
+        for k, v in metrics.items():
+            print(f"{k:20s}: {v:.4f}" if isinstance(v, float) else f"{k:20s}: {v}")
+        print("-" * 64)
+        diag = message_outcome_correlation(policies, env, episodes=args.episodes,
+                                           seed=args.seed, device=args.device)
+        print("Message-outcome correlation (REV-7 Phase C):")
+        print(f"  max terminal corr : {diag['max_terminal_message_corr']:.4f}")
+        print(f"  mean terminal corr: {diag['mean_terminal_message_corr']:.4f}")
+        print("  mean attention matrix (receiver rows):")
+        for i, a in enumerate(AGENTS):
+            print(f"    {a:>9}: " + " ".join(f"{diag['mean_attention'][i, j]:.3f}"
+                                             for j in range(len(AGENTS))))
+        if args.out:
+            os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+            payload = {"metrics": metrics, "diag": {
+                "max_terminal_message_corr": diag["max_terminal_message_corr"],
+                "mean_terminal_message_corr": diag["mean_terminal_message_corr"],
+                "mean_attention": diag["mean_attention"].tolist(),
+            }, "algo": args.algo, "run_dir": args.run_dir,
+                "env_config": json.loads(args.env_config),
+                "episodes": args.episodes, "seed": args.seed}
+            with open(args.out, "w") as f:
+                json.dump(payload, f, indent=2)
+            print(f"\nsaved results to {args.out}")
+        return
 
     print("=" * 64)
     print(f"HEIST evaluation: algo={args.algo} run={args.run_dir}")
