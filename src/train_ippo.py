@@ -336,9 +336,9 @@ def train(args: Args):
                     t_role = torch.stack(
                         [
                             torch.tensor(
-                                last_infos[int(i)]["terminal_observation"][a]["role_id"][
-                                    0
-                                ],
+                                last_infos[int(i)]["terminal_observation"][a][
+                                    "role_id"
+                                ][0],
                                 device=device,
                             )
                             for i in t_idx

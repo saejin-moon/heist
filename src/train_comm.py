@@ -61,6 +61,13 @@ def parse_args():
     p.add_argument("--save-model", action="store_true")
     p.add_argument("--env-config", type=str, default="")
     p.add_argument(
+        "--centralized",
+        action="store_true",
+        help="MAPPO-style centralized critic: value estimates come from "
+        "env.state() (shared across agents) instead of local obs+messages. "
+        "Actor still uses TarMAC messages (FUTURE_PLANS.md \u00a75).",
+    )
+    p.add_argument(
         "--comm-diagnostic-every",
         type=int,
         default=4096,
@@ -116,7 +123,7 @@ if __name__ == "__main__":
     last_infos = [{} for _ in range(args.num_envs)]
 
     state_dim = vec_env.state_dim
-    policy = CommAgent(state_dim=state_dim, centralized=False).to(device)
+    policy = CommAgent(state_dim=state_dim, centralized=args.centralized).to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=args.learning_rate, eps=1e-5)
 
     obs_h, obs_w = OBSERVATION_SIZE
@@ -138,6 +145,8 @@ if __name__ == "__main__":
     buf_terminated = torch.zeros((args.num_steps, args.num_envs), device=device)
     buf_truncated = torch.zeros((args.num_steps, args.num_envs), device=device)
     buf_bootstrap = torch.zeros((args.num_steps, args.num_envs, n), device=device)
+    # centralized critic consumes env.state() at every (step, env)
+    buf_state = torch.zeros((args.num_steps, args.num_envs, state_dim), device=device)
 
     num_updates = args.total_steps // (args.num_steps * args.num_envs)
     print(f"num_updates: {num_updates}")
@@ -154,10 +163,16 @@ if __name__ == "__main__":
         # ---------------- rollout ----------------
         for step in range(args.num_steps):
             global_step += 1
+            state_t = torch.tensor(next_state, device=device)
+            if args.centralized:
+                buf_state[step] = state_t
             obs_list, role_list, mask_list = _stack_obs(next_obs)
             with torch.no_grad():
                 actions, logprobs, _, values = policy.get_action_and_value(
-                    obs_list, role_list, mask_list
+                    obs_list,
+                    role_list,
+                    mask_list,
+                    state=(state_t if args.centralized else None),
                 )
             # actions/logprobs/values: [num_envs, n_agents]
 
@@ -202,47 +217,78 @@ if __name__ == "__main__":
             t_idx = buf_truncated[step].bool().nonzero(as_tuple=False).flatten()
             if t_idx.numel():
                 with torch.no_grad():
-                    for env_i in t_idx.cpu().tolist():
-                        term_obs = infos[int(env_i)]["terminal_observation"]
-                        obs_t = [
-                            torch.tensor(term_obs[a]["observation"], device=device)
-                            for a in AGENTS
-                        ]
-                        role_t = [
-                            torch.tensor(term_obs[a]["role_id"], device=device)
-                            for a in AGENTS
-                        ]
-                        mask_t = [
-                            torch.tensor(term_obs[a]["action_mask"], device=device)
-                            for a in AGENTS
-                        ]
-                        _, _, _, bv = policy.get_action_and_value(obs_t, role_t, mask_t)
-                        buf_bootstrap[step, env_i] = bv[0]
+                    if args.centralized:
+                        # MAPPO-style: bootstrap from critic(terminal_state)
+                        t_states = torch.stack(
+                            [
+                                torch.tensor(
+                                    infos[int(env_i)]["terminal_state"], device=device
+                                )
+                                for env_i in t_idx.cpu().tolist()
+                            ]
+                        )
+                        bv = policy.critic(t_states).expand(-1, n).clone()
+                        buf_bootstrap[step][t_idx] = bv
+                    else:
+                        for env_i in t_idx.cpu().tolist():
+                            term_obs = infos[int(env_i)]["terminal_observation"]
+                            obs_t = [
+                                torch.tensor(term_obs[a]["observation"], device=device)
+                                for a in AGENTS
+                            ]
+                            role_t = [
+                                torch.tensor(term_obs[a]["role_id"], device=device)
+                                for a in AGENTS
+                            ]
+                            mask_t = [
+                                torch.tensor(term_obs[a]["action_mask"], device=device)
+                                for a in AGENTS
+                            ]
+                            _, _, _, bv = policy.get_action_and_value(
+                                obs_t, role_t, mask_t
+                            )
+                            buf_bootstrap[step, env_i] = bv[0]
 
         # ---------------- GAE + returns ----------------
         with torch.no_grad():
             obs_list, role_list, mask_list = _stack_obs(next_obs)
+            next_state_t = torch.tensor(next_state, device=device)
             _, _, _, next_values = policy.get_action_and_value(
-                obs_list, role_list, mask_list
+                obs_list,
+                role_list,
+                mask_list,
+                state=(next_state_t if args.centralized else None),
             )  # [num_envs, n]
 
             # bootstrap for truncated envs at rollout end
             t_idx = next_truncations.bool().nonzero(as_tuple=False).flatten().tolist()
-            for env_i in t_idx:
-                term_obs = last_infos[int(env_i)]["terminal_observation"]
-                obs_t = [
-                    torch.tensor(term_obs[a]["observation"], device=device)
-                    for a in AGENTS
-                ]
-                role_t = [
-                    torch.tensor(term_obs[a]["role_id"], device=device) for a in AGENTS
-                ]
-                mask_t = [
-                    torch.tensor(term_obs[a]["action_mask"], device=device)
-                    for a in AGENTS
-                ]
-                _, _, _, bv = policy.get_action_and_value(obs_t, role_t, mask_t)
-                next_values[env_i] = bv[0]  # [n], on device
+            if args.centralized and t_idx:
+                t_states = torch.stack(
+                    [
+                        torch.tensor(
+                            last_infos[int(env_i)]["terminal_state"], device=device
+                        )
+                        for env_i in t_idx
+                    ]
+                )
+                next_values[t_idx] = policy.critic(t_states).expand(-1, n).clone()
+            elif not args.centralized:
+                for env_i in t_idx:
+                    term_obs = last_infos[int(env_i)]["terminal_observation"]
+                    obs_t = [
+                        torch.tensor(term_obs[a]["observation"], device=device)
+                        for a in AGENTS
+                    ]
+                    role_t = [
+                        torch.tensor(term_obs[a]["role_id"], device=device)
+                        for a in AGENTS
+                    ]
+                    mask_t = [
+                        torch.tensor(term_obs[a]["action_mask"], device=device)
+                        for a in AGENTS
+                    ]
+                    _, _, _, bv = policy.get_action_and_value(obs_t, role_t, mask_t)
+                    next_values[env_i] = bv[0]  # [n], on device
 
             # terminated envs bootstrap to 0
             next_values = next_values * (1.0 - next_terminations).unsqueeze(1)
@@ -284,6 +330,8 @@ if __name__ == "__main__":
         flat_logprobs = buf_logprobs.reshape(B, n)
         flat_adv = torch.stack([advantages[ai].reshape(B) for ai in range(n)], dim=1)
         flat_returns = torch.stack([returns[ai].reshape(B) for ai in range(n)], dim=1)
+        # centralized critic consumes one state per (step, env), aligned with B
+        flat_state = buf_state.reshape(B, state_dim)
 
         # all agents in a (step, env) share the same transition, so we can
         # reshape to (B * n, ...) or (B, n, ...) and process jointly.  The
@@ -310,11 +358,13 @@ if __name__ == "__main__":
                 role_list_mb = [mb_role[:, i] for i in range(n)]
                 mask_list_mb = [mb_mask[:, i] for i in range(n)]
 
+                mb_state = flat_state[mb] if args.centralized else None
+
                 _, newlogprob, entropy, newvalue = policy.get_action_and_value(
                     obs_list_mb,
                     role_list_mb,
                     mask_list_mb,
-                    state=None,
+                    state=mb_state,
                     action=mb_actions,
                 )
 

@@ -204,6 +204,14 @@ QMIX learns the first gate (terminal hack) but never the downstream chain (loot 
 **Implications for the research claim:** the causal chain, action gating, and win mechanics are verified (scripted controller wins 29/30). The baseline failure *is* the motivating observation for Causal Credit Dilution research; the next step is to show QMIX/counterfactual diagnostics on longer runs and to ship the curriculum (stage-1+ with cameras/guards) plus intrinsic-motivation bonuses as the planned mitigation.
 
 ### Known Issues & Next Steps
+* **Full 300k campaign: SETUP ONLY — NOT RUN YET.**  The real stage-0
+  campaign (IPPO/MAPPO/QMIX/comm, seeds 0-2) is intended for a different
+  (dedicated) machine and is not scheduled on this box.  Only short trainer
+  smokes and scripted-curriculum validation have been run.  An early
+  partial campaign on this machine was aborted and its checkpoints
+  quarantined to `deleted/`.  Launch instructions are in the README →
+  "Full research experiment (300k, stage-0)"; update this section's tables
+  only after that campaign completes.
 * **Baseline compute:** IPPO needs ~300k steps to reach a noisy 3-10% win at stage-0 (role-spawn). A 300k run with `spawn_mode="random"` matched the win rate (0.033) but had far worse chain completion (32/22/22% vs 97/87/87%) — the harder navigation cost the budget without improving convergence. Role-spawn remains the best stage-0 config. Next steps: scale to 1-2M steps for IPPO/MAPPO, and/or add intrinsic-motivation exploration bonuses to break the final-converge plateau.
 * **Throughput:** ~40-70 SPS on CUDA; the per-env Python loop in `vec_env.step` and per-agent tensor moves dominate. Next step: batch env stepping or move the sim loop into NumPy/Numba.
 * **Reward/alarm balance:** alarm builds fast enough that a 3-turn hack chain raises it ~7 units; longer runs are needed to tune this so mid-difficulty stages are solvable but not trivial.

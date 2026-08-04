@@ -2,6 +2,24 @@
 # ---------------------------------------------------------------------------
 # Stage-0 research experiment (FUTURE_PLANS.md §1)
 #
+# ⚠️⚠️⚠️  DO NOT RUN THIS YET.  ⚠️⚠️⚠️
+# The full 300k-step campaign is intentionally NOT scheduled for this
+# machine.  Everything below is SETUP only: the campaign will be launched
+# later on a different (more powerful / dedicated) machine.
+#
+# Rules while we are still setting up:
+#   * Do NOT execute this script end-to-end.
+#   * Only run short smoke tests of the individual trainers (see
+#     `src/train_*.py` `--total-steps 2048` style invocations in README).
+#   * If a full campaign is ever desired, run it on the target machine
+#     following the README "Full research experiment" section, and update
+#     FUTURE_PLANS.md + PLAN.md before/after.
+#
+# Status: see log/experiment_stage0_300k.log (an early partial campaign
+# was aborted; its checkpoints were quarantined to deleted/).
+# ---------------------------------------------------------------------------
+# What this script will do (once approved):
+#
 # Run IPPO (Phase A floor), MAPPO, QMIX, and train_comm at 300k steps on
 # stage-0 (seeds 0-2).  Resolves the deferred G4 claim "comm >= Phase A floor".
 #
@@ -9,8 +27,8 @@
 # Total budget: ~8-12 hours.
 #
 # Logs:   log/experiment_stage0_300k.log
-# Runs:   src/runs/<algo>_s<seed>/
-# Ckpts:  src/checkpoints/<algo>_s<seed>/
+# Runs:   runs/<algo>_s<seed>/
+# Ckpts:  checkpoints/<algo>_s<seed>/
 # ---------------------------------------------------------------------------
 set -euo pipefail
 cd "$(dirname "$0")"

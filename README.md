@@ -42,6 +42,53 @@ uv run ruff check                                                 # lint (E/F/W/
 uv run ruff format --check                                        # formatting
 ```
 
+## Full research experiment (300k, stage-0)
+
+> **Status: SETUP ONLY. This campaign is not scheduled to run yet.** The
+> intent is to launch it later on a dedicated machine. Do not run the
+> end-to-end campaign on this box; only short trainer smokes are expected
+> during setup. See `FUTURE_PLANS.md §1` and the banner at the top of
+> `experiment_stage0_300k.sh`.
+
+### 1. Set up the environment on the target machine
+```bash
+# requires: uv, a CUDA-capable GPU, ~12h of wall time for all 12 runs
+git clone https://github.com/saejin-moon/heist.git
+cd heist
+uv sync --locked        # install pinned deps from uv.lock (fails if stale)
+uv run pytest -q        # 11 unit/mechanics smokes must pass
+uv run ruff check       # lint must pass
+```
+Verify the GPU is visible to torch:
+```bash
+uv run python -c "import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO CUDA')"
+```
+
+### 2. Launch the campaign
+```bash
+# Sequential driver: IPPO, MAPPO, QMIX, comm at 300k steps on stage-0
+# (seeds 0-2). Logs to log/experiment_stage0_300k.log. Resumable: reruns
+# skip any <algo>_s<seed> that already has a checkpoint in checkpoints/.
+nohup bash experiment_stage0_300k.sh > log/launch.out 2>&1 &
+
+# watch progress
+tail -f log/experiment_stage0_300k.log
+```
+Each trainer logs to TensorBoard under `runs/<algo>_s<seed>/`:
+```bash
+uv run tensorboard --logdir runs --port 6006
+```
+
+### 3. Evaluate after the campaign finishes
+```bash
+# G4 comparison: win rate + CAI/counterfactual (IPPO/MAPPO/QMIX) and
+# message-outcome correlation (comm), 60 episodes, seed 555.
+# Writes results/stage0_300k_comparison.json
+uv run python src/eval_stage0_300k.py
+```
+Refresh `PLAN.md` "Baseline Validation Campaign" and `results/README.md`
+with the resulting tables.
+
 ## Project Layout
 ```
 src/constants.py    reward/alarm constants, ROLE_ACTIONS, tile palette
