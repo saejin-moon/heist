@@ -279,12 +279,14 @@ def train(args: Args):
                 with torch.no_grad():
                     t_idx = trunc_t.bool().nonzero(as_tuple=False).flatten()
                     if t_idx.numel():
+                        # terminal_observation is packed per-agent with a
+                        # leading env dim of 1 (vec_env._pack([o])); strip it.
                         t_obs = torch.stack(
                             [
                                 torch.tensor(
                                     infos[int(i)]["terminal_observation"][a][
                                         "observation"
-                                    ],
+                                    ][0],
                                     device=device,
                                 )
                                 for i in t_idx
@@ -293,7 +295,9 @@ def train(args: Args):
                         t_role = torch.stack(
                             [
                                 torch.tensor(
-                                    infos[int(i)]["terminal_observation"][a]["role_id"],
+                                    infos[int(i)]["terminal_observation"][a]["role_id"][
+                                        0
+                                    ],
                                     device=device,
                                 )
                                 for i in t_idx
@@ -323,7 +327,7 @@ def train(args: Args):
                             torch.tensor(
                                 last_infos[int(i)]["terminal_observation"][a][
                                     "observation"
-                                ],
+                                ][0],
                                 device=device,
                             )
                             for i in t_idx
@@ -332,8 +336,8 @@ def train(args: Args):
                     t_role = torch.stack(
                         [
                             torch.tensor(
-                                last_infos[int(i)]["terminal_observation"][a][
-                                    "role_id"
+                                last_infos[int(i)]["terminal_observation"][a]["role_id"][
+                                    0
                                 ],
                                 device=device,
                             )
