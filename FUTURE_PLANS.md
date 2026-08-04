@@ -3,6 +3,13 @@
 Status snapshot: all 9 revisions in `revisions.md` are implemented and
 committed (see `REVISION_PLAN.md` for per-revision status + gates).
 
+Post-implementation fix: `train_ippo.py` had a latent shape bug in the
+truncation bootstrap path (line ~302) where `terminal_observation` was
+packed with a leading env dim of 1 but `role_id` was not stripped;
+triggered any time a rollout contained a truncation.  Fixed by indexing
+`[0]` on the packed arrays.  Stale pre-REV-7 checkpoints moved to
+`deleted/checkpoints/` (regenerable, invalidated by dim changes).
+
 ---
 
 ## ⚠️ WORKFLOW RULE: Test at small scale BEFORE training
@@ -42,10 +49,11 @@ installing a different tree.
 ## Next steps (in priority order)
 
 ### 1. The real research experiment (GPU)
-Run IPPO (Phase A floor), MAPPO, QMIX, and `train_comm` at 300k–1M steps on
-stage-0 (seeds 0–2).  Resolves the deferred G4 claim "comm ≥ Phase A floor".
-GPU measured at only ~16 sps (env stepping dominates), so budget ~5h per
-300k-step comm run; parallelize seeds across GPUs if available.
+**IN PROGRESS.**  `experiment_stage0_300k.sh` launched on RTX 3000 Ada
+(GPU task `739092xbyk`), running IPPO/MAPPO/QMIX/comm at 300k steps on
+stage-0 (seeds 0-2).  Progress in `log/experiment_stage0_300k.log`.
+IPPO ~84 sps, comm ~48 sps → ~8-12 h total wall-clock.  Resolves the
+deferred G4 claim "comm >= Phase A floor".
 
 ### 2. CAI on the new contract
 Run `run_eval.py` / `summarize()` on trained models to measure Credit
@@ -69,7 +77,9 @@ chain (e.g., hacker broadcasting "terminal hacked" to extractor).
 (centralized critic + messages) and optionally a QMIX-style comm variant.
 
 ### 6. Housekeeping
-- Retrain on CUDA (all smokes so far were CPU).
-- `checkpoints/mappo_s0/policy.pt` and old `runs/` event files are
-  invalidated by the REV-7 dim change: regenerate or remove.
+- ✅ Stale pre-REV-7 checkpoints/event files quarantined to `deleted/`
+  (they are invalidated by the REV-7 dim change).
+- ✅ `train_ippo.py` truncation-bootstrap shape bug fixed (commit `36d99c6`).
+- Retrain on CUDA (all smokes so far were CPU): the 300k-stage-0 experiment
+  is the first CUDA campaign.
 - Keep the pytest suite green (`uv run pytest -q`).
