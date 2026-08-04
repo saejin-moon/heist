@@ -1,0 +1,45 @@
+{
+  "metrics": {
+    "win_rate": 0.0,
+    "mean_return": -0.2812500000000006,
+    "mean_length": 90.0,
+    "mean_alarm": 5.0,
+    "terminal_rate": 0.8333333333333334,
+    "loot_rate": 0.0,
+    "extraction_rate": 0.0,
+    "mean_hack_progress": 0.0
+  },
+  "cai": {
+    "scout": 0.0,
+    "hacker": 0.0,
+    "muscle": 0.0,
+    "extractor": 0.0
+  },
+  "counterfactual": {
+    "baseline_win_rate": 0.0,
+    "importance": {
+      "scout": 0.0,
+      "hacker": 0.0,
+      "muscle": 0.0,
+      "extractor": 0.0
+    }
+  },
+  "algo": "qmix",
+  "run_dir": "checkpoints/qmix_s0",
+  "env_config": {
+    "map_size": [
+      11,
+      11
+    ],
+    "num_rooms_range": [
+      1,
+      2
+    ],
+    "guard_count": 0,
+    "camera_count": 0,
+    "door_count": 0,
+    "max_steps": 90
+  },
+  "episodes": 60,
+  "seed": 555
+}

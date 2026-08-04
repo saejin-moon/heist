@@ -2,6 +2,13 @@
 */__pycache__/
 deleted/
 *.xml
+
+# training logs and temp polling scripts (not source)
 *.log
+poll_*.sh
+poll_*.out
+*.status
+repomix-output.xml
+
 src/checkpoints/
 src/runs/
