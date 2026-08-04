@@ -126,6 +126,7 @@ In an RG-Dec-POMDP, this assumption breaks down due to **Causal Credit Dilution*
    * `summarize()` prints a full diagnostic report; verified against random policies.
 7. **Curriculum Learning (`curriculum.py`):**
    * Five staged configs ramping from 11x11 / no guards / no cameras up to the 50x50 full benchmark, addressing the "Sparsity Wall".
+   * **Validated (scripted controller, `src/scripted.py` + `src/run_scripted_curriculum.py`):** every stage is solvable and difficulty ramps monotonically. A guard-avoiding BFS team with muscle neutralization and hacker door bypass wins 1.00 / 0.58 / 0.40 / 0.33 / 0.20 across stages 0-4 (40-episode runs), with the causal chain completing 73-95% at every stage. Counterfactual analysis confirms scout/hacker/extractor are strictly necessary at all five stages (win -> 0 when no-op'd), so the RG-Dec-POMDP chain structure survives scaling. Full table in `results/README.md`.
 
 ### Document & Model Updates
 * **Formal Title:** HEIST: Hierarchical Environment for Interdependent Sequential Tasks.

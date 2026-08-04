@@ -23,12 +23,14 @@ from constants import (
 )
 
 
-def bfs_next_step(grid, start, goal):
-    """First move toward `goal` (BFS), avoiding walls/doors.  Returns an
-    action id (UP/DOWN/LEFT/RIGHT) or None if already there / unreachable."""
+def bfs_next_step(grid, start, goal, blocked=None):
+    """First move toward `goal` (BFS), avoiding walls/doors plus any
+    extra blocked cells.  Returns an action id (UP/DOWN/LEFT/RIGHT) or
+    None if already there / unreachable."""
     if start == goal:
         return None
     h, w = grid.shape
+    blocked = blocked or set()
     prev = {start: None}
     q = deque([start])
     while q:
@@ -41,7 +43,7 @@ def bfs_next_step(grid, start, goal):
             nxt = (nr, nc)
             if not (0 <= nr < h and 0 <= nc < w):
                 continue
-            if grid[nr, nc] in (WALL, DOOR):
+            if grid[nr, nc] in (WALL, DOOR) or nxt in blocked:
                 continue
             if nxt in prev:
                 continue
@@ -58,30 +60,91 @@ def bfs_next_step(grid, start, goal):
     return first
 
 
+def _danger_zone(env):
+    """Tiles a safe policy avoids: every non-neutralized guard and all
+    tiles within catch distance of one."""
+    blocked = set()
+    for gi, gpos in enumerate(env.guard_positions):
+        if env.neutralized[gi] > 0:
+            continue
+        gr, gc = gpos
+        d = env.config["catch_distance"]
+        for r in range(max(0, gr - d), min(env.map_h, gr + d + 1)):
+            for c in range(max(0, gc - d), min(env.map_w, gc + d + 1)):
+                blocked.add((r, c))
+    return blocked
+
+
 class ScriptedTeam:
     """Deterministic BFS controller.  `act()` returns {agent: action}."""
 
     def __init__(self, env: HeistEnv):
         self.env = env
 
-    def _move_toward(self, agent, goal):
-        step = bfs_next_step(self.env.grid, self.env.agent_positions[agent], goal)
+    def _move_toward(self, agent, goal, avoid_guards=True):
+        blocked = _danger_zone(self.env) if avoid_guards else set()
+        step = bfs_next_step(self.env.grid, self.env.agent_positions[agent],
+                             goal, blocked=blocked)
         if step is None:
             return WAIT
         return step
 
+    def _near_goal(self, agent, goal):
+        return (bfs_next_step(self.env.grid, self.env.agent_positions[agent], goal)
+                is None)
+
+    def _adjacent_door(self, pos):
+        grid = self.env.grid
+        for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            nr, nc = pos[0] + dr, pos[1] + dc
+            if 0 <= nr < self.env.map_h and 0 <= nc < self.env.map_w \
+                    and grid[nr, nc] == DOOR:
+                return True
+        return False
+
+    def _hacker_clear_door(self):
+        """Hacker moves to and bypasses a door blocking the terminal path."""
+        env = self.env
+        pos = env.agent_positions["hacker"]
+        if self._adjacent_door(pos):
+            return INTERACT
+        # nearest door tile
+        best, best_d = None, 1e9
+        for dr, dc in env.door_positions:
+            d = abs(pos[0] - dr) + abs(pos[1] - dc)
+            if d < best_d:
+                best_d, best = d, (dr, dc)
+        if best is None:
+            return WAIT
+        # walk to a tile adjacent to the door, then bypass next step
+        grid = env.grid
+        best_adj, best_adj_d = None, 1e9
+        for ar in range(max(0, best[0] - 1), min(env.map_h, best[0] + 2)):
+            for ac in range(max(0, best[1] - 1), min(env.map_w, best[1] + 2)):
+                if grid[ar, ac] in (WALL, DOOR):
+                    continue
+                d = abs(ar - pos[0]) + abs(ac - pos[1])
+                if d < best_adj_d:
+                    best_adj_d, best_adj = d, (ar, ac)
+        if best_adj is None:
+            return WAIT
+        step = bfs_next_step(grid, pos, best_adj,
+                             blocked=_danger_zone(env))
+        return step if step is not None else WAIT
+
     def act(self):
         env = self.env
+        blocked = _danger_zone(env)
         actions = {}
         for agent in AGENTS:
             pos = env.agent_positions[agent]
             if agent == "scout":
                 # tag the terminal first, then converge on extract
                 if env.terminal_pos not in env.tagged_pois:
-                    actions[agent] = (
-                        INTERACT if bfs_next_step(env.grid, pos, env.terminal_pos) is None
-                        else self._move_toward(agent, env.terminal_pos)
-                    )
+                    if self._near_goal(agent, env.terminal_pos):
+                        actions[agent] = INTERACT
+                    else:
+                        actions[agent] = self._move_toward(agent, env.terminal_pos)
                 elif not self._within_win_radius(agent):
                     actions[agent] = self._move_toward(agent, env.extract_pos)
                 else:
@@ -90,26 +153,40 @@ class ScriptedTeam:
                 # disable the terminal once the scout has tagged it
                 if (env.terminal_pos in env.tagged_pois
                         and not env.terminal_disabled):
-                    actions[agent] = (
-                        INTERACT if bfs_next_step(env.grid, pos, env.terminal_pos) is None
-                        else self._move_toward(agent, env.terminal_pos)
-                    )
+                    if self._near_goal(agent, env.terminal_pos):
+                        actions[agent] = INTERACT
+                    else:
+                        step = self._move_toward(agent, env.terminal_pos)
+                        if step == WAIT and self._adjacent_door(pos):
+                            actions[agent] = INTERACT
+                        else:
+                            actions[agent] = step if step != WAIT \
+                                else self._hacker_clear_door()
                 elif not self._within_win_radius(agent):
                     actions[agent] = self._move_toward(agent, env.extract_pos)
                 else:
                     actions[agent] = WAIT
             elif agent == "muscle":
-                # no guards/doors at stage-0: go straight to extract
+                # neutralize a nearby guard, else converge on extract
+                best_g = min(env.guard_positions,
+                             key=lambda g: abs(pos[0] - g[0]) + abs(pos[1] - g[1]),
+                             default=None)
+                if best_g is not None:
+                    gi = env.guard_positions.index(best_g)
+                    if (env.neutralized[gi] == 0
+                            and abs(pos[0] - best_g[0]) + abs(pos[1] - best_g[1]) <= 2):
+                        actions[agent] = INTERACT
+                        continue
                 if not self._within_win_radius(agent):
                     actions[agent] = self._move_toward(agent, env.extract_pos)
                 else:
                     actions[agent] = WAIT
             else:  # extractor
                 if not env.loot_acquired:
-                    actions[agent] = (
-                        INTERACT if bfs_next_step(env.grid, pos, env.loot_pos) is None
-                        else self._move_toward(agent, env.loot_pos)
-                    )
+                    if self._near_goal(agent, env.loot_pos):
+                        actions[agent] = INTERACT
+                    else:
+                        actions[agent] = self._move_toward(agent, env.loot_pos)
                 elif not env.extraction_triggered:
                     actions[agent] = INTERACT  # call extraction
                 elif pos != env.extract_pos:

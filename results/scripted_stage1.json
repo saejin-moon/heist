@@ -1,0 +1,42 @@
+{
+  "stage": 1,
+  "config": {
+    "map_size": [
+      15,
+      15
+    ],
+    "num_rooms_range": [
+      2,
+      4
+    ],
+    "guard_count": 2,
+    "camera_count": 0,
+    "door_count": 1,
+    "max_steps": 120,
+    "spawn_mode": "role"
+  },
+  "metrics": {
+    "win_rate": 0.575,
+    "mean_return": 3.1241250000000003,
+    "mean_length": 12.275,
+    "mean_alarm": 60.825,
+    "terminal_rate": 0.725,
+    "loot_rate": 0.725,
+    "extraction_rate": 0.725
+  },
+  "cai": {
+    "scout": 0.05450440264133068,
+    "hacker": 0.7130444899420603,
+    "muscle": 0.03227924237385435,
+    "extractor": 0.7529985868328537
+  },
+  "counterfactual": {
+    "baseline_win_rate": 0.575,
+    "importance": {
+      "scout": 0.575,
+      "hacker": 0.575,
+      "muscle": 0.49999999999999994,
+      "extractor": 0.575
+    }
+  }
+}
