@@ -9,12 +9,13 @@ To preserve the Markov Property under strict causal gating, HEIST abandons stand
 
 1. **`observation` (5x5 matrix):** The agent's local physical view, restricted by a dynamic Bresenham-raycast Fog of War. 
 2. **`action_mask` (6-element vector):** Mathematically enforces the sequential causal gates. Downstream actions (e.g., extracting loot) are dynamically masked out until upstream dependencies are resolved, preventing the policy network from wasting gradient updates on impossible actions.
-3. **`global_state` (4-element vector):** A global broadcast of the heist's phase (Terminal status, Loot status, Alarm status, Step count). Without this, downstream agents would experience action-mask changes as non-stationary magic, fatally violating the Markov Property.
+3. **`role_id` (4-element one-hot):** Identifies the agent's role (Scout, Hacker, Muscle, Extractor) so shared policies can distinguish between roles without aliasing (REV-2).
 
-> **REV-1 / REV-2 (see `REVISION_PLAN.md`):** this section is stale. `global_state`
-> is currently 10 elements (phase + objective bearings) and will grow to 14 with
-> the role one-hot, then be removed entirely in the learned-communication
-> milestone (REV-7).
+REV-7 (see `REVISION_PLAN.md §6`) removed the former `global_state` broadcast
+from the per-agent observation contract.  Agents must now communicate phase
+status (e.g., "terminal hacked") through learned TarMAC-style messages; a
+centralized critic (`env.state()`) remains available for MAPPO/QMIX value
+estimation but is not part of the per-agent observation dict.
 
 ## Adversary and Loss Conditions
 To prevent the environment from degrading into a trivial pathfinding task, HEIST introduces two opposing adversarial pressures. First, Rule-Based Adversaries (Guards) execute dynamic random-walk patrols. If a guard's Manhattan distance to any agent closes to $\le 1$, a global alarm triggers, terminating the episode with a catastrophic `-10.0` shared reward. Second, a constant time penalty (`-0.01` per step) acts as a baseline bleed. This dual-pressure system prevents policy collapse: agents cannot safely sprint blindly to objectives, nor can they exploit a "hide-and-wait" policy to avoid the guards entirely.

@@ -86,11 +86,11 @@ In an RG-Dec-POMDP, this assumption breaks down due to **Causal Credit Dilution*
 * **Observation Encoding:** Dict observation space per agent:
   1. `observation`: 5x5 Fog-Masked local box (masked by Fog of War except where Scout revealed tiles).
   2. `action_mask`: 6-element binary vector enforcing dynamic action constraints.
-  3. `global_state`: 4-element vector (alarm level, timer remaining, agent status signals).
+  3. `role_id`: 4-element one-hot role identity (REV-2).
 
-  > **REV-1 / REV-2 / REV-7 (see `REVISION_PLAN.md`):** stale. The vector is 10
-  > elements today (phase + per-objective bearings), becomes 14 with the role
-  > one-hot, and is slated for removal in the learned-communication milestone.
+  > REV-7 (see `REVISION_PLAN.md §6`) removed `global_state` from the per-agent
+  > obs contract.  Agents communicate phase status via learned TarMAC messages.
+  > Centralized critics (MAPPO/QMIX) read `env.state()`.
 * **Reward Structure:**
   * Shared terminal reward: $+10.0$ (successful extraction with loot), $-10.0$ (caught/alarm/timeout).
   * Intermediate rewards: $+2.0$ for key task completions (Scout revealing info, Hacker completing terminal, Muscle neutralizing guard, Extractor securing loot).
@@ -106,7 +106,7 @@ In an RG-Dec-POMDP, this assumption breaks down due to **Causal Credit Dilution*
    * Passed strict PettingZoo `parallel_api_test` for RLlib/CleanRL integration.
 2. **Mathematical Execution (RG-Dec-POMDP):**
    * Implemented **Dynamic Action Masking** enforcing causal dependency chains (Scout $\rightarrow$ Hacker $\rightarrow$ Extractor).
-   * Constructed multi-tensor `Dict` observation space (`observation`, `action_mask`, `global_state`).
+   * Constructed multi-tensor `Dict` observation space (`observation`, `action_mask`, `role_id`); `global_state` removed in REV-7.
    * Configured shaped reward parameters (time bleed $-0.01$, intermediate objectives $+2.0$, catastrophic failure $-10.0$, global win $+10.0$).
 3. **Adversary & Map Mechanics:**
    * Procedural map generation bound to PettingZoo RNG seeds to prevent policy memorization.
@@ -134,7 +134,7 @@ In an RG-Dec-POMDP, this assumption breaks down due to **Causal Credit Dilution*
 
 ### Document & Model Updates
 * **Formal Title:** HEIST: Hierarchical Environment for Interdependent Sequential Tasks.
-* **Observation Space Model:** Confirmed 3-part Dict space: `(1) 5x5 Fog-Masked Box, (2) 6-element Action Mask, (3) 4-element Global State Vector`.
+* **Observation Space Model:** Confirmed Dict space: `(1) 5x5 Fog-Masked Box, (2) 6-element Action Mask, (3) 4-element Role One-Hot`.  `global_state` removed in REV-7; phase status communicated via learned TarMAC messages.
 * **Adversaries:** Explicit rule-based guard patrols with $-10.0$ catastrophic collision conditions.
 
 ### Future Optimization & Technical Insights
