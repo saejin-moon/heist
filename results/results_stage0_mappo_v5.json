@@ -16,12 +16,12 @@
     "extractor": 0.3773698024859768
   },
   "counterfactual": {
-    "baseline_win_rate": 0.2,
+    "baseline_win_rate": 0.06666666666666667,
     "importance": {
-      "scout": 0.2,
-      "hacker": 0.2,
-      "muscle": 0.1,
-      "extractor": 0.2
+      "scout": 0.06666666666666667,
+      "hacker": 0.06666666666666667,
+      "muscle": 0.0,
+      "extractor": 0.06666666666666667
     }
   },
   "algo": "mappo",

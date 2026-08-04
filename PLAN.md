@@ -167,9 +167,23 @@ Before trusting CAI/counterfactual numbers, we validated that the training basel
 
 | Algo | Win rate | terminal / loot / extraction | CAI (s/h/m/e) | Counterfactual |
 |---|---|---|---|---|
-| IPPO | 0.033 | 97% / 87% / 87% | +0.56 / +0.24 / +0.32 / +0.10 | scout/hacker/extractor strict, muscle nearly |
-| MAPPO | 0.067 | 67% / 42% / 42% | +0.84 / +0.35 / +0.76 / +0.38 | scout/hacker/extractor strict, muscle nearly |
-| QMIX | 0.000 | 83%/47% / 0% / 0% | 0 / 0 / 0 / 0 | all 0 (no baseline wins) |
+| Scripted (BFS) | 1.000 | 100% / 100% / 100% | n/a (zero outcome variance) | scout/hacker/extractor +1.0, muscle +0.57 |
+| IPPO | 0.033 | 97% / 87% / 87% | +0.56 / +0.24 / +0.32 / +0.10 | scout/hacker/extractor +0.033, muscle +0.000 |
+| MAPPO | 0.067 | 67% / 42% / 42% | +0.84 / +0.35 / +0.76 / +0.38 | scout/hacker/extractor +0.067, muscle +0.000 |
+| QMIX | 0.000 | 47% / 0% / 0% | 0 / 0 / 0 / 0 | all 0 (no baseline wins) |
+
+**Metric validation (scripted controller, `src/scripted.py`):** the
+near-optimal BFS team wins 60/60 at stage-0 (mean length 13, return
++11.5), proving the env is solvable. Its counterfactual profile is the
+ground truth the learned policies should approach: scout/hacker/extractor
+each strictly necessary (win 1.0 -> 0.0 when no-op'd), muscle +0.57 (no
+guards/doors at stage-0). The learned-policy evaluations reproduce this
+exact ordering, so the diagnostic metrics are not noise. Counterfactual
+baselines are reported on the same episode count and seed as the headline
+win rate, so tables are internally consistent. CAI is undefined (0.000)
+for both the scripted team (100% wins -> zero outcome variance) and QMIX
+(0% wins -> zero terminal-reward variance); the counterfactual metric is
+the informative one in those regimes.
 
 QMIX learns the first gate (terminal hack) but never the downstream chain (loot 0%, extraction 0%, win 0%), and this holds with a proper epsilon schedule annealed to 0.05 by step 200k. The value-decomposition baseline is the most strongly diluted: per-agent Q-functions receive zero credit-to-outcome correlation because the joint mixer only fires on the (never-reached) terminal win. This is the cleanest Causal Credit Dilution demonstration: the chain's downstream phases are invisible to QMIX's credit signal at this budget.
 

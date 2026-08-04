@@ -82,8 +82,8 @@ def main():
         print(f"  {a:>9}: {cai[a]:+.3f}")
 
     print("-" * 64)
-    imp = counterfactual_importance(policies, env, episodes=max(args.episodes // 2, 10),
-                                    seed=args.seed + 10_000, device=args.device)
+    imp = counterfactual_importance(policies, env, episodes=args.episodes,
+                                    seed=args.seed, device=args.device)
     print("Counterfactual importance (baseline - no-op win rate):")
     print(f"  baseline win rate: {imp['baseline_win_rate']:.3f}")
     for a in AGENTS:
