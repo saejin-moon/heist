@@ -5,3 +5,4 @@ gymnasium>=1.0
 pygame>=2.5
 torch>=2.2
 tensorboard>=2.14
+pytest>=8.0
