@@ -180,22 +180,22 @@ fi
 step "7/7  Launching campaign for stages: $STAGES"
 mkdir -p log
 
-CAMPAIGN_STEPS=299008
-
 run_stage() {
     local s="$1"
     log "Starting training for stage $s"
-    uv run python src/train_ippo.py --total-timesteps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --seed 0 --exp-name "ippo_s${s}"
-    uv run python src/train_mappo.py --total-timesteps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --seed 0 --exp-name "mappo_s${s}"
+    local cfg
+    cfg=$(uv run python -c "from curriculum import CURRICULUM, env_config_str; print(env_config_str(CURRICULUM[$s]))")
+    uv run python src/train_ippo.py --total-timesteps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "ippo_s${s}" 2>&1 | tee "log/ippo_s${s}.log"
+    uv run python src/train_mappo.py --total-timesteps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "mappo_s${s}" 2>&1 | tee "log/mappo_s${s}.log"
     if (( $(echo "$CAR_COEF > 0" | bc -l 2>/dev/null || echo 1) )); then
-        uv run python src/train_mappo.py --total-timesteps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --exp-name "mappo_car_s${s}"
+        uv run python src/train_mappo.py --total-timesteps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --env-config "$cfg" --seed 0 --exp-name "mappo_car_s${s}" 2>&1 | tee "log/mappo_car_s${s}.log"
     fi
-    uv run python src/train_comm.py --total-steps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --seed 0 --exp-name "comm_s${s}"
+    uv run python src/train_comm.py --total-steps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "comm_s${s}" 2>&1 | tee "log/comm_s${s}.log"
     if (( $(echo "$CIR_COEF > 0" | bc -l 2>/dev/null || echo 1) )); then
-        uv run python src/train_comm.py --total-steps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --exp-name "comm_cir_s${s}"
-        uv run python src/train_comm.py --total-steps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --seed 0 --exp-name "comm_cir_car_s${s}"
+        uv run python src/train_comm.py --total-steps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --env-config "$cfg" --exp-name "comm_cir_s${s}" 2>&1 | tee "log/comm_cir_s${s}.log"
+        uv run python src/train_comm.py --total-steps "$CAMPAIGN_STEPS" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --env-config "$cfg" --exp-name "comm_cir_car_s${s}" 2>&1 | tee "log/comm_cir_car_s${s}.log"
     fi
-    uv run python src/train_qmix.py --total-steps "$CAMPAIGN_STEPS" --train-freq 4 --seed 0 --exp-name "qmix_s${s}"
+    uv run python src/train_qmix.py --total-steps "$CAMPAIGN_STEPS" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "qmix_s${s}" 2>&1 | tee "log/qmix_s${s}.log"
 }
 
 

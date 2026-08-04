@@ -48,7 +48,8 @@ def check_logs() -> list[dict]:
         return []
 
     logs = []
-    for p in sorted(log_dir.glob("*.log")):
+    log_files = sorted(set(list(log_dir.glob("*.log")) + list(log_dir.glob("*.out"))))
+    for p in log_files:
         size = p.stat().st_size
         mtime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(p.stat().st_mtime))
         lines = p.read_text(errors="replace").splitlines()
