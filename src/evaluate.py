@@ -38,25 +38,26 @@ from constants import WAIT, INTERACT, ACTION_DELTAS, OBSERVATION_SIZE
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _select_action(policy, obs, gs, mask, device, greedy=True):
+def _select_action(policy, obs, gs, role, mask, device, greedy=True):
     obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
     gs_t = torch.tensor(gs, dtype=torch.float32, device=device).unsqueeze(0)
+    role_t = torch.tensor(role, dtype=torch.float32, device=device).unsqueeze(0)
     mask_t = torch.tensor(mask, dtype=torch.int64, device=device).unsqueeze(0)
     with torch.no_grad():
         if greedy:
-            logits = _actor_logits(policy, obs_t, gs_t)
+            logits = _actor_logits(policy, obs_t, gs_t, role_t)
             masked = torch.where(mask_t == 1, logits, torch.full_like(logits, -1e9))
             return int(masked.argmax(dim=-1).item())
-        action, _, _, _ = policy.get_action_and_value(obs_t, gs_t, mask_t)
+        action, _, _, _ = policy.get_action_and_value(obs_t, gs_t, role_t, mask_t)
         return int(action.item())
 
 
-def _actor_logits(policy, obs_t, gs_t):
+def _actor_logits(policy, obs_t, gs_t, role_t):
     """Extract raw action logits from any of the model classes.
 
     HeistAgent / MappoAgent expose `.actor`; QNetwork exposes `.net`.
     """
-    x = torch.cat((torch.flatten(obs_t, start_dim=1), gs_t), dim=1)
+    x = torch.cat((torch.flatten(obs_t, start_dim=1), gs_t, role_t), dim=1)
     if hasattr(policy, "actor"):
         return policy.actor(x)
     return policy.net(x)
@@ -84,7 +85,7 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
             if greedy and len(legal) > 0:
                 actions[a] = _select_action(
                     policies[a], obs[a]["observation"], obs[a]["global_state"],
-                    mask, device, greedy=True)
+                    obs[a]["role_id"], mask, device, greedy=True)
             else:
                 actions[a] = int(np.random.choice(legal))
         obs, rewards, terms, truncs, infos = env.step(actions)

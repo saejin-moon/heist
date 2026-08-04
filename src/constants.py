@@ -56,6 +56,17 @@ ACTION_DELTAS = {
 AGENTS = ["scout", "hacker", "muscle", "extractor"]
 AGENT_CHAR = {"scout": "S", "hacker": "H", "muscle": "M", "extractor": "E"}
 
+# Role identity: a one-hot vector emitted as its own observation key so that
+# shared policies (IPPO --shared, MAPPO, and the learned-communication agents)
+# can distinguish which role the network is currently controlling.  This
+# survives the REV-7 removal of global_state.
+N_AGENTS = len(AGENTS)
+ROLE_IDS = {a: i for i, a in enumerate(AGENTS)}
+ROLE_ONEHOT = {
+    a: [1 if i == j else 0 for j in range(N_AGENTS)]
+    for i, a in enumerate(AGENTS)
+}
+
 # What each agent's INTERACT (action 5) does.  This is the per-role
 # specialization that replaces the monolithic "interact" of the prototype.
 ROLE_ACTIONS = {
@@ -128,6 +139,25 @@ GLOBAL_STATE_DIM = 4 + 3 * 2
 CATCH_DISTANCE = 1               # Manhattan distance that triggers a catch
 CONVERGE_ALARM = 50.0            # alarm level above which guards hunt agents
 NEUTRALIZE_TURNS = 8             # turns a guard stays neutralized
+
+# ---------------------------------------------------------------------------
+# M1 mechanics (REV-5/6/8/9): wall breach, extractor burden, guard AI,
+# delayed alarm
+# ---------------------------------------------------------------------------
+ALARM_BREACH = 30.0              # instant global-alarm cost of a wall breach
+BREACH_RADIUS = 10               # guards within this range repath to the breach
+EXTRACTOR_BURDEN_TURNS = 2       # loot-carrying extractor moves 1 tile per N turns
+ALARM_NEUTRALIZE_DELAY = 15      # turns until command notices a missing guard
+GUARD_LOS_RANGE = 8              # directional line-of-sight reach for guards
+SEARCH_RADIUS = 5                # tiles around a last-known position to sweep
+SEARCH_TURNS = 6                 # turns a guard stays in Search before Patrol
+BREACH_SEARCH_TRIGGER = True     # a fresh breach puts nearby guards into Search
+
+# ---------------------------------------------------------------------------
+# M2 communication (REV-7): learned message channel
+# ---------------------------------------------------------------------------
+COMM_MESSAGE_DIM = 16            # TarMAC-style message embedding size
+COMM_HIDDEN_DIM = 64             # communication network hidden width
 
 # ---------------------------------------------------------------------------
 # Renderer palette

@@ -23,7 +23,9 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
 from env import AGENTS, parse_env_config
-from constants import OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, GLOBAL_STATE_DIM
+from constants import (
+    OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, GLOBAL_STATE_DIM, N_AGENTS,
+)
 from model import MappoAgent
 from vec_env import VectorEnv
 
@@ -102,7 +104,11 @@ def train(args: Args):
     vec_env = VectorEnv(args.num_envs, config=env_config, base_seed=args.seed)
     next_obs, next_state = vec_env.reset(seed=args.seed)
     state_dim = vec_env.state_dim
-    next_done = torch.zeros(args.num_envs, device=device)
+    # REV-3: termination vs truncation tracked separately; the boundary of the
+    # rollout bootstraps truncated envs from the true terminal state.
+    next_terminations = torch.zeros(args.num_envs, device=device)
+    next_truncations = torch.zeros(args.num_envs, device=device)
+    last_infos = [{} for _ in range(args.num_envs)]
 
     # shared policy: one actor + centralized critic
     # REV-2 (REVISION_PLAN.md §2): this single network controls all four roles;
@@ -117,10 +123,15 @@ def train(args: Args):
             "obs": torch.zeros((args.num_steps, args.num_envs, obs_h, obs_w), device=device),
             "global_state": torch.zeros((args.num_steps, args.num_envs, GLOBAL_STATE_DIM), device=device),
             "action_mask": torch.zeros((args.num_steps, args.num_envs, ACTION_DIM), device=device),
+            "role_id": torch.zeros((args.num_steps, args.num_envs, N_AGENTS), device=device),
             "actions": torch.zeros((args.num_steps, args.num_envs), dtype=torch.long, device=device),
             "logprobs": torch.zeros((args.num_steps, args.num_envs), device=device),
             "rewards": torch.zeros((args.num_steps, args.num_envs), device=device),
-            "dones": torch.zeros((args.num_steps, args.num_envs), device=device),
+            "terminated": torch.zeros((args.num_steps, args.num_envs), device=device),
+            "truncated": torch.zeros((args.num_steps, args.num_envs), device=device),
+            # REV-3: bootstrap value for envs done this step (V(terminal state)
+            # for truncations, 0 for terminations)
+            "bootstrap": torch.zeros((args.num_steps, args.num_envs), device=device),
             "values": torch.zeros((args.num_steps, args.num_envs), device=device),
         }
     state_buffer = torch.zeros((args.num_steps, args.num_envs, state_dim), device=device)
@@ -160,27 +171,51 @@ def train(args: Args):
                 with torch.no_grad():
                     obs_t = torch.tensor(next_obs[a]["observation"], device=device)
                     gs_t = torch.tensor(next_obs[a]["global_state"], device=device)
+                    role_t = torch.tensor(next_obs[a]["role_id"], device=device)
                     mask_t = torch.tensor(next_obs[a]["action_mask"], device=device)
                     action, logprob, _, value = policy.get_action_and_value(
-                        obs_t, gs_t, mask_t, state_t)
+                        obs_t, gs_t, role_t, mask_t, state_t)
                 buffers[a]["obs"][step] = obs_t
                 buffers[a]["global_state"][step] = gs_t
+                buffers[a]["role_id"][step] = role_t
                 buffers[a]["action_mask"][step] = mask_t
                 buffers[a]["actions"][step] = action
                 buffers[a]["logprobs"][step] = logprob
                 buffers[a]["values"][step] = value.flatten()
                 actions_dict[a] = action.cpu().numpy()
 
-            next_obs, rewards, dones = vec_env.step(actions_dict)
+            next_obs, rewards, terminations, truncations, infos = vec_env.step(actions_dict)
+            next_terminations = torch.tensor(terminations["scout"], device=device).float()
+            next_truncations = torch.tensor(truncations["scout"], device=device).float()
+            last_infos = infos
             for a in AGENTS:
                 buffers[a]["rewards"][step] = torch.tensor(rewards[a], device=device)
-                buffers[a]["dones"][step] = torch.tensor(dones[a], device=device)
+                term_t = torch.tensor(terminations[a], device=device).float()
+                trunc_t = torch.tensor(truncations[a], device=device).float()
+                buffers[a]["terminated"][step] = term_t
+                buffers[a]["truncated"][step] = trunc_t
+                # REV-3: store critic(terminal_state) for envs truncated here.
+                with torch.no_grad():
+                    t_idx = trunc_t.bool().nonzero(as_tuple=False).flatten()
+                    if t_idx.numel():
+                        t_states = torch.stack([torch.tensor(
+                            infos[int(i)]["terminal_state"], device=device) for i in t_idx])
+                        val = policy.get_value(t_states).flatten()
+                        buffers[a]["bootstrap"][step][t_idx] = val
             next_state = vec_env.state
 
         # ---------------- GAE + returns (centralized critic) ----------------
         with torch.no_grad():
             next_value = policy.get_value(
                 torch.tensor(next_state, device=device)).flatten()
+            # REV-3: truncated envs bootstrap to critic(terminal_state), not 0.
+            t_idx = next_truncations.bool().nonzero(as_tuple=False).flatten()
+            if t_idx.numel():
+                t_states = torch.stack([torch.tensor(
+                    last_infos[int(i)]["terminal_state"], device=device) for i in t_idx])
+                next_value[t_idx] = policy.get_value(t_states).flatten()
+            # terminated envs bootstrap to 0
+            next_value = next_value * (1.0 - next_terminations)
         advantages = {}
         returns = {}
         for a in AGENTS:
@@ -188,15 +223,15 @@ def train(args: Args):
             lastgaelam = 0.0
             for t in reversed(range(args.num_steps)):
                 if t == args.num_steps - 1:
-                    # REV-3 (REVISION_PLAN.md §3b): truncations must bootstrap
-                    # to critic(terminal_state), not 0.0. Distinguish terminated
-                    # vs truncated flags and read the stashed terminal obs/state
-                    # that vec_env.step returns (REV-4).
-                    nextnonterminal = 1.0 - next_done
+                    nextnonterminal = 1.0 - next_terminations
                     nextvalues = next_value
                 else:
-                    nextnonterminal = 1.0 - buffers[a]["dones"][t + 1]
-                    nextvalues = buffers[a]["values"][t + 1]
+                    nextnonterminal = 1.0 - buffers[a]["terminated"][t + 1]
+                    nextvalues = torch.where(
+                        buffers[a]["truncated"][t + 1].bool(),
+                        buffers[a]["bootstrap"][t + 1],
+                        buffers[a]["values"][t + 1],
+                    )
                 delta = buffers[a]["rewards"][t] + args.gamma * nextvalues * nextnonterminal \
                         - buffers[a]["values"][t]
                 adv[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
@@ -207,6 +242,7 @@ def train(args: Args):
         b_obs = torch.cat([buffers[a]["obs"].reshape(-1, obs_h, obs_w) for a in AGENTS])
         b_gs = torch.cat([buffers[a]["global_state"].reshape(-1, GLOBAL_STATE_DIM) for a in AGENTS])
         b_mask = torch.cat([buffers[a]["action_mask"].reshape(-1, ACTION_DIM) for a in AGENTS])
+        b_role = torch.cat([buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in AGENTS])
         b_actions = torch.cat([buffers[a]["actions"].reshape(-1) for a in AGENTS])
         b_logprobs = torch.cat([buffers[a]["logprobs"].reshape(-1) for a in AGENTS])
         b_advantages = torch.cat([advantages[a].reshape(-1) for a in AGENTS])
@@ -224,7 +260,7 @@ def train(args: Args):
                 end = start + minibatch_size
                 mb = b_inds[start:end]
                 _, newlogprob, entropy, newvalue = policy.get_action_and_value(
-                    b_obs[mb], b_gs[mb], b_mask[mb], b_states[mb], b_actions[mb])
+                    b_obs[mb], b_gs[mb], b_role[mb], b_mask[mb], b_states[mb], b_actions[mb])
 
                 logratio = newlogprob - b_logprobs[mb]
                 ratio = logratio.exp()

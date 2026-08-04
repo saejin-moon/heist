@@ -41,7 +41,8 @@ def main():
         acts = select_actions(env, obs, q, epsilon=0.5, device="cpu")
         nobs, rewards, terms, truncs, _ = env.step(acts)
         done = bool(any(terms.values()) or any(truncs.values()))
-        buf.push(obs, acts, rewards, done, env.state(), nobs, env.state())
+        buf.push(obs, acts, rewards, any(terms.values()), any(truncs.values()),
+                 env.state(), nobs, env.state())
         obs = nobs
         if done:
             obs, _ = env.reset(seed=i)
@@ -56,7 +57,7 @@ def main():
     batch = buf.sample(32)
     qv = []
     for a in env.agents:
-        qa = q[a](batch["obs"][a], batch["gs"][a]) \
+        qa = q[a](batch["obs"][a], batch["gs"][a], batch["role"][a]) \
               .gather(1, batch["actions"][a].unsqueeze(1)).squeeze(1)
         qv.append(qa)
     qv = torch.stack(qv, dim=1)
@@ -65,13 +66,15 @@ def main():
     with torch.no_grad():
         tqv = []
         for a in env.agents:
-            nq = tq[a](batch["next_obs"][a], batch["next_gs"][a])
+            nq = tq[a](batch["next_obs"][a], batch["next_gs"][a], batch["role"][a])
             m = torch.where(batch["next_mask"][a] == 1, nq, torch.full_like(nq, -1e9))
             tqv.append(m.max(dim=1).values)
         tqv = torch.stack(tqv, dim=1)
         q_tot_target = tmix(tqv, batch["next_states"])
         rewards = torch.stack([batch["rewards"][a] for a in env.agents], dim=1).mean(dim=1)
-        y = rewards + 0.99 * (1 - batch["dones"]) * q_tot_target
+        # REV-3: bootstrap uses terminations only; truncations keep the target
+        # from the stored (terminal) next state.
+        y = rewards + 0.99 * (1 - batch["terminated"]) * q_tot_target
 
     loss = torch.nn.functional.mse_loss(q_tot, y)
     loss.backward()

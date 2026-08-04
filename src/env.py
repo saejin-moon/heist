@@ -7,10 +7,17 @@ causal dependency chain (Scout reveals -> Hacker disables terminal -> Extractor
 secures loot -> all converge at extraction) while a rule-based security system
 (guards + cameras + incremental alarm meter) applies opposing pressure.
 
-Environment contract (see PLAN.md):
-  * observation  : 5x5 Fog-Masked local Box (gated by Scout reveals)
-  * action_mask  : 6-element binary vector enforcing causal action gates
-  * global_state : 4-element vector (step, alarm, terminal, loot)
+Observation contract (see REVISION_PLAN.md, PLAN.md):
+  * observation   : 5x5 Fog-Masked local Box (gated by Scout reveals)
+  * action_mask   : 6-element binary vector enforcing causal action gates
+  * global_state  : 10-element vector (step, alarm, terminal, loot, bearings)
+  * role_id       : 4-element one-hot identifying the agent's role (REV-2)
+
+Mechanics implemented from the approved roadmap:
+  * REV-5 : Muscle wall breach (instant alarm, guard repath)
+  * REV-6 : Extractor loot-carry burden (1 tile per 2 turns)
+  * REV-8 : Guard directional LOS + Patrol/Search/Converge + BFS
+  * REV-9 : Delayed alarm event queue (15-turn post-neutralization spike)
 
 The env is fully configurable (map size, guard/camera counts, reward scaling,
 spawn placement, hack difficulty) so curriculum.py can stage difficulty.
@@ -21,7 +28,7 @@ from pettingzoo import ParallelEnv
 from gymnasium.spaces import Dict, Discrete, Box
 
 from constants import *
-from vision import calculate_fov, camera_exposure
+from vision import calculate_fov, camera_exposure, line_is_clear
 from map_gen import generate_procedural_map
 
 
@@ -84,6 +91,18 @@ DEFAULT_CONFIG = {
     "converge_bonus": CONVERGE_BONUS,
     "converge_radius": CONVERGE_RADIUS,
     "win_converge_radius": WIN_CONVERGE_RADIUS,
+    # REV-5 wall breach
+    "alarm_breach": ALARM_BREACH,
+    "breach_radius": BREACH_RADIUS,
+    "breach_search_trigger": BREACH_SEARCH_TRIGGER,
+    # REV-6 extractor burden
+    "extractor_burden": EXTRACTOR_BURDEN_TURNS,
+    # REV-9 delayed alarm
+    "alarm_neut_delay": ALARM_NEUTRALIZE_DELAY,
+    # REV-8 guard AI
+    "guard_los_range": GUARD_LOS_RANGE,
+    "search_radius": SEARCH_RADIUS,
+    "search_turns": SEARCH_TURNS,
 }
 
 
@@ -101,22 +120,19 @@ class HeistEnv(ParallelEnv):
         self.map_h, self.map_w = self.config["map_size"]
         self.grid = np.zeros((self.map_h, self.map_w), dtype=np.int32)
 
+        # REV-1 / REV-2: fixed Box shape and bounds, plus role_id space.
+        coord_bound = max(self.map_h, self.map_w)
+        val_bound = max(self.config["max_steps"], 100, coord_bound)
         self.action_spaces = {a: Discrete(ACTION_SPACE_SIZE) for a in self.possible_agents}
         self.observation_spaces = {
             a: Dict({
-                # fov is 5x5; FOG (-1) masks unrevealed tiles
                 "observation": Box(low=FOG, high=255, shape=OBSERVATION_SIZE, dtype=np.int32),
-                # 6-element binary causal action gate
                 "action_mask": Box(low=0, high=1, shape=(ACTION_SPACE_SIZE,), dtype=np.int8),
-                # step, alarm level (0-100), terminal disabled, loot acquired
-                # REV-1 (REVISION_PLAN.md §1): shape must be (GLOBAL_STATE_DIM,)
-                # and bounds must allow negative relative bearings
-                # (low=-max(map_h,map_w), high=max(max_steps, 100, map_h, map_w)).
-                # REV-2 (REVISION_PLAN.md §2): role one-hot appended in _get_obs
-                # -> GLOBAL_STATE_DIM becomes 14.
-                # REV-7 (REVISION_PLAN.md §6): global_state removed in the
-                # learned-communication milestone.
-                "global_state": Box(low=0, high=255, shape=(4,), dtype=np.int32),
+                # REV-1: shape=(GLOBAL_STATE_DIM,) with bounds allowing negative bearings.
+                "global_state": Box(low=-coord_bound, high=val_bound,
+                                    shape=(GLOBAL_STATE_DIM,), dtype=np.int32),
+                # REV-2: one-hot role identity so shared policies can distinguish roles.
+                "role_id": Box(low=0, high=1, shape=(N_AGENTS,), dtype=np.int8),
             })
             for a in self.possible_agents
         }
@@ -145,6 +161,20 @@ class HeistEnv(ParallelEnv):
         self.tagged_pois = set()
         self._prev_extract_dist = {}
 
+        # REV-5: breach coordinate (set when Muscle breaks a wall)
+        self.breach_pos = None
+
+        # REV-6: extractor burden start step
+        self._burden_start_step = -1
+
+        # REV-9: delayed-alarm event queue [(trigger_step, alarm_amount), ...]
+        self._pending_events = []
+
+        # REV-8: per-guard FSM state ("patrol" | "search" | "converge")
+        self.guard_states = []
+        self._guard_search_target = []  # (r,c) or None per guard
+        self._guard_search_turns = []   # remaining search steps per guard
+
     # ------------------------------------------------------------------
     # PettingZoo API
     # ------------------------------------------------------------------
@@ -163,7 +193,14 @@ class HeistEnv(ParallelEnv):
         self._prev_extract_dist = {}
         self.agents = self.possible_agents[:]
         self.explored_map = np.zeros((self.map_h, self.map_w), dtype=bool)
-        # REV-9 (REVISION_PLAN.md §8): clear the delayed-alarm event queue here.
+        # REV-5/6/9/8: clear milestone state on every reset
+        self.breach_pos = None
+        self._burden_start_step = -1
+        self._pending_events = []
+        self._neutralized_pos = {}
+        self.guard_states = []
+        self._guard_search_target = []
+        self._guard_search_turns = []
 
         # --- regenerate the procedural map ---
         map_data = generate_procedural_map(
@@ -188,6 +225,10 @@ class HeistEnv(ParallelEnv):
             self.rng.shuffle(empty)
             self.guard_positions = [empty.pop() for _ in range(guard_count)]
         self.neutralized = np.zeros(len(self.guard_positions), dtype=np.int32)
+        self.guard_states = ["patrol"] * len(self.guard_positions)
+        self._guard_search_target = [None] * len(self.guard_positions)
+        self._guard_search_turns = [0] * len(self.guard_positions)
+        self._neutralized_pos = {}
 
         # --- spawn agents ---
         used = set(self.guard_positions)
@@ -205,6 +246,9 @@ class HeistEnv(ParallelEnv):
     def step(self, actions):
         self.current_step += 1
         rewards = {a: self.config["reward_time_bleed"] for a in self.agents}
+
+        # REV-9: fire any delayed alarms (neutralization notices) due this turn
+        self._process_pending_events()
 
         # ------------------ agent actions ------------------
         for agent in list(self.agents):
@@ -345,6 +389,8 @@ class HeistEnv(ParallelEnv):
                 status += " | loot: SECURED"
             if self.extraction_triggered:
                 status += f" | extract: {self.extraction_countdown}"
+            if self._pending_events:
+                status += f" | delayed_events: {len(self._pending_events)}"
             screen.blit(font.render(status, True, (255, 255, 255)), (4, self.map_h * TILE_SIZE + 14))
 
     # ------------------------------------------------------------------
@@ -396,6 +442,10 @@ class HeistEnv(ParallelEnv):
         # REV-6 (REVISION_PLAN.md §5): while loot_acquired the extractor may
         # only move 1 tile every 2 turns (escort dynamic); mirror the slow-turn
         # gate in _action_mask so the policy sees the constraint.
+        if agent == "extractor" and self.loot_acquired and self._burden_start_step >= 0:
+            turns_since = self.current_step - self._burden_start_step
+            if turns_since > 0 and turns_since % self.config["extractor_burden"] == 0:
+                return
         row, col = self.agent_positions[agent]
         dr, dc = ACTION_DELTAS[action]
         nr, nc = row + dr, col + dc
@@ -475,11 +525,16 @@ class HeistEnv(ParallelEnv):
                 return
 
     def _muscle_neutralize(self, pos, rewards):
-        """Temporarily remove a nearby guard at a delayed alarm cost."""
-        # REV-9 (REVISION_PLAN.md §8): schedule the alarm via an event queue
-        # fired ALARM_NEUTRALIZE_DELAY (15) turns later, not instantly.
-        # REV-5 (REVISION_PLAN.md §4): add the adjacent-WALL BREACH path here
-        # (instant +ALARM_BREACH, guards within breach_radius repath).
+        """REV-5/REV-9: neutralize a nearby guard or breach an adjacent wall.
+
+        Neutralizing a guard removes it for neutral_turns but schedules the
+        alarm via the delayed event queue (REV-9): command only notices
+        ALARM_NEUTRALIZE_DELAY turns later, and the fired event sends nearby
+        guards to Search the guard's last position.  Breaching a wall (REV-5)
+        costs ALARM_BREACH instantly, opens a shortcut, and makes guards within
+        breach_radius repath to the breach coordinate.
+        """
+        # --- neutralize an adjacent guard (within 2 tiles) ---
         best, best_d = None, 1e9
         for gi, gpos in enumerate(self.guard_positions):
             if self.neutralized[gi] > 0:
@@ -489,13 +544,66 @@ class HeistEnv(ParallelEnv):
                 best_d, best = d, gi
         if best is not None and best_d <= 2:
             self.neutralized[best] = self.config["neutral_turns"]
-            self._add_alarm(self.config["alarm_neutralize"])
+            self._neutralized_pos[best] = self.guard_positions[best]
+            # REV-9: delayed, not instant
+            self._pending_events.append((
+                self.current_step + self.config["alarm_neut_delay"],
+                self.config["alarm_neutralize"],
+                ("neutralize", best),
+            ))
             rewards["muscle"] += self.config["reward_task"]
+            return
+
+        # --- REV-5: breach an adjacent wall ---
+        for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            nr, nc = pos[0] + dr, pos[1] + dc
+            if not (0 <= nr < self.map_h and 0 <= nc < self.map_w):
+                continue
+            if self.grid[nr, nc] == WALL:
+                self.grid[nr, nc] = EMPTY
+                self.breach_pos = (nr, nc)
+                self._add_alarm(self.config["alarm_breach"])
+                rewards["muscle"] += self.config["reward_task"]
+                if self.config["breach_search_trigger"]:
+                    self._trigger_breach_search(nr, nc)
+                return
+
+    def _trigger_breach_search(self, br, bc):
+        """REV-5: guards near a fresh breach switch to Search at that tile."""
+        radius = self.config["breach_radius"]
+        for gi, gpos in enumerate(self.guard_positions):
+            if self.neutralized[gi] > 0:
+                continue
+            if manhattan((br, bc), gpos) <= radius:
+                self.guard_states[gi] = "search"
+                self._guard_search_target[gi] = (br, bc)
+                self._guard_search_turns[gi] = self.config["search_turns"]
+
+    def _process_pending_events(self):
+        """REV-9: fire delayed alarm events whose trigger step has arrived."""
+        due = [e for e in self._pending_events if e[0] <= self.current_step]
+        if not due:
+            return
+        self._pending_events = [e for e in self._pending_events if e[0] > self.current_step]
+        for _, amount, source in due:
+            self._add_alarm(amount)
+            # command noticed a missing guard: nearby guards go Search its last spot
+            if source is not None and source[0] == "neutralize":
+                gi = source[1]
+                last = self._neutralized_pos.get(gi)
+                if last is not None:
+                    for j, jpos in enumerate(self.guard_positions):
+                        if j != gi and self.neutralized[j] == 0 \
+                                and manhattan(jpos, last) <= self.config["breach_radius"]:
+                            self.guard_states[j] = "search"
+                            self._guard_search_target[j] = last
+                            self._guard_search_turns[j] = self.config["search_turns"]
 
     def _extractor_act(self, pos, rewards):
         """Secure loot (needs disabled terminal), then call extraction."""
         if not self.loot_acquired and self.terminal_disabled and manhattan(pos, self.loot_pos) <= 1:
             self.loot_acquired = True
+            self._burden_start_step = self.current_step  # REV-6 slow-turn clock
             rewards["extractor"] += self.config["reward_task"]
             return
         if self.loot_acquired and not self.extraction_triggered:
@@ -520,10 +628,18 @@ class HeistEnv(ParallelEnv):
         return moves
 
     def _move_guards(self):
-        # REV-8 (REVISION_PLAN.md §7): replace the single global alarm trigger
-        # with per-guard Patrol/Search/Converge states, directional line-of-sight
-        # (vision.line_is_clear), and A* pathfinding instead of greedy Manhattan.
-        # REV-5/REV-9 supply Search triggers (breach coordinate, missing guard).
+        """REV-8 (REVISION_PLAN.md §7): per-guard Patrol/Search/Converge FSM.
+
+        * Patrol     : random walk until an agent crosses the guard's
+                       directional line of sight (vision.line_is_clear), a
+                       breach occurs within range (REV-5), or command reports
+                       a missing guard (REV-9) - both flip the guard to Search.
+        * Search     : BFS towards the last-known position for up to
+                       search_turns; sweeps a random nearby tile once the
+                       target is reached, then returns to Patrol.
+        * Converge   : global alarm >= converge_alarm puts every active guard
+                       into a BFS hunt for the nearest agent.
+        """
         converge = self.alarm >= self.config["converge_alarm"]
         new_positions = []
         for gi, (gr, gc) in enumerate(self.guard_positions):
@@ -531,17 +647,114 @@ class HeistEnv(ParallelEnv):
                 self.neutralized[gi] -= 1
                 new_positions.append((gr, gc))
                 continue
+
+            # ---- sense: directional line-of-sight ----------------
+            spotted = self._guard_spot(gr, gc)
+            if spotted is not None:
+                self.guard_states[gi] = "search"
+                self._guard_search_target[gi] = spotted
+                self._guard_search_turns[gi] = self.config["search_turns"]
+
+            # ---- decide ------------------------------------------
+            if converge:
+                self.guard_states[gi] = "converge"
+            elif self.guard_states[gi] == "search":
+                if self._guard_search_turns[gi] <= 0:
+                    self.guard_states[gi] = "patrol"
+                    self._guard_search_target[gi] = None
+
             valid = self._valid_moves(gr, gc)
             if not valid:
                 new_positions.append((gr, gc))
                 continue
-            if converge:
+
+            state = self.guard_states[gi]
+            if state == "converge":
                 target = min(self.agent_positions.values(),
                              key=lambda p: manhattan(p, (gr, gc)))
-                new_positions.append(min(valid, key=lambda p: manhattan(p, target)))
+                nxt = self._bfs_next(gr, gc, target)
+                new_positions.append(nxt if nxt is not None
+                                     else min(valid, key=lambda p: manhattan(p, target)))
+            elif state == "search" and self._guard_search_target[gi] is not None:
+                target = self._guard_search_target[gi]
+                if (gr, gc) == target:
+                    # reached the last-known spot: sweep the neighbourhood
+                    target = self._pick_search_tile(target)
+                    self._guard_search_target[gi] = target
+                nxt = self._bfs_next(gr, gc, target)
+                if nxt is None:
+                    new_positions.append(min(valid, key=lambda p: manhattan(p, target)))
+                else:
+                    new_positions.append(nxt)
+                self._guard_search_turns[gi] -= 1
             else:
+                # patrol: random walk
                 new_positions.append(valid[int(self.rng.integers(len(valid)))])
         self.guard_positions = new_positions
+
+    def _guard_spot(self, gr, gc):
+        """REV-8: return the position of the first agent visible to this guard,
+        or None.  Uses vision.line_is_clear over a bounded manhattan range so
+        guards cannot see through walls or locked doors."""
+        los_range = self.config["guard_los_range"]
+        for agent, apos in self.agent_positions.items():
+            if manhattan((gr, gc), apos) > los_range:
+                continue
+            if line_is_clear(self.grid, gr, gc, apos[0], apos[1], WALL, DOOR):
+                return apos
+        return None
+
+    def _pick_search_tile(self, center):
+        """REV-8: a random walkable tile within search_radius of `center`."""
+        radius = self.config["search_radius"]
+        walkable = {EMPTY, LOOT, EXTRACT, TERMINAL}
+        candidates = []
+        for dr in range(-radius, radius + 1):
+            for dc in range(-radius, radius + 1):
+                nr, nc = center[0] + dr, center[1] + dc
+                if not (0 <= nr < self.map_h and 0 <= nc < self.map_w):
+                    continue
+                if self.grid[nr, nc] in walkable:
+                    candidates.append((nr, nc))
+        if not candidates:
+            return center
+        return candidates[int(self.rng.integers(len(candidates)))]
+
+    def _bfs_next(self, gr, gc, target):
+        """REV-8: BFS from (gr, gc) toward `target`, returning the first step.
+
+        BFS is used in place of greedy Manhattan because wall clutter makes the
+        straight-line step a dead end; a full BFS on a 50x50 map is ~2500 cells
+        and trivially cheap at 6 guards/frame.
+        """
+        if (gr, gc) == target:
+            return None
+        from collections import deque
+        prev = {}
+        q = deque([(gr, gc)])
+        seen = {(gr, gc)}
+        while q:
+            r, c = q.popleft()
+            if (r, c) == target:
+                # walk back to the first step after the start
+                cur = (r, c)
+                while prev.get(cur) is not None and prev.get(prev.get(cur)) is not None:
+                    cur = prev[cur]
+                return prev[cur] if cur != (gr, gc) else cur
+            for dr, dc in ACTION_DELTAS.values():
+                if dr == 0 and dc == 0:
+                    continue
+                nr, nc = r + dr, c + dc
+                if not (0 <= nr < self.map_h and 0 <= nc < self.map_w):
+                    continue
+                tile = self.grid[nr, nc]
+                if tile == WALL or tile == DOOR:
+                    continue
+                if (nr, nc) not in seen:
+                    seen.add((nr, nc))
+                    prev[(nr, nc)] = (r, c)
+                    q.append((nr, nc))
+        return None
 
     def _check_caught(self):
         for gi, gpos in enumerate(self.guard_positions):
@@ -609,8 +822,15 @@ class HeistEnv(ParallelEnv):
             if near_terminal or near_door:
                 mask[INTERACT] = 1
         elif agent == "muscle":
-            if any(self.neutralized[gi] == 0 and manhattan(pos, gpos) <= 2
-                   for gi, gpos in enumerate(self.guard_positions)):
+            near_guard = any(self.neutralized[gi] == 0 and manhattan(pos, gpos) <= 2
+                             for gi, gpos in enumerate(self.guard_positions))
+            # REV-5: wall breach is a valid INTERACT when adjacent to a wall
+            near_wall = any(
+                0 <= pos[0] + dr < self.map_h and 0 <= pos[1] + dc < self.map_w
+                and self.grid[pos[0] + dr, pos[1] + dc] == WALL
+                for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0))
+            )
+            if near_guard or near_wall:
                 mask[INTERACT] = 1
         elif agent == "extractor":
             near_loot = (not self.loot_acquired and self.terminal_disabled
@@ -618,6 +838,13 @@ class HeistEnv(ParallelEnv):
             can_call = self.loot_acquired and not self.extraction_triggered
             if near_loot or can_call:
                 mask[INTERACT] = 1
+            # REV-6: on a slow turn the extractor cannot move at all.  The mask
+            # is evaluated before step() increments current_step, so look one
+            # turn ahead to match the movement gate in _move_agent.
+            if self.loot_acquired and self._burden_start_step >= 0:
+                turns_since = (self.current_step + 1) - self._burden_start_step
+                if turns_since > 0 and turns_since % self.config["extractor_burden"] == 0:
+                    mask[:4] = 0
         return mask
 
     def _get_obs(self, agent):
@@ -658,7 +885,12 @@ class HeistEnv(ParallelEnv):
             self.extract_pos[0] - pr, self.extract_pos[1] - pc,
         ], dtype=np.int32)
 
-        return {"observation": masked, "action_mask": mask, "global_state": global_state}
+        # REV-2: one-hot role identity emitted alongside the local observation
+        # so that shared policies can tell which role they are controlling.
+        role_id = np.array(ROLE_ONEHOT[agent], dtype=np.int8)
+
+        return {"observation": masked, "action_mask": mask,
+                "global_state": global_state, "role_id": role_id}
 
     def state(self):
         """Rich global state for centralized critics (MAPPO) / QMIX mixing.
@@ -700,6 +932,9 @@ class HeistEnv(ParallelEnv):
                   f"terminal={'off' if self.terminal_disabled else 'on'} "
                   f"loot={'yes' if self.loot_acquired else 'no'} "
                   f"extract={'calling' if self.extraction_triggered else 'idle'}")
+        # REV-9: pending alarm event count
+        if self._pending_events:
+            status += f" pending_events={len(self._pending_events)}"
         return "\n".join(lines) + "\n" + status
 
     def observation_space(self, agent):

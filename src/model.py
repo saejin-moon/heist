@@ -4,13 +4,15 @@ Neural network components for HEIST training.
 All networks share the observation contract from env.py:
     observation  : 5x5 Fog-Masked Box (25 values after flatten)
     action_mask  : 6-element binary gate
-    global_state : 4-element phase vector (for IPPO actor-critic inputs)
+    global_state : 10-element phase vector (step, alarm, terminal, loot,
+                   bearings to terminal/loot/extract)
+    role_id      : 4-element one-hot identifying the controlling role (REV-2)
 
 MAPPO and QMIX additionally consume the richer centralized `env.state()`.
 
 Classes
 -------
-HeistAgent   : independent IPPO actor-critic (flattened obs + 4-vec global_state)
+HeistAgent   : independent IPPO actor-critic
 MappoAgent   : shared actor + centralized critic (consumes env.state())
 QNetwork     : per-agent deep Q network (for QMIX / independent DQN)
 QMixMixing   : QMIX monotonic mixing network conditioned on global state
@@ -21,14 +23,14 @@ import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
 
-from constants import GLOBAL_STATE_DIM
+from constants import GLOBAL_STATE_DIM, N_AGENTS
 
-# obs (25) + global_state (GLOBAL_STATE_DIM) fused into the local feature vector
-# REV-2 (REVISION_PLAN.md §2): GLOBAL_STATE_DIM grows to 14 with the env-issued
-# role one-hot so shared policies can distinguish roles.
-# REV-7 (REVISION_PLAN.md §6): global_state is deleted in the learned-
-# communication milestone and replaced by a TarMAC-style message channel.
-LOCAL_INPUT_DIM = 25 + GLOBAL_STATE_DIM
+# obs (25) + global_state (10) + role one-hot (4) fused into the local feature
+# vector.  REV-2 (REVISION_PLAN.md §2): the env-issued role one-hot lets a
+# single shared network tell the four roles apart.  REV-7 (REVISION_PLAN.md
+# §6): global_state is deleted in the learned-communication milestone and
+# replaced by a TarMAC-style message channel; role_id stays.
+LOCAL_INPUT_DIM = 25 + GLOBAL_STATE_DIM + N_AGENTS
 ACTION_DIM = 6
 HIDDEN_DIM = 64
 
@@ -43,7 +45,7 @@ class HeistAgent(nn.Module):
     """Independent PPO actor-critic used by IPPO.
 
     The critic and actor consume the same local feature vector
-    (flattened 5x5 observation + 4-element global_state), which is the
+    (flattened 5x5 observation + global_state + role one-hot), which is the
     standard IPPO (independent PPO) setup.
     """
 
@@ -65,15 +67,15 @@ class HeistAgent(nn.Module):
         )
 
     @staticmethod
-    def _process_inputs(obs, global_state):
+    def _process_inputs(obs, global_state, role_id):
         flat_obs = torch.flatten(obs, start_dim=1).float()
-        return torch.cat((flat_obs, global_state.float()), dim=1)
+        return torch.cat((flat_obs, global_state.float(), role_id.float()), dim=1)
 
-    def get_value(self, obs, global_state):
-        return self.critic(self._process_inputs(obs, global_state))
+    def get_value(self, obs, global_state, role_id):
+        return self.critic(self._process_inputs(obs, global_state, role_id))
 
-    def get_action_and_value(self, obs, global_state, action_mask, action=None):
-        x = self._process_inputs(obs, global_state)
+    def get_action_and_value(self, obs, global_state, role_id, action_mask, action=None):
+        x = self._process_inputs(obs, global_state, role_id)
         logits = self.actor(x)
 
         HUGE_NEG = torch.tensor(-1e9, device=logits.device)
@@ -113,8 +115,9 @@ class MappoAgent(nn.Module):
     def get_value(self, global_state):
         return self.critic(global_state)
 
-    def get_action_and_value(self, obs, global_state, action_mask, state, action=None):
-        x = torch.cat((torch.flatten(obs, start_dim=1).float(), global_state.float()), dim=1)
+    def get_action_and_value(self, obs, global_state, role_id, action_mask, state, action=None):
+        x = torch.cat((torch.flatten(obs, start_dim=1).float(),
+                       global_state.float(), role_id.float()), dim=1)
         logits = self.actor(x)
         HUGE_NEG = torch.tensor(-1e9, device=logits.device)
         masked_logits = torch.where(action_mask == 1, logits, HUGE_NEG)
@@ -127,9 +130,9 @@ class MappoAgent(nn.Module):
 class QNetwork(nn.Module):
     """Per-agent deep Q network (DQN-style).  Used by QMIX.
 
-    Consumes the flattened 5x5 observation + 4-element global_state and
-    outputs Q-values for all 6 actions.  Invalid actions are masked with
-    a large negative value at mixing time.
+    Consumes the flattened 5x5 observation + global_state + role one-hot and
+    outputs Q-values for all 6 actions.  Invalid actions are masked with a
+    large negative value at mixing time.
     """
 
     def __init__(self, hidden_dim=HIDDEN_DIM):
@@ -142,8 +145,9 @@ class QNetwork(nn.Module):
             layer_init(nn.Linear(hidden_dim, ACTION_DIM), std=1.0),
         )
 
-    def forward(self, obs, global_state):
-        x = torch.cat((torch.flatten(obs, start_dim=1).float(), global_state.float()), dim=1)
+    def forward(self, obs, global_state, role_id):
+        x = torch.cat((torch.flatten(obs, start_dim=1).float(),
+                       global_state.float(), role_id.float()), dim=1)
         return self.net(x)
 
 
