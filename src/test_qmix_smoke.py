@@ -57,7 +57,7 @@ def main():
     batch = buf.sample(32)
     qv = []
     for a in env.agents:
-        qa = q[a](batch["obs"][a], batch["gs"][a], batch["role"][a]) \
+        qa = q[a](batch["obs"][a], batch["role"][a]) \
               .gather(1, batch["actions"][a].unsqueeze(1)).squeeze(1)
         qv.append(qa)
     qv = torch.stack(qv, dim=1)
@@ -66,7 +66,7 @@ def main():
     with torch.no_grad():
         tqv = []
         for a in env.agents:
-            nq = tq[a](batch["next_obs"][a], batch["next_gs"][a], batch["role"][a])
+            nq = tq[a](batch["next_obs"][a], batch["role"][a])
             m = torch.where(batch["next_mask"][a] == 1, nq, torch.full_like(nq, -1e9))
             tqv.append(m.max(dim=1).values)
         tqv = torch.stack(tqv, dim=1)

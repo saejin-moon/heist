@@ -36,7 +36,8 @@ class VectorEnv:
             packed[a] = {
                 "observation": np.stack([o[a]["observation"] for o in obs_list]),
                 "action_mask": np.stack([o[a]["action_mask"] for o in obs_list]),
-                "global_state": np.stack([o[a]["global_state"] for o in obs_list]),
+                # REV-7 (REVISION_PLAN.md §6): global_state deleted from the
+                # per-agent obs contract; central critics still get env.state().
                 "role_id": np.stack([o[a]["role_id"] for o in obs_list]),
             }
         return packed

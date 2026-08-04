@@ -10,8 +10,11 @@ secures loot -> all converge at extraction) while a rule-based security system
 Observation contract (see REVISION_PLAN.md, PLAN.md):
   * observation   : 5x5 Fog-Masked local Box (gated by Scout reveals)
   * action_mask   : 6-element binary vector enforcing causal action gates
-  * global_state  : 10-element vector (step, alarm, terminal, loot, bearings)
   * role_id       : 4-element one-hot identifying the agent's role (REV-2)
+
+REV-7 (REVISION_PLAN.md §6): global_state was deleted from this per-agent
+contract.  Centralized critics (MAPPO/QMIX) consume env.state() instead;
+agents communicate phase status via learned TarMAC messages (train_comm.py).
 
 Mechanics implemented from the approved roadmap:
   * REV-5 : Muscle wall breach (instant alarm, guard repath)
@@ -120,18 +123,16 @@ class HeistEnv(ParallelEnv):
         self.map_h, self.map_w = self.config["map_size"]
         self.grid = np.zeros((self.map_h, self.map_w), dtype=np.int32)
 
-        # REV-1 / REV-2: fixed Box shape and bounds, plus role_id space.
-        coord_bound = max(self.map_h, self.map_w)
-        val_bound = max(self.config["max_steps"], 100, coord_bound)
+        # REV-1: fixed Box shape and bounds (kept for backward compat during
+        # M0/M1; REV-7 removes global_state entirely - see below).
         self.action_spaces = {a: Discrete(ACTION_SPACE_SIZE) for a in self.possible_agents}
         self.observation_spaces = {
             a: Dict({
                 "observation": Box(low=FOG, high=255, shape=OBSERVATION_SIZE, dtype=np.int32),
                 "action_mask": Box(low=0, high=1, shape=(ACTION_SPACE_SIZE,), dtype=np.int8),
-                # REV-1: shape=(GLOBAL_STATE_DIM,) with bounds allowing negative bearings.
-                "global_state": Box(low=-coord_bound, high=val_bound,
-                                    shape=(GLOBAL_STATE_DIM,), dtype=np.int32),
-                # REV-2: one-hot role identity so shared policies can distinguish roles.
+                # REV-7 (REVISION_PLAN.md §6): global_state is deleted from the
+                # per-agent observation contract.  Centralized critics keep
+                # env.state().  Agents must communicate phase status instead.
                 "role_id": Box(low=0, high=1, shape=(N_AGENTS,), dtype=np.int8),
             })
             for a in self.possible_agents
@@ -869,28 +870,16 @@ class HeistEnv(ParallelEnv):
         masked = np.where(obs_explored, obs, FOG)
 
         mask = self._action_mask(agent)
-        pr, pc = pos
-        # REV-2 (REVISION_PLAN.md §2): append the agent's role one-hot here
-        # so shared policies (train_ippo --shared, train_mappo) can tell roles
-        # apart.  REV-7 (REVISION_PLAN.md §6): this whole vector is deleted in
-        # the learned-communication milestone.
-        global_state = np.array([
-            self.current_step,
-            int(min(self.alarm, 100)),
-            int(self.terminal_disabled),
-            int(self.loot_acquired),
-            # relative bearings to the three objectives (navigation signal)
-            self.terminal_pos[0] - pr, self.terminal_pos[1] - pc,
-            self.loot_pos[0] - pr, self.loot_pos[1] - pc,
-            self.extract_pos[0] - pr, self.extract_pos[1] - pc,
-        ], dtype=np.int32)
 
         # REV-2: one-hot role identity emitted alongside the local observation
         # so that shared policies can tell which role they are controlling.
+        # REV-7 (REVISION_PLAN.md §6): global_state removed from per-agent obs.
+        # Phase A baseline agents navigate purely from local 5x5 view + fog.
+        # Phase B comm agents learn to share phase status via TarMAC messages.
         role_id = np.array(ROLE_ONEHOT[agent], dtype=np.int8)
 
         return {"observation": masked, "action_mask": mask,
-                "global_state": global_state, "role_id": role_id}
+                "role_id": role_id}
 
     def state(self):
         """Rich global state for centralized critics (MAPPO) / QMIX mixing.

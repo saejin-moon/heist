@@ -30,7 +30,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from env import AGENTS, parse_env_config
 from constants import (
-    OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, GLOBAL_STATE_DIM, N_AGENTS,
+    OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, N_AGENTS,
 )
 from model import HeistAgent
 from vec_env import VectorEnv
@@ -164,8 +164,9 @@ def train(args: Args):
     for a in AGENTS:
         buffers[a] = {
             "obs": torch.zeros((args.num_steps, args.num_envs, obs_h, obs_w), device=device),
-            "global_state": torch.zeros((args.num_steps, args.num_envs, GLOBAL_STATE_DIM), device=device),
             "action_mask": torch.zeros((args.num_steps, args.num_envs, ACTION_DIM), device=device),
+            # REV-7 (REVISION_PLAN.md §6): no global_state buffer; baselines
+            # navigate from local view + role one-hot only.
             "role_id": torch.zeros((args.num_steps, args.num_envs, N_AGENTS), device=device),
             "actions": torch.zeros((args.num_steps, args.num_envs), dtype=torch.long, device=device),
             "logprobs": torch.zeros((args.num_steps, args.num_envs), device=device),
@@ -214,13 +215,11 @@ def train(args: Args):
             for a in AGENTS:
                 with torch.no_grad():
                     obs_t = torch.tensor(next_obs[a]["observation"], device=device)
-                    gs_t = torch.tensor(next_obs[a]["global_state"], device=device)
                     role_t = torch.tensor(next_obs[a]["role_id"], device=device)
                     mask_t = torch.tensor(next_obs[a]["action_mask"], device=device)
                     action, logprob, _, value = policies[a].get_action_and_value(
-                        obs_t, gs_t, role_t, mask_t)
+                        obs_t, role_t, mask_t)
                 buffers[a]["obs"][step] = obs_t
-                buffers[a]["global_state"][step] = gs_t
                 buffers[a]["role_id"][step] = role_t
                 buffers[a]["action_mask"][step] = mask_t
                 buffers[a]["actions"][step] = action
@@ -245,13 +244,10 @@ def train(args: Args):
                         t_obs = torch.stack([torch.tensor(
                             infos[int(i)]["terminal_observation"][a]["observation"],
                             device=device) for i in t_idx])
-                        t_gs = torch.stack([torch.tensor(
-                            infos[int(i)]["terminal_observation"][a]["global_state"],
-                            device=device) for i in t_idx])
                         t_role = torch.stack([torch.tensor(
                             infos[int(i)]["terminal_observation"][a]["role_id"],
                             device=device) for i in t_idx])
-                        val = policies[a].get_value(t_obs, t_gs, t_role).flatten()
+                        val = policies[a].get_value(t_obs, t_role).flatten()
                         buffers[a]["bootstrap"][step][t_idx] = val
 
         # ---------------- GAE + returns ----------------
@@ -261,7 +257,6 @@ def train(args: Args):
             with torch.no_grad():
                 next_value = policies[a].get_value(
                     torch.tensor(next_obs[a]["observation"], device=device),
-                    torch.tensor(next_obs[a]["global_state"], device=device),
                     torch.tensor(next_obs[a]["role_id"], device=device),
                 ).flatten()
                 # REV-3: truncated envs bootstrap to value(terminal obs), not 0.
@@ -270,13 +265,10 @@ def train(args: Args):
                     t_obs = torch.stack([torch.tensor(
                         last_infos[int(i)]["terminal_observation"][a]["observation"],
                         device=device) for i in t_idx])
-                    t_gs = torch.stack([torch.tensor(
-                        last_infos[int(i)]["terminal_observation"][a]["global_state"],
-                        device=device) for i in t_idx])
                     t_role = torch.stack([torch.tensor(
                         last_infos[int(i)]["terminal_observation"][a]["role_id"],
                         device=device) for i in t_idx])
-                    next_value[t_idx] = policies[a].get_value(t_obs, t_gs, t_role).flatten()
+                    next_value[t_idx] = policies[a].get_value(t_obs, t_role).flatten()
                 # terminated envs bootstrap to 0
                 next_value = next_value * (1.0 - next_terminations)
             adv = torch.zeros_like(buffers[a]["rewards"])
@@ -310,7 +302,6 @@ def train(args: Args):
         for group_name, agent_list in groups:
             for epoch in range(args.update_epochs):
                 b_obs = torch.cat([buffers[a]["obs"].reshape(-1, obs_h, obs_w) for a in agent_list])
-                b_gs = torch.cat([buffers[a]["global_state"].reshape(-1, GLOBAL_STATE_DIM) for a in agent_list])
                 b_mask = torch.cat([buffers[a]["action_mask"].reshape(-1, ACTION_DIM) for a in agent_list])
                 b_role = torch.cat([buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in agent_list])
                 b_actions = torch.cat([buffers[a]["actions"].reshape(-1) for a in agent_list])
@@ -326,7 +317,7 @@ def train(args: Args):
                     mb = b_inds[start:end]
                     policy = policies[agent_list[0]]
                     _, newlogprob, entropy, newvalue = policy.get_action_and_value(
-                        b_obs[mb], b_gs[mb], b_role[mb], b_mask[mb], b_actions[mb])
+                        b_obs[mb], b_role[mb], b_mask[mb], b_actions[mb])
 
                     logratio = newlogprob - b_logprobs[mb]
                     ratio = logratio.exp()

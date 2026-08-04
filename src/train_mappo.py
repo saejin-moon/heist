@@ -24,7 +24,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from env import AGENTS, parse_env_config
 from constants import (
-    OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, GLOBAL_STATE_DIM, N_AGENTS,
+    OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, N_AGENTS,
 )
 from model import MappoAgent
 from vec_env import VectorEnv
@@ -121,8 +121,10 @@ def train(args: Args):
     for a in AGENTS:
         buffers[a] = {
             "obs": torch.zeros((args.num_steps, args.num_envs, obs_h, obs_w), device=device),
-            "global_state": torch.zeros((args.num_steps, args.num_envs, GLOBAL_STATE_DIM), device=device),
             "action_mask": torch.zeros((args.num_steps, args.num_envs, ACTION_DIM), device=device),
+            # REV-7 (REVISION_PLAN.md §6): no global_state buffer; the MAPPO
+            # actor sees local view + role only, the centralized critic sees
+            # env.state() from the shared state_buffer.
             "role_id": torch.zeros((args.num_steps, args.num_envs, N_AGENTS), device=device),
             "actions": torch.zeros((args.num_steps, args.num_envs), dtype=torch.long, device=device),
             "logprobs": torch.zeros((args.num_steps, args.num_envs), device=device),
@@ -170,13 +172,11 @@ def train(args: Args):
             for a in AGENTS:
                 with torch.no_grad():
                     obs_t = torch.tensor(next_obs[a]["observation"], device=device)
-                    gs_t = torch.tensor(next_obs[a]["global_state"], device=device)
                     role_t = torch.tensor(next_obs[a]["role_id"], device=device)
                     mask_t = torch.tensor(next_obs[a]["action_mask"], device=device)
                     action, logprob, _, value = policy.get_action_and_value(
-                        obs_t, gs_t, role_t, mask_t, state_t)
+                        obs_t, role_t, mask_t, state_t)
                 buffers[a]["obs"][step] = obs_t
-                buffers[a]["global_state"][step] = gs_t
                 buffers[a]["role_id"][step] = role_t
                 buffers[a]["action_mask"][step] = mask_t
                 buffers[a]["actions"][step] = action
@@ -240,7 +240,6 @@ def train(args: Args):
 
         # ---------------- policy update (concatenated across agents) ---------
         b_obs = torch.cat([buffers[a]["obs"].reshape(-1, obs_h, obs_w) for a in AGENTS])
-        b_gs = torch.cat([buffers[a]["global_state"].reshape(-1, GLOBAL_STATE_DIM) for a in AGENTS])
         b_mask = torch.cat([buffers[a]["action_mask"].reshape(-1, ACTION_DIM) for a in AGENTS])
         b_role = torch.cat([buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in AGENTS])
         b_actions = torch.cat([buffers[a]["actions"].reshape(-1) for a in AGENTS])
@@ -260,7 +259,7 @@ def train(args: Args):
                 end = start + minibatch_size
                 mb = b_inds[start:end]
                 _, newlogprob, entropy, newvalue = policy.get_action_and_value(
-                    b_obs[mb], b_gs[mb], b_role[mb], b_mask[mb], b_states[mb], b_actions[mb])
+                    b_obs[mb], b_role[mb], b_mask[mb], b_states[mb], b_actions[mb])
 
                 logratio = newlogprob - b_logprobs[mb]
                 ratio = logratio.exp()

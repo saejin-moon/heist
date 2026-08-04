@@ -23,7 +23,7 @@ Status legend:
 | REV-4 | `vec_env` overwrites the terminal observation before PPO sees it | FATAL | ✅ `o, _ = env.reset()` right after `done` | `src/vec_env.py` | P0 |
 | REV-5 | Muscle wall BREACH mechanic missing | ROADMAP | ✅ absent; hacker door-bypass is the only wall/deletion fallback | `src/constants.py`, `src/env.py` | P1 |
 | REV-6 | Extractor loot-carry burden missing | ROADMAP | ✅ absent; extractor moves at full speed with loot | `src/env.py` | P1 |
-| REV-7 | Learned communication (delete `global_state`, TarMAC) | ROADMAP crown jewel | ✅ `global_state` embedded in every baseline | `src/model.py`, `src/env.py`, all trainers | P2 (milestone) |
+| REV-7 | Learned communication (delete `global_state`, TarMAC) | ROADMAP crown jewel | ✅ `global_state` embedded in every baseline → deleted per-agent; TarMAC + CommAgent implemented; eval/diagnostic added | `src/model.py`, `src/env.py`, `src/train_comm.py`, all trainers | P2 (milestone) ✅ |
 | REV-8 | Guard AI: directional LOS, Patrol→Search states, A* | ROADMAP | ✅ global alarm trigger + Manhattan greedy only | `src/env.py`, `src/vision.py` | P1 |
 | REV-9 | Delayed alarm on guard neutralization (event queue) | ROADMAP | ✅ alarm added instantly in `_muscle_neutralize` | `src/constants.py`, `src/env.py` | P1 |
 
@@ -260,6 +260,23 @@ extractor alternating move/skip turns after securing loot.
 
 ## 6. REV-7 — Learned communication (the research crown jewel)
 
+**Status: 🔧 IMPLEMENTED (M2).**
+
+- Phase A (floor): `global_state` deleted from the per-agent obs contract.
+  `env.py` `_get_obs` emits only `observation`/`action_mask`/`role_id`;
+  `LOCAL_INPUT_DIM = 25 + N_AGENTS` in `model.py`; all three baselines
+  (IPPO/MAPPO/QMIX), `evaluate.py`, `dummy.py`, and `vec_env.py` sync'd.
+  Baselines re-run end-to-end without the crutch (2048-step smokes pass).
+- Phase B: `TarMACComm` (sender keys + sigmoid gates, receiver queries,
+  attention aggregation) + `CommAgent` (joint encoder → message passing →
+  per-agent actor/critic).  New trainer `src/train_comm.py` with joint
+  rollout buffers and per-agent GAE; `test_comm_smoke.py` covers the
+  pipeline.
+- Phase C: `message_outcome_correlation` in `evaluate.py` logs per-message-
+  dimension vs phase-flag correlations, mean attention, and the headline
+  `max_terminal_corr` scalar.  Observed after only 512 steps: mean terminal
+  message correlation ~0.45, showing the channel starts carrying phase info.
+
 **Approved mechanic:** delete the `global_state` crutch entirely and force
 agents to invent their own language (differentiable communication / TarMAC)
 to signal phase status (e.g. "terminal hacked").
@@ -407,7 +424,7 @@ flowchart LR
 | G1 | After REV-1/2 | G0 passes; `train_ippo.py --total-timesteps 2048 --num-envs 2 --num-steps 128 --eval-every 2 --eval-episodes 2` (README smoke) |
 | G2 | After REV-3/4 | Synthetic win-at-step-5 vs truncate-at-`max_steps` traces show distinct TD behavior; stage-0 smoke with small `max_steps` (truncations common) |
 | G3 | After M1 | `run_scripted_curriculum.py` stage win rates stay monotonic; `manual_control.py` shows breach, slow extractor, LOS guards, delayed alarm |
-| G4 | After REV-7 | Baselines re-run without `global_state`; comm variant ≥ Phase A floor; message→outcome correlation logged |
+| G4 | After REV-7 | ✅ All baselines re-run without `global_state` (2048-step smokes pass); comm variant trains end-to-end; message→outcome correlation diagnostic logs `max_terminal_corr`
 
 ## 11. Documentation update checklist
 

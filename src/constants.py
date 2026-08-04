@@ -127,10 +127,10 @@ CAMERA_RANGE = 12                # max line-of-sight distance for cameras
 # ---------------------------------------------------------------------------
 # Observation encoding
 # ---------------------------------------------------------------------------
-# global_state layout: [step, alarm, terminal_disabled, loot_acquired] then
-# per-objective relative displacement (dx, dy) for the terminal, loot, and
-# extract tiles.  Agent-relative coordinates keep the state Markovian and
-# give every agent a navigation signal toward the objectives.
+# GLOBAL_STATE_DIM: legacy constant for the per-agent global_state observation
+# (REVISION_PLAN.md §6).  Per-agent obs no longer carries this vector;
+# centralized critics (MAPPO/QMIX) still read env.state() which has its own
+# shape.  Kept here for backward compat with any downstream consumers.
 GLOBAL_STATE_DIM = 4 + 3 * 2
 
 # ---------------------------------------------------------------------------

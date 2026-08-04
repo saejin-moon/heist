@@ -30,7 +30,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from env import HeistEnv, AGENTS, parse_env_config
 from constants import (
-    OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, GLOBAL_STATE_DIM, N_AGENTS,
+    OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, N_AGENTS,
 )
 from model import QNetwork, QMixMixing
 
@@ -89,13 +89,14 @@ class ReplayBuffer:
         self.pos = 0
         self.size = 0
         self.obs = {a: np.zeros((capacity, *obs_shape), dtype=np.int32) for a in AGENTS}
-        self.gs = {a: np.zeros((capacity, GLOBAL_STATE_DIM), dtype=np.int32) for a in AGENTS}
         self.mask = {a: np.zeros((capacity, ACTION_DIM), dtype=np.int8) for a in AGENTS}
+        # REV-7 (REVISION_PLAN.md §6): no per-agent global_state; the QMIX
+        # Q-networks see local view + role one-hot, the mixing net sees
+        # env.state() (still stored in self.states / self.next_states).
         self.role = {a: np.zeros((capacity, N_AGENTS), dtype=np.int8) for a in AGENTS}
         self.actions = {a: np.zeros(capacity, dtype=np.int64) for a in AGENTS}
         self.rewards = {a: np.zeros(capacity, dtype=np.float32) for a in AGENTS}
         self.next_obs = {a: np.zeros((capacity, *obs_shape), dtype=np.int32) for a in AGENTS}
-        self.next_gs = {a: np.zeros((capacity, GLOBAL_STATE_DIM), dtype=np.int32) for a in AGENTS}
         self.next_mask = {a: np.zeros((capacity, ACTION_DIM), dtype=np.int8) for a in AGENTS}
         # REV-3: store terminations and truncations separately (QMIX bootstraps
         # the target on truncation from the stored terminal next state).
@@ -107,13 +108,11 @@ class ReplayBuffer:
     def push(self, obs, actions, rewards, terminations, truncations, states, next_obs, next_states):
         for a in AGENTS:
             self.obs[a][self.pos] = obs[a]["observation"]
-            self.gs[a][self.pos] = obs[a]["global_state"]
             self.mask[a][self.pos] = obs[a]["action_mask"]
             self.role[a][self.pos] = obs[a]["role_id"]
             self.actions[a][self.pos] = actions[a]
             self.rewards[a][self.pos] = rewards[a]
             self.next_obs[a][self.pos] = next_obs[a]["observation"]
-            self.next_gs[a][self.pos] = next_obs[a]["global_state"]
             self.next_mask[a][self.pos] = next_obs[a]["action_mask"]
         self.terminated[self.pos] = float(terminations)
         self.truncated[self.pos] = float(truncations)
@@ -126,13 +125,11 @@ class ReplayBuffer:
         idx = np.random.randint(0, self.size, size=batch_size)
         batch = {
             "obs": {a: torch.tensor(self.obs[a][idx], dtype=torch.float32) for a in AGENTS},
-            "gs": {a: torch.tensor(self.gs[a][idx], dtype=torch.float32) for a in AGENTS},
             "mask": {a: torch.tensor(self.mask[a][idx], dtype=torch.long) for a in AGENTS},
             "role": {a: torch.tensor(self.role[a][idx], dtype=torch.float32) for a in AGENTS},
             "actions": {a: torch.tensor(self.actions[a][idx], dtype=torch.long) for a in AGENTS},
             "rewards": {a: torch.tensor(self.rewards[a][idx], dtype=torch.float32) for a in AGENTS},
             "next_obs": {a: torch.tensor(self.next_obs[a][idx], dtype=torch.float32) for a in AGENTS},
-            "next_gs": {a: torch.tensor(self.next_gs[a][idx], dtype=torch.float32) for a in AGENTS},
             "next_mask": {a: torch.tensor(self.next_mask[a][idx], dtype=torch.long) for a in AGENTS},
             "terminated": torch.tensor(self.terminated[idx], dtype=torch.float32),
             "truncated": torch.tensor(self.truncated[idx], dtype=torch.float32),
@@ -158,10 +155,9 @@ def select_actions(env, obs, q_nets, epsilon, device):
             actions[a] = int(np.random.choice(legal))
             continue
         obs_t = torch.tensor(obs[a]["observation"], dtype=torch.float32, device=device).unsqueeze(0)
-        gs_t = torch.tensor(obs[a]["global_state"], dtype=torch.float32, device=device).unsqueeze(0)
         role_t = torch.tensor(obs[a]["role_id"], dtype=torch.float32, device=device).unsqueeze(0)
         with torch.no_grad():
-            q = q_nets[a](obs_t, gs_t, role_t).squeeze(0)
+            q = q_nets[a](obs_t, role_t).squeeze(0)
         q = q.cpu().numpy()
         q[~mask.astype(bool)] = -1e9
         actions[a] = int(np.argmax(q))
@@ -260,7 +256,7 @@ def train(args: Args):
                 # online joint Q
                 q_vals = []
                 for a in AGENTS:
-                    q = q_nets[a](batch["obs"][a], batch["gs"][a], batch["role"][a])
+                    q = q_nets[a](batch["obs"][a], batch["role"][a])
                     q = q.gather(1, batch["actions"][a].unsqueeze(1)).squeeze(1)
                     q_vals.append(q)
                 q_vals = torch.stack(q_vals, dim=1)  # [B, n]
@@ -270,8 +266,7 @@ def train(args: Args):
                 with torch.no_grad():
                     tq = []
                     for a in AGENTS:
-                        q_next = target_nets[a](batch["next_obs"][a], batch["next_gs"][a],
-                                                batch["role"][a])
+                        q_next = target_nets[a](batch["next_obs"][a], batch["role"][a])
                         masked = torch.where(
                             batch["next_mask"][a] == 1, q_next,
                             torch.full_like(q_next, -1e9))

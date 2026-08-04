@@ -38,26 +38,27 @@ from constants import WAIT, INTERACT, ACTION_DELTAS, OBSERVATION_SIZE
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _select_action(policy, obs, gs, role, mask, device, greedy=True):
+def _select_action(policy, obs, role, mask, device, greedy=True):
     obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-    gs_t = torch.tensor(gs, dtype=torch.float32, device=device).unsqueeze(0)
     role_t = torch.tensor(role, dtype=torch.float32, device=device).unsqueeze(0)
     mask_t = torch.tensor(mask, dtype=torch.int64, device=device).unsqueeze(0)
     with torch.no_grad():
         if greedy:
-            logits = _actor_logits(policy, obs_t, gs_t, role_t)
+            logits = _actor_logits(policy, obs_t, role_t)
             masked = torch.where(mask_t == 1, logits, torch.full_like(logits, -1e9))
             return int(masked.argmax(dim=-1).item())
-        action, _, _, _ = policy.get_action_and_value(obs_t, gs_t, role_t, mask_t)
+        action, _, _, _ = policy.get_action_and_value(obs_t, role_t, mask_t)
         return int(action.item())
 
 
-def _actor_logits(policy, obs_t, gs_t, role_t):
-    """Extract raw action logits from any of the model classes.
+def _actor_logits(policy, obs_t, role_t):
+    """Extract raw action logits from any of the Phase A model classes.
 
     HeistAgent / MappoAgent expose `.actor`; QNetwork exposes `.net`.
+    REV-7 (REVISION_PLAN.md §6): global_state is no longer part of the
+    local input (obs + role one-hot only).
     """
-    x = torch.cat((torch.flatten(obs_t, start_dim=1), gs_t, role_t), dim=1)
+    x = torch.cat((torch.flatten(obs_t, start_dim=1), role_t), dim=1)
     if hasattr(policy, "actor"):
         return policy.actor(x)
     return policy.net(x)
@@ -84,8 +85,8 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
             legal = np.argwhere(mask == 1).ravel()
             if greedy and len(legal) > 0:
                 actions[a] = _select_action(
-                    policies[a], obs[a]["observation"], obs[a]["global_state"],
-                    obs[a]["role_id"], mask, device, greedy=True)
+                    policies[a], obs[a]["observation"], obs[a]["role_id"],
+                    mask, device, greedy=True)
             else:
                 actions[a] = int(np.random.choice(legal))
         obs, rewards, terms, truncs, infos = env.step(actions)
@@ -217,3 +218,175 @@ def summarize(policies, env, episodes=50, seed=0, device="cpu"):
         print(f"  {a:>9}: {imp['importance'][a]:+.3f}")
     print("=" * 64)
     return metrics
+
+
+# ---------------------------------------------------------------------------
+# REV-7 (REVISION_PLAN.md §6) Phase B/C: communication-aware evaluation
+# ---------------------------------------------------------------------------
+def run_comm_episode(policy, env, device, greedy=True, seed=None,
+                     record_messages=False):
+    """Roll out one episode with a shared CommAgent (joint forward).
+
+    Every step, all agents' observations are passed to the CommAgent at
+    once so TarMAC message passing can happen before action selection.
+
+    Returns (metrics_dict, messages) where messages (only when
+    record_messages=True) is a list of per-step dicts with the gated
+    messages for each agent and the phase flags at that step.
+    """
+    obs, _ = env.reset(seed=seed)
+    total_return = 0.0
+    length = 0
+    credit = {a: 0.0 for a in AGENTS}
+    terminal_reward = 0.0
+    win = False
+    messages = []
+
+    for _ in range(env.config["max_steps"]):
+        obs_list = [torch.tensor(obs[a]["observation"], dtype=torch.float32,
+                                 device=device).unsqueeze(0) for a in AGENTS]
+        role_list = [torch.tensor(obs[a]["role_id"], dtype=torch.float32,
+                                  device=device).unsqueeze(0) for a in AGENTS]
+        mask_list = [torch.tensor(obs[a]["action_mask"], dtype=torch.int64,
+                                  device=device).unsqueeze(0) for a in AGENTS]
+
+        with torch.no_grad():
+            if greedy:
+                logits = _comm_logits(policy, obs_list, role_list)  # [n, A]
+                actions = []
+                for a, m in enumerate(mask_list):
+                    masked = torch.where(m == 1, logits[a],
+                                         torch.full_like(logits[a], -1e9))
+                    actions.append(masked.argmax(dim=-1))
+            else:
+                actions, _, _, _ = policy.get_action_and_value(
+                    obs_list, role_list, mask_list, state=None, action=None)
+                actions = [actions[0, a] for a in range(len(AGENTS))]
+
+        if record_messages:
+            msg = policy._last_messages_gated  # [1, n, msg_dim]
+            messages.append({
+                "messages": msg.squeeze(0).cpu().numpy(),
+                "terminal_disabled": int(env.terminal_disabled),
+                "loot_acquired": int(env.loot_acquired),
+                "extraction_triggered": int(env.extraction_triggered),
+            })
+
+        actions_dict = {a: int(actions[i].item()) for i, a in enumerate(AGENTS)}
+        obs, rewards, terms, truncs, infos = env.step(actions_dict)
+        length += 1
+        terminated = bool(any(terms.values()))
+        truncated = bool(any(truncs.values()))
+        done = terminated or truncated
+
+        if terminated:
+            terminal_reward = rewards[AGENTS[0]]
+            win = bool(infos[AGENTS[0]].get("win", False))
+        elif not done:
+            for a in AGENTS:
+                credit[a] += rewards[a]
+
+        total_return += sum(rewards.values()) / len(AGENTS)
+        if done:
+            break
+
+    metrics = {
+        "return": total_return, "length": length,
+        "terminal_reward": terminal_reward, "win": win, "credit": credit,
+        "alarm": env.alarm, "terminal_disabled": env.terminal_disabled,
+        "loot_acquired": env.loot_acquired,
+        "extraction_triggered": env.extraction_triggered,
+        "hack_progress": env.hack_progress,
+    }
+    return metrics, messages
+
+
+def _comm_logits(policy, obs_list, role_list):
+    """Joint forward through a CommAgent, returning per-agent logits."""
+    features = policy._joint_features(obs_list, role_list)
+    encoded = policy.encoder(features)
+    aggregated, messages_gated, attention = policy.comm(encoded)
+    policy._last_messages_gated = messages_gated.detach()
+    policy._last_attention = attention.detach()
+    B, n, _ = features.shape
+    agent_input = torch.cat([features, aggregated], dim=-1)
+    logits = policy.actor(agent_input.view(B * n, -1))
+    return logits.view(B, n, -1)[0]  # [n, ACTION_DIM]
+
+
+def evaluate_comm_policies(policy, env, episodes=20, seed=0, device="cpu",
+                           greedy=True):
+    """Standard metrics for a shared CommAgent."""
+    metrics = {
+        "win_rate": 0.0, "mean_return": 0.0, "mean_length": 0.0,
+        "mean_alarm": 0.0, "terminal_rate": 0.0, "loot_rate": 0.0,
+        "extraction_rate": 0.0, "mean_hack_progress": 0.0,
+    }
+    if episodes <= 0:
+        return metrics
+    results = [run_comm_episode(policy, env, device, greedy=greedy,
+                                seed=seed + i)[0] for i in range(episodes)]
+    metrics["win_rate"] = np.mean([r["win"] for r in results])
+    metrics["mean_return"] = np.mean([r["return"] for r in results])
+    metrics["mean_length"] = np.mean([r["length"] for r in results])
+    metrics["mean_alarm"] = np.mean([r["alarm"] for r in results])
+    metrics["terminal_rate"] = np.mean([r["terminal_disabled"] for r in results])
+    metrics["loot_rate"] = np.mean([r["loot_acquired"] for r in results])
+    metrics["extraction_rate"] = np.mean([r["extraction_triggered"] for r in results])
+    metrics["mean_hack_progress"] = np.mean([r["hack_progress"] for r in results])
+    return metrics
+
+
+def message_outcome_correlation(policy, env, episodes=20, seed=0, device="cpu"):
+    """REV-7 Phase C emergent-language diagnostic.
+
+    Records every step's per-agent gated messages together with the phase
+    flags (terminal_disabled, loot_acquired, extraction_triggered) and
+    returns the Pearson correlation of each message dimension with each
+    phase flag, plus the mean attention weight between agents.
+
+    If the agents learn to signal "terminal hacked" (the intended message),
+    some message dimension should correlate strongly with terminal_disabled.
+    """
+    all_msgs = []        # [T, n_agents, msg_dim]
+    all_flags = []       # [T, 3]
+    attn_sum = np.zeros((len(AGENTS), len(AGENTS)))
+    attn_count = 0
+    for i in range(episodes):
+        _, steps = run_comm_episode(policy, env, device, greedy=True,
+                                    seed=seed + i, record_messages=True)
+        for s in steps:
+            all_msgs.append(s["messages"])
+            all_flags.append([s["terminal_disabled"], s["loot_acquired"],
+                              s["extraction_triggered"]])
+            attn = policy._last_attention  # [1, n, n]
+            attn_sum += attn.squeeze(0).cpu().numpy()
+            attn_count += 1
+
+    msgs = np.array(all_msgs)      # [T, n, d]
+    flags = np.array(all_flags)    # [T, 3]
+    n_agents, d = msgs.shape[1], msgs.shape[2]
+
+    # per-agent: corr of each message dim with each phase flag
+    corr = np.zeros((n_agents, d, 3))
+    for a in range(n_agents):
+        for dim in range(d):
+            for f in range(3):
+                x = msgs[:, a, dim]
+                y = flags[:, f]
+                if x.std() == 0 or y.std() == 0:
+                    corr[a, dim, f] = 0.0
+                else:
+                    corr[a, dim, f] = float(np.corrcoef(x, y)[0, 1])
+
+    diag = {
+        "message_phase_corr": corr,                     # [n, d, 3]
+        "mean_attention": attn_sum / max(attn_count, 1),  # [n, n]
+        "n_steps": len(all_msgs),
+    }
+    # headline scalar: strongest |corr| between any message dim and
+    # terminal_disabled across all agents (the intended signal).
+    terminal_corr = np.abs(corr[:, :, 0])
+    diag["max_terminal_message_corr"] = float(terminal_corr.max()) if terminal_corr.size else 0.0
+    diag["mean_terminal_message_corr"] = float(terminal_corr.mean()) if terminal_corr.size else 0.0
+    return diag
