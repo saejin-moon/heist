@@ -69,6 +69,7 @@ uv run python -c "import torch; print(torch.cuda.get_device_name(0) if torch.cud
 # Sequential driver: IPPO, MAPPO, QMIX, comm at 300k steps on stage-0
 # (seeds 0-2). Logs to log/experiment_stage0_300k.log. Resumable: reruns
 # skip any <algo>_s<seed> that already has a checkpoint in checkpoints/.
+mkdir -p log           # log/ is gitignored, not present on a fresh clone
 nohup bash experiment_stage0_300k.sh > log/launch.out 2>&1 &
 
 # watch progress
