@@ -151,6 +151,58 @@ work if convenient.
 ~1.6 s per eval — negligible today.  Only revisit if a later profile shows
 eval dominating.
 
+### P5 (NEW). The update phase, not rollout, is ~2/3 of PPO-family wall time
+
+Pure rollout (tensor + 4 forwards + `vec_env.step`) is ~229 vec-steps/s =
+~1,830 env-steps/s at stage-0, but end-to-end trainers only hit ~630
+(IPPO), ~520 (MAPPO), ~460 (comm) env-steps/s.  So GAE + minibatch PPO
+updates + logging cost **~2x the rollout time** — a bigger lever than P1.
+
+The GAE block (`src/train_*.py`) loops `for a in AGENTS` then
+`for t in reversed(range(num_steps))`: 4 x 256 Python iterations per
+update, each issuing small GPU ops.  The policy update then does
+per-agent `torch.cat` + 4 minibatches x 4 epochs.
+
+**What:**
+- **P5a (biggest win):** compute GAE once on a stacked `[4, num_steps,
+  num_envs]` tensor instead of 4 separate 256-step Python loops.  Same
+  math (the per-agent loops are independent), one set of vector ops.
+- **P5b:** run the minibatch updates for all 4 agents with batched
+  `torch.cat` (this is what `--shared` already does; could become the
+  default given it is mathematically equivalent for independent critics
+  when gradients are accumulated per agent — verify before enabling).
+- **P5c:** reduce update-epochs/minibatches (hyperparameter, changes
+  training dynamics — a research decision, not a free lunch).
+
+**Expected gain:** 1.5-2.5x on PPO-family stage-0 training (the 66% update
+phase is the target), on top of P1's rollout gains.
+
+### P6 (NEW). QMIX is 61% of the campaign wall-clock; its gradient, not its env
+
+QMIX runs a **single env** and defaults to `--train-freq 1` (one gradient
+step per env step).  Measured 105 env-steps/s vs 630 for IPPO, and the raw
+single-env step is only 0.034 ms (~29k steps/s) — so **the env is 0.4% of
+QMIX wall time; the per-step replay-push + gradient dominates**.  3 QMIX
+seeds = ~2.4 h of the ~4 h stage-0 campaign (61%).
+
+**What:**
+- **P6a:** raise `--train-freq` (e.g. 4-8) in the campaign driver —
+  standard QMIX practice, cuts gradient steps N-fold.  Expected 2-4x on
+  QMIX wall time (drops the campaign from ~4 h to ~2-2.5 h).
+- **P6b (bigger, optional):** vectorize QMIX with a small VectorEnv of N
+  envs and shared replay (changes the algorithm's data distribution —
+  needs an experiment, not just a smoke).
+
+**Note:** QMIX wall time is dominated by per-step Python + GPU launch
+overhead on tiny nets; raising `--batch-size`/reducing `--train-freq` are
+the cheap, low-risk knobs to try first.
+
+### P7 (not a bottleneck). Resets
+
+`env.reset` costs 0.4 ms (stage-0) to 3.0 ms (stage-4), 2-16x a step.  But
+episodes are 60-300 steps, so amortized reset is <1% of step cost.
+Leave resets alone.
+
 ---
 
 ## 3. What NOT to do
@@ -172,11 +224,11 @@ Measured on this machine (RTX 3000 Ada, 22 cores) with the new
 `tools/assess_time.py`; campaign-log units corrected (log sps x 8 =
 env-steps/s):
 
-| Campaign | Today (measured, this box) | With P1+P2 (est.) |
+| Campaign | Today (measured, this box) | With P1+P2+P5+P6 (est.) |
 |---|---|---|
-| stage-0 300k (12 runs) | ~4 h | ~2 h |
-| full 1M grid (12 runs/stage) | ~4.4 days | ~2 days |
-| curriculum IPPO+MAPPO 1M | ~10 h | ~5 h |
+| stage-0 300k (12 runs) | ~4 h | ~1-1.5 h |
+| full 1M grid (12 runs/stage) | ~4.4 days | ~1.5 days |
+| curriculum IPPO+MAPPO 1M | ~10 h | ~4 h |
 
 A 3080 Ti is roughly comparable to the 3000 Ada for these tiny MLPs (the
 bottleneck is CPU env-stepping + per-step Python), so expect similar
@@ -184,10 +236,10 @@ numbers, likely a bit faster.  This is **8x faster than the pre-correction
 estimate** (12-16 h stage-0) because trainer `sps` was misread as
 env-steps/s when it is iterations/s.
 
-P1 helps every algorithm at every stage; P2 disproportionately helps the
-bigger curriculum stages where the wall-clock estimate is dominated by
-guard pathfinding.  Combined they roughly halve the full-program estimate
-and de-risk the 3-week plan.
+P1 helps rollout, P5 helps the (larger) update phase, P6 helps QMIX (the
+campaign's biggest single consumer), P2 helps the bigger curriculum stages.
+Combined they cut the full-program estimate by ~3x and make the 3-week
+plan comfortable.
 
 ## 5. Validation gate
 
