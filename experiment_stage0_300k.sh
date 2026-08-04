@@ -23,8 +23,10 @@
 # Run IPPO (Phase A floor), MAPPO, QMIX, and train_comm at 300k steps on
 # stage-0 (seeds 0-2).  Resolves the deferred G4 claim "comm >= Phase A floor".
 #
-# Runs sequentially on one GPU.  Each run: ~42-90 min depending on algo.
-# Total budget: ~8-12 hours.
+# Runs sequentially on one GPU.  Each run: ~8-50 min depending on algo.
+# Total budget: ~4-8 hours on a typical CUDA GPU.
+# (Measured with tools/assess_time.py on an RTX 3000 Ada; note the trainer
+#  logs sps in rollout-iterations/s -- multiply by num_envs for env-steps/s.)
 #
 # Logs:   log/experiment_stage0_300k.log
 # Runs:   runs/<algo>_s<seed>/

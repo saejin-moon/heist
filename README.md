@@ -52,7 +52,10 @@ uv run ruff format --check                                        # formatting
 
 ### 1. Set up the environment on the target machine
 ```bash
-# requires: uv, a CUDA-capable GPU, ~12h of wall time for all 12 runs
+# requires: uv, a CUDA-capable GPU, ~4-8h of wall time for all 12 runs
+# one-shot alternative (installs system pkgs + uv, clones, syncs, gates,
+# smokes, then runs the campaign; --daemon backgrounds it):
+#   zsh train-stage-0.zsh [--daemon] [--eval]
 git clone https://github.com/saejin-moon/heist.git
 cd heist
 uv sync --locked        # install pinned deps from uv.lock (fails if stale)
@@ -63,6 +66,18 @@ Verify the GPU is visible to torch:
 ```bash
 uv run python -c "import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO CUDA')"
 ```
+
+### 1b. Estimate wall-clock time on THIS machine first
+Before launching anything, measure real throughput and get campaign
+estimates (env speed per stage, rollout overhead, end-to-end trainer
+steps/s for each algo, and extrapolated hours for the full 1M grid):
+```bash
+./assess-time.zsh                    # full assessment (~5-10 min)
+./assess-time.zsh --trainer-steps 10240   # faster, less precise
+```
+Notes: the trainer logs `sps` in rollout-iterations/s (each iteration steps
+8 envs) -- multiply by `num_envs` for env-steps/s.  This is why campaign
+estimates here are ~8x smaller than the earlier pre-correction guesses.
 
 ### 2. Launch the campaign
 ```bash
@@ -92,6 +107,10 @@ with the resulting tables.
 
 ## Project Layout
 ```
+PERFORMANCE.md      measured bottlenecks + prioritized optimization plan
+train-stage-0.zsh   one-shot provision + run for the target machine
+assess-time.zsh     throughput benchmark + wall-clock estimate wrapper
+tools/assess_time.py  the benchmark itself (env, rollout, trainer sps, extrapolation)
 src/constants.py    reward/alarm constants, ROLE_ACTIONS, tile palette
 src/map_gen.py      procedural map generation (rooms, doors, cameras, spawns)
 src/vision.py       numba-JIT Bresenham line-of-sight + camera exposure
