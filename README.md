@@ -26,15 +26,20 @@ To prevent the environment from degrading into a trivial pathfinding task, HEIST
 # clone
 git clone https://github.com/saejin-moon/heist.git
 cd heist
-# create environment
-uv venv .venv
-# install pinned deps (numpy<2.5 is required for numba compatibility)
-uv pip install -r requirements.txt
+# create env and install pinned deps (numpy<2.5 is required for numba compatibility)
+uv sync
 ```
-Always invoke Python via the venv directly (never `source activate`):
+`uv sync` installs the runtime deps declared in `pyproject.toml`
+(`[project].dependencies`) plus the dev group (`pytest`, `ruff`) and is the
+single entry point; `requirements.txt` is kept in sync for legacy pip users.
+
+Always invoke commands through `uv run` (never `source activate`):
 ```bash
-../.venv/bin/python -m pettingzoo.test.parallel_test -e src.dummy:make_env  # API smoke test
-../.venv/bin/python src/manual_control.py                              # human play
+uv run python src/manual_control.py                              # human play
+uv run python -m pettingzoo.test.parallel_test -e src.dummy:make_env  # API smoke
+uv run pytest                                                     # 11 unit/mechanics smokes
+uv run ruff check                                                 # lint (E/F/W/I/UP/B/SIM)
+uv run ruff format --check                                        # formatting
 ```
 
 ## Project Layout
@@ -48,6 +53,7 @@ src/model.py        HeistAgent (PPO actor-critic), MappoAgent, QMixNet + mixer
 src/train_ippo.py   independent PPO baseline (--shared for param sharing)
 src/train_mappo.py  shared actor + centralized critic baseline
 src/train_qmix.py   value-decomposition baseline (replay buffer + monotonic mixer)
+src/train_comm.py   REV-7 learned-communication baseline (TarMAC messages)
 src/evaluate.py     win rate, Credit Attribution Index, counterfactual importance
 src/curriculum.py   5 staged configs from 11x11 (no security) to 50x50 (full)
 src/dummy.py        random-policy smoke-test entrypoint
@@ -61,23 +67,25 @@ to `src/runs/<algo>_s<seed>/`, and `--env-config` taking a **JSON string**
 (comma-separated key=value breaks on tuple values like map_size).
 
 ```bash
-cd src
-
 # Independent PPO, tiny stage-0 map, smoke test (~1 min on CUDA)
-../.venv/bin/python train_ippo.py --total-timesteps 2048 --num-envs 2 --num-steps 128 \
+uv run python src/train_ippo.py --total-timesteps 2048 --num-envs 2 --num-steps 128 \
   --eval-every 2 --eval-episodes 2 \
   --env-config '{"map_size": [11, 11], "num_rooms_range": [1, 2], "guard_count": 0, "camera_count": 0, "door_count": 0, "max_steps": 60}'
 
 # MAPPO (shared actor, centralized critic)
-../.venv/bin/python train_mappo.py --total-timesteps 200000 --num-envs 8 --num-steps 256 \
+uv run python src/train_mappo.py --total-timesteps 200000 --num-envs 8 --num-steps 256 \
   --env-config '{"map_size": [15, 15], "guard_count": 2, "camera_count": 0, "max_steps": 120}'
 
 # QMIX (off-policy; use --no-cuda for quick CPU smoke tests to skip triton JIT warmup)
-../.venv/bin/python train_qmix.py --total-steps 100000 --no-cuda \
+uv run python src/train_qmix.py --total-steps 100000 --no-cuda \
   --env-config '{"map_size": [15, 15], "guard_count": 0, "camera_count": 0, "max_steps": 120}'
 
+# Comm (REV-7): shared TarMAC policy with learned messages
+uv run python src/train_comm.py --total-steps 100000 \
+  --env-config '{"map_size": [11, 11], "guard_count": 0, "camera_count": 0, "max_steps": 120}'
+
 # Curriculum: stage-0 config up to the full 50x50 benchmark
-../.venv/bin/python -c "from curriculum import CURRICULUM; [print(s) for s in CURRICULUM]"
+uv run python -c "from curriculum import CURRICULUM; [print(s) for s in CURRICULUM]"
 ```
 
 Common flags: `--no-cuda`, `--no-save-model`, `--seed`, `--eval-every`,
@@ -98,8 +106,7 @@ Dilution**, two ways:
   by a no-op, compared to the baseline team.
 
 ```bash
-cd src
-../.venv/bin/python -c "
+uv run python -c "
 from env import HeistEnv
 from model import HeistAgent
 from evaluate import summarize
