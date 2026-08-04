@@ -1,0 +1,7 @@
+.*/
+*/__pycache__/
+deleted/
+*.xml
+*.log
+src/checkpoints/
+src/runs/
