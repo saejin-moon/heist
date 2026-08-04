@@ -24,6 +24,10 @@ from torch.distributions.categorical import Categorical
 from constants import GLOBAL_STATE_DIM
 
 # obs (25) + global_state (GLOBAL_STATE_DIM) fused into the local feature vector
+# REV-2 (REVISION_PLAN.md §2): GLOBAL_STATE_DIM grows to 14 with the env-issued
+# role one-hot so shared policies can distinguish roles.
+# REV-7 (REVISION_PLAN.md §6): global_state is deleted in the learned-
+# communication milestone and replaced by a TarMAC-style message channel.
 LOCAL_INPUT_DIM = 25 + GLOBAL_STATE_DIM
 ACTION_DIM = 6
 HIDDEN_DIM = 64

@@ -135,6 +135,9 @@ def train(args: Args):
     # policies: one per agent (independent) or a single shared network
     # ------------------------------------------------------------------
     if args.shared:
+        # REV-2 (REVISION_PLAN.md §2): one shared network for all four roles;
+        # role identity must arrive via the env-issued role one-hot once the
+        # observation contract is updated (REV-1).
         shared_policy = HeistAgent().to(device)
         policies = {a: shared_policy for a in AGENTS}
         optimizers = {"all": torch.optim.Adam(shared_policy.parameters(), lr=args.learning_rate, eps=1e-5)}
@@ -229,6 +232,10 @@ def train(args: Args):
             lastgaelam = 0.0
             for t in reversed(range(args.num_steps)):
                 if t == args.num_steps - 1:
+                    # REV-3 (REVISION_PLAN.md §3b): truncations must bootstrap
+                    # to value(terminal_obs), not 0.0. Distinguish terminated vs
+                    # truncated flags and read the stashed terminal obs/state
+                    # that vec_env.step returns (REV-4).
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
                 else:

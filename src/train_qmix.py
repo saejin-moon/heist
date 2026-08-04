@@ -267,6 +267,9 @@ def train(args: Args):
                     q_tot_target = target_mixing(tq, batch["next_states"])
                     rewards = torch.stack([batch["rewards"][a] for a in AGENTS], dim=1).mean(dim=1)
                     y = rewards + args.gamma * (1 - batch["dones"]) * q_tot_target
+                    # REV-3 (REVISION_PLAN.md §3b): replay `dones` lumps
+                    # terminations and truncations; split the two and bootstrap
+                    # the target on truncation from the stored terminal state.
 
                 loss = nn.functional.mse_loss(q_tot, y)
 

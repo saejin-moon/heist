@@ -105,6 +105,8 @@ def train(args: Args):
     next_done = torch.zeros(args.num_envs, device=device)
 
     # shared policy: one actor + centralized critic
+    # REV-2 (REVISION_PLAN.md §2): this single network controls all four roles;
+    # it needs the env-issued role one-hot (REV-1) to avoid aliasing.
     policy = MappoAgent(state_dim).to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=args.learning_rate, eps=1e-5)
 
@@ -186,6 +188,10 @@ def train(args: Args):
             lastgaelam = 0.0
             for t in reversed(range(args.num_steps)):
                 if t == args.num_steps - 1:
+                    # REV-3 (REVISION_PLAN.md §3b): truncations must bootstrap
+                    # to critic(terminal_state), not 0.0. Distinguish terminated
+                    # vs truncated flags and read the stashed terminal obs/state
+                    # that vec_env.step returns (REV-4).
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
                 else:

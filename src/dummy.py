@@ -18,7 +18,11 @@ from constants import ACTION_SPACE_SIZE
 
 
 class DummyActor(nn.Module):
-    """29 inputs (5x5 obs + 4-vec global_state) -> 6 action logits."""
+    """29 inputs (5x5 obs + 4-vec global_state) -> 6 action logits.
+    REV-1 (REVISION_PLAN.md §1): stale -- GLOBAL_STATE_DIM is 10 today (14
+    after REV-2), so nn.Linear(29, 64) below is already broken on a real env
+    observation; rebuild from GLOBAL_STATE_DIM when the contract is fixed.
+    """
 
     def __init__(self):
         super().__init__()

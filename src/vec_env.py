@@ -62,6 +62,10 @@ class VectorEnv:
                 env.reset()
             acts = {a: int(actions[a][i]) for a in AGENTS}
             o, r, t, tr, inf = env.step(acts)
+            # REV-4 (REVISION_PLAN.md §3a): stash the true terminal
+            # observation/state in inf[a]["terminal_observation"] before
+            # resetting; return terminations and truncations separately so
+            # the PPO loop (REV-3) can bootstrap correctly on truncation.
             done = bool(any(t.values()) or any(tr.values()))
             if done:
                 o, _ = env.reset()

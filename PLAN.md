@@ -87,6 +87,10 @@ In an RG-Dec-POMDP, this assumption breaks down due to **Causal Credit Dilution*
   1. `observation`: 5x5 Fog-Masked local box (masked by Fog of War except where Scout revealed tiles).
   2. `action_mask`: 6-element binary vector enforcing dynamic action constraints.
   3. `global_state`: 4-element vector (alarm level, timer remaining, agent status signals).
+
+  > **REV-1 / REV-2 / REV-7 (see `REVISION_PLAN.md`):** stale. The vector is 10
+  > elements today (phase + per-objective bearings), becomes 14 with the role
+  > one-hot, and is slated for removal in the learned-communication milestone.
 * **Reward Structure:**
   * Shared terminal reward: $+10.0$ (successful extraction with loot), $-10.0$ (caught/alarm/timeout).
   * Intermediate rewards: $+2.0$ for key task completions (Scout revealing info, Hacker completing terminal, Muscle neutralizing guard, Extractor securing loot).

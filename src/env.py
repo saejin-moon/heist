@@ -109,6 +109,13 @@ class HeistEnv(ParallelEnv):
                 # 6-element binary causal action gate
                 "action_mask": Box(low=0, high=1, shape=(ACTION_SPACE_SIZE,), dtype=np.int8),
                 # step, alarm level (0-100), terminal disabled, loot acquired
+                # REV-1 (REVISION_PLAN.md §1): shape must be (GLOBAL_STATE_DIM,)
+                # and bounds must allow negative relative bearings
+                # (low=-max(map_h,map_w), high=max(max_steps, 100, map_h, map_w)).
+                # REV-2 (REVISION_PLAN.md §2): role one-hot appended in _get_obs
+                # -> GLOBAL_STATE_DIM becomes 14.
+                # REV-7 (REVISION_PLAN.md §6): global_state removed in the
+                # learned-communication milestone.
                 "global_state": Box(low=0, high=255, shape=(4,), dtype=np.int32),
             })
             for a in self.possible_agents
@@ -156,6 +163,7 @@ class HeistEnv(ParallelEnv):
         self._prev_extract_dist = {}
         self.agents = self.possible_agents[:]
         self.explored_map = np.zeros((self.map_h, self.map_w), dtype=bool)
+        # REV-9 (REVISION_PLAN.md §8): clear the delayed-alarm event queue here.
 
         # --- regenerate the procedural map ---
         map_data = generate_procedural_map(
@@ -385,6 +393,9 @@ class HeistEnv(ParallelEnv):
     # Internals: movement and reveals
     # ------------------------------------------------------------------
     def _move_agent(self, agent, action):
+        # REV-6 (REVISION_PLAN.md §5): while loot_acquired the extractor may
+        # only move 1 tile every 2 turns (escort dynamic); mirror the slow-turn
+        # gate in _action_mask so the policy sees the constraint.
         row, col = self.agent_positions[agent]
         dr, dc = ACTION_DELTAS[action]
         nr, nc = row + dr, col + dc
@@ -453,6 +464,9 @@ class HeistEnv(ParallelEnv):
                 rewards["hacker"] += self.config["reward_task"]
             return
         # fallback: force-bypass an adjacent locked door
+        # REV-5 (REVISION_PLAN.md §4): door bypass stays for DOOR tiles; WALL
+        # destruction moves to a Muscle BREACH action (+ALARM_BREACH instant,
+        # guards within breach_radius repath).
         for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             nr, nc = pos[0] + dr, pos[1] + dc
             if 0 <= nr < self.map_h and 0 <= nc < self.map_w and self.grid[nr, nc] == DOOR:
@@ -462,6 +476,10 @@ class HeistEnv(ParallelEnv):
 
     def _muscle_neutralize(self, pos, rewards):
         """Temporarily remove a nearby guard at a delayed alarm cost."""
+        # REV-9 (REVISION_PLAN.md §8): schedule the alarm via an event queue
+        # fired ALARM_NEUTRALIZE_DELAY (15) turns later, not instantly.
+        # REV-5 (REVISION_PLAN.md §4): add the adjacent-WALL BREACH path here
+        # (instant +ALARM_BREACH, guards within breach_radius repath).
         best, best_d = None, 1e9
         for gi, gpos in enumerate(self.guard_positions):
             if self.neutralized[gi] > 0:
@@ -502,6 +520,10 @@ class HeistEnv(ParallelEnv):
         return moves
 
     def _move_guards(self):
+        # REV-8 (REVISION_PLAN.md §7): replace the single global alarm trigger
+        # with per-guard Patrol/Search/Converge states, directional line-of-sight
+        # (vision.line_is_clear), and A* pathfinding instead of greedy Manhattan.
+        # REV-5/REV-9 supply Search triggers (breach coordinate, missing guard).
         converge = self.alarm >= self.config["converge_alarm"]
         new_positions = []
         for gi, (gr, gc) in enumerate(self.guard_positions):
@@ -621,6 +643,10 @@ class HeistEnv(ParallelEnv):
 
         mask = self._action_mask(agent)
         pr, pc = pos
+        # REV-2 (REVISION_PLAN.md §2): append the agent's role one-hot here
+        # so shared policies (train_ippo --shared, train_mappo) can tell roles
+        # apart.  REV-7 (REVISION_PLAN.md §6): this whole vector is deleted in
+        # the learned-communication milestone.
         global_state = np.array([
             self.current_step,
             int(min(self.alarm, 100)),

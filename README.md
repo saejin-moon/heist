@@ -11,6 +11,11 @@ To preserve the Markov Property under strict causal gating, HEIST abandons stand
 2. **`action_mask` (6-element vector):** Mathematically enforces the sequential causal gates. Downstream actions (e.g., extracting loot) are dynamically masked out until upstream dependencies are resolved, preventing the policy network from wasting gradient updates on impossible actions.
 3. **`global_state` (4-element vector):** A global broadcast of the heist's phase (Terminal status, Loot status, Alarm status, Step count). Without this, downstream agents would experience action-mask changes as non-stationary magic, fatally violating the Markov Property.
 
+> **REV-1 / REV-2 (see `REVISION_PLAN.md`):** this section is stale. `global_state`
+> is currently 10 elements (phase + objective bearings) and will grow to 14 with
+> the role one-hot, then be removed entirely in the learned-communication
+> milestone (REV-7).
+
 ## Adversary and Loss Conditions
 To prevent the environment from degrading into a trivial pathfinding task, HEIST introduces two opposing adversarial pressures. First, Rule-Based Adversaries (Guards) execute dynamic random-walk patrols. If a guard's Manhattan distance to any agent closes to $\le 1$, a global alarm triggers, terminating the episode with a catastrophic `-10.0` shared reward. Second, a constant time penalty (`-0.01` per step) acts as a baseline bleed. This dual-pressure system prevents policy collapse: agents cannot safely sprint blindly to objectives, nor can they exploit a "hide-and-wait" policy to avoid the guards entirely.
 
