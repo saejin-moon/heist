@@ -35,9 +35,10 @@ run() {
 }
 
 # Skip a run whose checkpoint dir already exists (resume support).
+# Trainers save to checkpoints/<run_name> (repo root), see train_*.py.
 already_done() {
     local dir="$1"; shift
-    [ -n "$(ls -A "src/checkpoints/$dir" 2>/dev/null)" ]
+    [ -n "$(ls -A "checkpoints/$dir" 2>/dev/null)" ]
 }
 
 SEEDS=(0 1 2)
@@ -54,7 +55,7 @@ for seed in "${SEEDS[@]}"; do
     run "ippo s${seed}" \
         uv run python src/train_ippo.py \
         --total-timesteps 300000 --num-envs 8 --num-steps 256 \
-        --eval-every 5000 --eval-episodes 20 --seed "$seed" \
+        --eval-every 20 --eval-episodes 20 --seed "$seed" \
         --env-config "$STAGE0" \
         --exp-name ippo_s0
 done
@@ -68,7 +69,7 @@ for seed in "${SEEDS[@]}"; do
     run "mappo s${seed}" \
         uv run python src/train_mappo.py \
         --total-timesteps 300000 --num-envs 8 --num-steps 256 \
-        --eval-every 5000 --eval-episodes 20 --seed "$seed" \
+        --eval-every 20 --eval-episodes 20 --seed "$seed" \
         --env-config "$STAGE0" \
         --exp-name mappo_s0
 done
