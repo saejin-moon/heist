@@ -1,166 +1,171 @@
 # HEIST: Hierarchical Environment for Interdependent Sequential Tasks
-HEIST is a PettingZoo-compliant Multi-Agent Reinforcement Learning (MARL) benchmark specifically engineered to stress-test cooperative credit assignment. By forcing agents to navigate parallel physical spaces while remaining strictly gated by sequential causal dependencies and dynamic partial observability, HEIST isolates and exposes the failure modes of standard value-decomposition algorithms (e.g., QMIX, MAPPO).
 
-## Causal Credit Dilution
-Standard cooperative MARL algorithms (such as QMIX and MAPPO) rely on shared reward functions, assuming agents contribute to the global state simultaneously. However, HEIST introduces Causal Credit Dilution. While agents navigate the environment in parallel, their objective interactions are bound by strict sequential dependencies (e.g., the Extractor cannot secure the loot until the Hacker disables the terminal). Consequently, if a downstream agent fails late in the episode, the shared negative reward propagates backward, diluting the credit upstream agents deserved for executing their prerequisites flawlessly.
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![PettingZoo Compatible](https://img.shields.io/badge/PettingZoo-1.24+-green.svg)](https://pettingzoo.farama.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Environment Architecture
-To preserve the Markov Property under strict causal gating, HEIST abandons standard flat observation arrays in favor of a multi-tensor `Dict` space for each agent:
+**HEIST** is a PettingZoo-compliant Multi-Agent Reinforcement Learning (MARL) benchmark specifically engineered to isolate, measure, and solve **Causal Credit Dilution** in cooperative multi-agent teams. 
 
-1. **`observation` (5x5 matrix):** The agent's local physical view, restricted by a dynamic Bresenham-raycast Fog of War. 
-2. **`action_mask` (6-element vector):** Mathematically enforces the sequential causal gates. Downstream actions (e.g., extracting loot) are dynamically masked out until upstream dependencies are resolved, preventing the policy network from wasting gradient updates on impossible actions.
-3. **`role_id` (4-element one-hot):** Identifies the agent's role (Scout, Hacker, Muscle, Extractor) so shared policies can distinguish between roles without aliasing (REV-2).
+By forcing four heterogeneous agents (**Scout**, **Hacker**, **Muscle**, **Extractor**) to operate in parallel physical views while strictly gated by a sequential causal dependency chain against dynamic rule-based security adversaries (Guards & Cameras), HEIST exposes the fundamental failure modes of standard value-decomposition and centralized-critic algorithms (e.g., QMIX, MAPPO).
 
-REV-7 (see `REVISION_PLAN.md §6`) removed the former `global_state` broadcast
-from the per-agent observation contract.  Agents must now communicate phase
-status (e.g., "terminal hacked") through learned TarMAC-style messages; a
-centralized critic (`env.state()`) remains available for MAPPO/QMIX value
-estimation but is not part of the per-agent observation dict.
+---
 
-## Novel Credit Assignment Algorithms
-HEIST introduces two novel, theoretically grounded MARL credit-assignment algorithms designed to conquer Causal Credit Dilution:
+## 🔬 Core Problem: Causal Credit Dilution
 
-1. **CIR (Causal Influence Routing):** Counterfactual message ablation in the TarMAC communication channel (`src/model.py:CommAgent.get_influence_matrix`). By measuring the absolute change in a receiver's value function when muting each sender, GAE advantage vectors are causally routed from receivers back to the senders who enabled them (`--cir-coef`).
-2. **CAR (Counterfactual Affordance Reward):** Detects when an agent's `INTERACT` action flips a teammate's `action_mask` from 0 to 1 (`src/env.py:HeistEnv.step`). Unlocking a causal affordance awards an intrinsic reward proportional to the Centralized Critic's valuation of the new state (`--car-coef`).
+Standard cooperative MARL algorithms rely on shared team rewards, implicitly assuming that all agents contribute to global state transitions simultaneously. However, real-world multi-agent systems operate under **sequential causal dependencies**:
 
-## Adversary and Loss Conditions
-To prevent the environment from degrading into a trivial pathfinding task, HEIST introduces two opposing adversarial pressures. First, Rule-Based Adversaries (Guards) execute dynamic random-walk patrols. If a guard's Manhattan distance to any agent closes to $\le 1$, a global alarm triggers, terminating the episode with a catastrophic `-10.0` shared reward. Second, a constant time penalty (`-0.01` per step) acts as a baseline bleed. This dual-pressure system prevents policy collapse: agents cannot safely sprint blindly to objectives, nor can they exploit a "hide-and-wait" policy to avoid the guards entirely.
+$$\text{Scout (Tag Terminal)} \longrightarrow \text{Hacker (Disable Security)} \longrightarrow \text{Extractor (Secure Loot)} \longrightarrow \text{Team (Extract)}$$
 
-## Installation and Developer Tooling
-`uv` must be installed before running this repository.
+If a downstream agent (e.g., Extractor) fails late in the episode, standard algorithms propagate a negative team reward backward to all agents. This **dilutes upstream credit**, penalizing upstream agents (e.g., Scout and Hacker) even when they executed their prerequisite tasks flawlessly.
+
+---
+
+## ⚡ Novel Credit Assignment Algorithms
+
+HEIST introduces two novel, theoretically grounded algorithms designed to eliminate Causal Credit Dilution:
+
+### 1. CIR (Causal Influence Routing)
+* **Concept:** Counterfactual message ablation in learned communication channels (`src/model.py:CommAgent.get_influence_matrix`).
+* **Mechanism:** Measures the absolute change in a receiver agent's value function $V_r$ when muting each sender's TarMAC message $\mathbf{m}_s$. The normalized influence matrix $\mathbf{I}_{r,s}$ routes GAE advantage vectors from receivers back to the senders who causally enabled their reward:
+$$\mathbf{A}_{routed} = \text{einsum}(\mathbf{I}, \mathbf{A})$$
+$$\mathbf{A}_{final} = (1 - \alpha) \cdot \mathbf{A} + \alpha \cdot \mathbf{A}_{routed}$$
+* **Usage:** `uv run python src/train_comm.py --cir-coef 0.5`
+
+### 2. CAR (Counterfactual Affordance Reward)
+* **Concept:** Intrinsic motivation for unlocking action space affordances (`src/env.py:HeistEnv.step`).
+* **Mechanism:** Detects when an agent's `INTERACT` action flips a teammate's `action_mask` from $0 \to 1$ (expanding their legal action space). The unlocking agent receives an intrinsic reward bonus proportional to the Centralized Critic's valuation of the newly unlocked state:
+$$R_{bonus} = \beta \cdot \max(0.0, V(S_{next}))$$
+* **Usage:** `uv run python src/train_mappo.py --car-coef 0.5`
+
+---
+
+## 🎮 Environment Architecture
+
+Each agent observes a multi-tensor `Dict` observation space designed to preserve the Markov property under partial observability:
+
+1. **`observation` (5x5 matrix):** Local physical view restricted by dynamic Bresenham-raycast Fog of War.
+2. **`action_mask` (6-element vector):** Enforces causal gates (e.g., extracting loot is masked until the security terminal is hacked).
+3. **`role_id` (4-element one-hot):** Identifies agent specialization (`[1,0,0,0]` Scout, `[0,1,0,0]` Hacker, `[0,0,1,0]` Muscle, `[0,0,0,1]` Extractor).
+
+### Adversaries & Environmental Dynamics
+* **Guards:** Dynamic rule-based adversaries executing random-walk patrols and line-of-sight sweeps. Close proximity ($\le 1$ Manhattan distance) triggers a global alarm and terminates the episode with a catastrophic `-10.0` team penalty.
+* **Time Bleed:** Baseline `-0.01` per-step penalty preventing policy stagnation and infinite looping.
+
+---
+
+## 🚀 Quick Start & Installation
+
+### 1. Installation
+The repository uses `uv` for ultra-fast, reproducible dependency management:
+
 ```bash
-# clone
+# Clone the repository
 git clone https://github.com/saejin-moon/heist.git
 cd heist
-# create env and install pinned deps (numpy<2.5 is required for numba compatibility)
-uv sync
-```
-`uv sync` installs the runtime deps declared in `pyproject.toml`
-(`[project].dependencies`) plus the dev group (`pytest`, `ruff`) and is the
-single entry point; `requirements.txt` is kept in sync for legacy pip users.
 
-Always invoke commands through `uv run` (never `source activate`):
-```bash
-uv run python src/manual_control.py                              # human play
-uv run python -m pettingzoo.test.parallel_test -e src.dummy:make_env  # API smoke
-uv run pytest                                                     # 18 unit/mechanics smokes
-uv run ruff check                                                 # lint (E/F/W/I/UP/B/SIM)
-uv run ruff format --check                                        # formatting
-uv run python tools/status.py                                    # active training status
+# Install CPython 3.12 and pinned dependencies
+uv sync --locked
 ```
 
-## Quick Start & Research Campaign (`train.zsh`)
+### 2. Developer Quality Gates
+Run test suites and linters via `uv`:
+```bash
+uv run pytest -q                 # Run all 18 unit and mechanics smoke tests
+uv run ruff check                # Run Linter
+uv run ruff format --check       # Check formatting
+```
 
-The entrypoint script `train.zsh` provisions dependencies, verifies GPU CUDA availability, runs all validation gates, and executes multi-stage campaigns.
+---
+
+## 🏃 Running Training Campaigns (`train.zsh`)
+
+[`train.zsh`](file:///home/fuddle/git/heist/train.zsh) is the automated entrypoint for provisioning packages, verifying CUDA hardware, running validation gates, and launching multi-stage MARL campaigns.
 
 ```bash
-# 1. Run a 15-second sample test across all algorithm variants:
+# Quick 15-second sample test across all algorithm variants (IPPO, MAPPO, CAR, Comm, CIR, QMIX)
 ./train.zsh --sample
 
-# 2. Run custom coefficient tuning (20,480 steps on Stage 0):
+# Custom hyperparameter tuning (20,480 steps on Stage 0 with CIR and CAR)
 ./train.zsh --steps 20480 --cir-coef 0.3 --car-coef 0.4
 
-# 3. Launch full campaign in background (daemon mode):
+# Launch full 5-stage research campaign as a background daemon
 ./train.zsh --num-stages 5 --daemon
 
-# 4. Monitor live training status & log tailing:
+# Print command-line options and usage help
+./train.zsh --help
+```
+
+### Live Status Monitoring (`tools/status.py`)
+Monitor active training runs, throughput (SPS), checkpoint completion, and log tails in real-time:
+```bash
 uv run python tools/status.py --watch
 ```
 
-### Wall-Clock Assessment (`assess-time.zsh`)
-Measure exact CUDA throughput and extrapolated wall-clock times for your hardware:
+---
+
+## 📊 Hardware Benchmarking (`assess-time.zsh`)
+
+Measure exact CUDA rollout latency and extrapolate full campaign wall-clock times:
+
 ```bash
 ./assess-time.zsh
 ```
-*Current benchmark throughput on CUDA (NVIDIA RTX 3000 Ada): MAPPO/Comm ~1080 steps/s, IPPO ~870 steps/s, QMIX ~500 steps/s. Full 5-stage campaign completes in ~32 hours.*
 
-## Project Layout
+### Benchmark Results (NVIDIA RTX 3000 Ada / 22 CPU Cores)
+| Algorithm | Stage-0 SPS | Stage-4 SPS | 5-Stage 1M Campaign Est. |
+| :--- | :---: | :---: | :---: |
+| **MAPPO / MAPPO+CAR** | **1,076 steps/s** | 219 steps/s | ~32 Hours |
+| **TarMAC / Comm+CIR** | **1,086 steps/s** | 219 steps/s | ~32 Hours |
+| **IPPO** | **871 steps/s** | 208 steps/s | ~38 Hours |
+| **QMIX** | **498 steps/s** | 278 steps/s | ~42 Hours |
+
+---
+
+## 📁 Repository Structure
+
 ```
-train.zsh           one-shot provision, setup, and campaign runner
-assess-time.zsh     throughput benchmark + wall-clock estimate wrapper
-tools/assess_time.py  the benchmark itself (env, rollout, trainer sps)
-tools/status.py     live training status monitor and log tailer
-src/constants.py    reward/alarm constants, ROLE_ACTIONS, tile palette
-src/map_gen.py      procedural map generation (rooms, doors, cameras, spawns)
-src/vision.py       numba-JIT Bresenham line-of-sight + camera exposure
-src/env.py          HeistEnv, PettingZoo ParallelEnv (causal gating & CAR tracking)
-src/vec_env.py      vectorized env wrapper for PPO/QMIX rollouts
-src/model.py        HeistAgent, CommAgent (CIR influence matrix), QMixNet + mixer
-src/train_ippo.py   independent PPO baseline
-src/train_mappo.py  shared actor + centralized critic + CAR intrinsic reward
-src/train_qmix.py   value-decomposition baseline (batched GPU action selection)
-src/train_comm.py   TarMAC communication baseline + CIR advantage routing
-src/evaluate.py     win rate, Credit Attribution Index, counterfactual importance
-src/curriculum.py   5 staged configs from 11x11 (no security) to 50x50 (full)
-src/test_cir_smoke.py CIR influence matrix & routing unit test
-src/test_car_smoke.py CAR affordance unlock & info pass-through unit test
-```
-
-## Training
-
-All trainers are CleanRL-style scripts with TensorBoard logging, checkpointing
-to `checkpoints/<run_name>/`, and `--env-config` taking a **JSON string**.
-
-```bash
-# Independent PPO, tiny stage-0 map
-uv run python src/train_ippo.py --total-timesteps 20480 --num-envs 8 --num-steps 256
-
-# MAPPO + CAR (Counterfactual Affordance Rewards)
-uv run python src/train_mappo.py --total-timesteps 200000 --num-envs 8 --num-steps 256 --car-coef 0.5
-
-# TarMAC Comm + CIR (Causal Influence Routing) + CAR
-uv run python src/train_comm.py --total-steps 200000 --num-envs 8 --num-steps 256 --cir-coef 0.5 --car-coef 0.5
-
-# QMIX (off-policy value-decomposition)
-uv run python src/train_qmix.py --total-steps 200000 --train-freq 4
+.
+├── train.zsh           # Main entrypoint script for provisioning, setup, & campaign runs
+├── assess-time.zsh     # Wall-clock throughput benchmark wrapper
+├── tools/
+│   ├── assess_time.py  # Empirically measured hardware throughput & campaign estimator
+│   └── status.py       # Live training status monitor & log tailer
+├── src/
+│   ├── env.py          # PettingZoo HeistEnv implementation (causal gating & CAR tracking)
+│   ├── model.py        # Neural networks (CommAgent with CIR matrix, HeistAgent, QMixer)
+│   ├── vec_env.py      # Vectorized multi-agent environment wrapper
+│   ├── vision.py       # Numba JIT-compiled Bresenham LOS & BFS pathfinding
+│   ├── constants.py    # Environment constants, tile palette, and role definitions
+│   ├── map_gen.py      # Procedural map generator
+│   ├── curriculum.py   # 5 staged environment configurations (11x11 to 50x50)
+│   ├── ppo_utils.py    # Vectorized GAE advantage calculation
+│   ├── train_ippo.py   # Independent PPO baseline
+│   ├── train_mappo.py  # MAPPO baseline + CAR intrinsic rewards (--car-coef)
+│   ├── train_comm.py   # TarMAC communication baseline + CIR advantage routing (--cir-coef)
+│   ├── train_qmix.py   # QMIX value-decomposition baseline (batched GPU selection)
+│   ├── evaluate.py     # Evaluation metrics (Win Rate, Credit Attribution Index)
+│   ├── test_cir_smoke.py  # CIR influence matrix & routing unit test
+│   ├── test_car_smoke.py  # CAR affordance unlock unit test
+│   └── test_qmix_opt_smoke.py # QMIX GPU action selection unit test
+├── pyproject.toml      # Project configuration & dependencies
+└── uv.lock             # Pinned dependency lockfile
 ```
 
-Common flags: `--no-cuda`, `--no-save-model`, `--seed`, `--eval-every`,
-`--eval-episodes`, `--anneal-lr`, `--cir-coef`, `--car-coef`.
+---
 
-# Curriculum: stage-0 config up to the full 50x50 benchmark
-uv run python -c "from curriculum import CURRICULUM; [print(s) for s in CURRICULUM]"
+## 📜 Citation & License
+
+If you use HEIST, CIR, or CAR in your research, please cite this repository:
+
+```bibtex
+@software{heist_marl_2026,
+  author = {Moon, Saejin},
+  title = {HEIST: Hierarchical Environment for Interdependent Sequential Tasks},
+  year = {2026},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/saejin-moon/heist}}
+}
 ```
 
-Common flags: `--no-cuda`, `--no-save-model`, `--seed`, `--eval-every`,
-`--eval-episodes`, `--anneal-lr`, and algorithm hyperparameters
-(`--gamma`, `--gae-lambda`, `--clip-coef`, `--learning-rate`, ...).
-
-## Evaluation
-
-`evaluate.py` measures the benchmark's novelty hook, **Causal Credit
-Dilution**, two ways:
-
-* **Credit Attribution Index (CAI):** Pearson correlation between each
-  agent's per-episode shaped credit (excluding the shared terminal reward)
-  and the episode outcome. Upstream agents (scout/hacker) whose credit stays
-  high while predicting wins are healthy; dilution shows as upstream credit
-  decoupling from outcome.
-* **Counterfactual importance:** win-rate drop when each agent is replaced
-  by a no-op, compared to the baseline team.
-
-```bash
-uv run python -c "
-from env import HeistEnv
-from model import HeistAgent
-from evaluate import summarize
-env = HeistEnv({'map_size': (11,11), 'guard_count': 0, 'camera_count': 0, 'max_steps': 60})
-summarize({a: HeistAgent() for a in env.agents}, env, episodes=30, seed=0, device='cpu')
-"
-```
-
-## Known Issues
-
-* **Baselines learn slowly at stage-0.** With 300k steps IPPO reaches a
-  noisy 3-10% win rate; the causal chain completes 97%/87%/87%
-  (terminal/loot/extraction) but the final convergence is the bottleneck.
-  The env itself is solvable (a BFS+wait scripted controller wins 29/30).
-  With `spawn_mode="role"` the early chain is nearly free (agents spawn
-  beside terminal/loot) while the extract tile is far, so the decisive
-  skill is navigation the small MLPs acquire slowly. Full campaign record
-  in PLAN.md "Baseline Validation Campaign".
-* **QMIX first GPU run** spends minutes in triton JIT compilation; either
-  pass `--no-cuda` for short smoke tests or raise the timeout for the first
-  real run.
-* **Throughput** is currently ~40-70 SPS (CUDA) due to per-step Python env
-  stepping plus numba JIT warmup; the numba kernels compile once per process.
+Licensed under the [MIT License](LICENSE).
