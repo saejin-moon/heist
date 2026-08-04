@@ -28,11 +28,15 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
-from env import HeistEnv, AGENTS, parse_env_config
 from constants import (
-    OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, N_AGENTS,
+    ACTION_SPACE_SIZE as ACTION_DIM,
 )
-from model import QNetwork, QMixMixing
+from constants import (
+    N_AGENTS,
+    OBSERVATION_SIZE,
+)
+from env import AGENTS, HeistEnv, parse_env_config
+from model import QMixMixing, QNetwork
 
 
 @dataclass
@@ -45,12 +49,12 @@ class Args:
     buffer_size: int = 100_000
     batch_size: int = 128
     gamma: float = 0.99
-    tau: float = 0.005          # polyak target update
+    tau: float = 0.005  # polyak target update
     eps_start: float = 1.0
     eps_end: float = 0.05
     eps_anneal_steps: int = 500_000
     learning_starts: int = 10_000
-    train_freq: int = 1         # gradient steps per env step
+    train_freq: int = 1  # gradient steps per env step
     target_update_freq: int = 200
     eval_every: int = 5_000
     eval_episodes: int = 20
@@ -96,8 +100,12 @@ class ReplayBuffer:
         self.role = {a: np.zeros((capacity, N_AGENTS), dtype=np.int8) for a in AGENTS}
         self.actions = {a: np.zeros(capacity, dtype=np.int64) for a in AGENTS}
         self.rewards = {a: np.zeros(capacity, dtype=np.float32) for a in AGENTS}
-        self.next_obs = {a: np.zeros((capacity, *obs_shape), dtype=np.int32) for a in AGENTS}
-        self.next_mask = {a: np.zeros((capacity, ACTION_DIM), dtype=np.int8) for a in AGENTS}
+        self.next_obs = {
+            a: np.zeros((capacity, *obs_shape), dtype=np.int32) for a in AGENTS
+        }
+        self.next_mask = {
+            a: np.zeros((capacity, ACTION_DIM), dtype=np.int8) for a in AGENTS
+        }
         # REV-3: store terminations and truncations separately (QMIX bootstraps
         # the target on truncation from the stored terminal next state).
         self.terminated = np.zeros(capacity, dtype=np.float32)
@@ -105,7 +113,17 @@ class ReplayBuffer:
         self.states = np.zeros((capacity, state_dim), dtype=np.float32)
         self.next_states = np.zeros((capacity, state_dim), dtype=np.float32)
 
-    def push(self, obs, actions, rewards, terminations, truncations, states, next_obs, next_states):
+    def push(
+        self,
+        obs,
+        actions,
+        rewards,
+        terminations,
+        truncations,
+        states,
+        next_obs,
+        next_states,
+    ):
         for a in AGENTS:
             self.obs[a][self.pos] = obs[a]["observation"]
             self.mask[a][self.pos] = obs[a]["action_mask"]
@@ -124,13 +142,30 @@ class ReplayBuffer:
     def sample(self, batch_size):
         idx = np.random.randint(0, self.size, size=batch_size)
         batch = {
-            "obs": {a: torch.tensor(self.obs[a][idx], dtype=torch.float32) for a in AGENTS},
-            "mask": {a: torch.tensor(self.mask[a][idx], dtype=torch.long) for a in AGENTS},
-            "role": {a: torch.tensor(self.role[a][idx], dtype=torch.float32) for a in AGENTS},
-            "actions": {a: torch.tensor(self.actions[a][idx], dtype=torch.long) for a in AGENTS},
-            "rewards": {a: torch.tensor(self.rewards[a][idx], dtype=torch.float32) for a in AGENTS},
-            "next_obs": {a: torch.tensor(self.next_obs[a][idx], dtype=torch.float32) for a in AGENTS},
-            "next_mask": {a: torch.tensor(self.next_mask[a][idx], dtype=torch.long) for a in AGENTS},
+            "obs": {
+                a: torch.tensor(self.obs[a][idx], dtype=torch.float32) for a in AGENTS
+            },
+            "mask": {
+                a: torch.tensor(self.mask[a][idx], dtype=torch.long) for a in AGENTS
+            },
+            "role": {
+                a: torch.tensor(self.role[a][idx], dtype=torch.float32) for a in AGENTS
+            },
+            "actions": {
+                a: torch.tensor(self.actions[a][idx], dtype=torch.long) for a in AGENTS
+            },
+            "rewards": {
+                a: torch.tensor(self.rewards[a][idx], dtype=torch.float32)
+                for a in AGENTS
+            },
+            "next_obs": {
+                a: torch.tensor(self.next_obs[a][idx], dtype=torch.float32)
+                for a in AGENTS
+            },
+            "next_mask": {
+                a: torch.tensor(self.next_mask[a][idx], dtype=torch.long)
+                for a in AGENTS
+            },
             "terminated": torch.tensor(self.terminated[idx], dtype=torch.float32),
             "truncated": torch.tensor(self.truncated[idx], dtype=torch.float32),
             "states": torch.tensor(self.states[idx], dtype=torch.float32),
@@ -154,8 +189,12 @@ def select_actions(env, obs, q_nets, epsilon, device):
         if np.random.rand() < epsilon:
             actions[a] = int(np.random.choice(legal))
             continue
-        obs_t = torch.tensor(obs[a]["observation"], dtype=torch.float32, device=device).unsqueeze(0)
-        role_t = torch.tensor(obs[a]["role_id"], dtype=torch.float32, device=device).unsqueeze(0)
+        obs_t = torch.tensor(
+            obs[a]["observation"], dtype=torch.float32, device=device
+        ).unsqueeze(0)
+        role_t = torch.tensor(
+            obs[a]["role_id"], dtype=torch.float32, device=device
+        ).unsqueeze(0)
         with torch.no_grad():
             q = q_nets[a](obs_t, role_t).squeeze(0)
         q = q.cpu().numpy()
@@ -169,9 +208,12 @@ def train(args: Args):
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % "\n".join([f"|{k}|{v}|" for k, v in vars(args).items()]),
+        "|param|value|\n|-|-|\n"
+        + "\n".join([f"|{k}|{v}|" for k, v in vars(args).items()]),
     )
-    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
     print(f"device: {device}")
 
     torch.manual_seed(args.seed)
@@ -207,14 +249,21 @@ def train(args: Args):
 
     def eval_policies(step):
         from evaluate import evaluate_policies
+
         metrics = evaluate_policies(
-            {a: q_nets[a] for a in AGENTS}, env, episodes=args.eval_episodes,
-            seed=args.seed + 1_000_000, algo="qmix", device=device,
+            {a: q_nets[a] for a in AGENTS},
+            env,
+            episodes=args.eval_episodes,
+            seed=args.seed + 1_000_000,
+            algo="qmix",
+            device=device,
         )
         for k, v in metrics.items():
             writer.add_scalar(f"eval/{k}", v, step)
-        print(f"  eval@{step}: win_rate={metrics['win_rate']:.3f} "
-              f"return={metrics['mean_return']:.3f} len={metrics['mean_length']:.1f}")
+        print(
+            f"  eval@{step}: win_rate={metrics['win_rate']:.3f} "
+            f"return={metrics['mean_return']:.3f} len={metrics['mean_length']:.1f}"
+        )
 
     # ------------------------------------------------------------------
     global_step = 0
@@ -235,8 +284,16 @@ def train(args: Args):
             done = bool(any(terms.values()) or any(truncs.values()))
             next_states = env.state()
 
-            replay.push(obs, actions, rewards, any(terms.values()),
-                        any(truncs.values()), states, next_obs, next_states)
+            replay.push(
+                obs,
+                actions,
+                rewards,
+                any(terms.values()),
+                any(truncs.values()),
+                states,
+                next_obs,
+                next_states,
+            )
 
             obs = next_obs
             states = next_states
@@ -245,7 +302,10 @@ def train(args: Args):
             total_reward += sum(rewards.values()) / len(AGENTS)
 
             # ---------------- gradient step ----------------
-            if replay.size > args.learning_starts and global_step % args.train_freq == 0:
+            if (
+                replay.size > args.learning_starts
+                and global_step % args.train_freq == 0
+            ):
                 batch = replay.sample(args.batch_size)
                 for key in batch:
                     if isinstance(batch[key], dict):
@@ -268,12 +328,16 @@ def train(args: Args):
                     for a in AGENTS:
                         q_next = target_nets[a](batch["next_obs"][a], batch["role"][a])
                         masked = torch.where(
-                            batch["next_mask"][a] == 1, q_next,
-                            torch.full_like(q_next, -1e9))
+                            batch["next_mask"][a] == 1,
+                            q_next,
+                            torch.full_like(q_next, -1e9),
+                        )
                         tq.append(masked.max(dim=1).values)
                     tq = torch.stack(tq, dim=1)  # [B, n]
                     q_tot_target = target_mixing(tq, batch["next_states"])
-                    rewards = torch.stack([batch["rewards"][a] for a in AGENTS], dim=1).mean(dim=1)
+                    rewards = torch.stack(
+                        [batch["rewards"][a] for a in AGENTS], dim=1
+                    ).mean(dim=1)
                     # REV-3: bootstrapping uses terminations only.  For a
                     # TRUNCATED transition the stored next state IS the true
                     # terminal state (the env is not auto-reset in QMIX), so
@@ -289,9 +353,13 @@ def train(args: Args):
 
                 # polyak target update
                 for a in AGENTS:
-                    for tp, p in zip(target_nets[a].parameters(), q_nets[a].parameters()):
+                    for tp, p in zip(
+                        target_nets[a].parameters(), q_nets[a].parameters(), strict=True
+                    ):
                         tp.data.copy_(args.tau * p.data + (1 - args.tau) * tp.data)
-                for tp, p in zip(target_mixing.parameters(), mixing.parameters()):
+                for tp, p in zip(
+                    target_mixing.parameters(), mixing.parameters(), strict=True
+                ):
                     tp.data.copy_(args.tau * p.data + (1 - args.tau) * tp.data)
 
                 writer.add_scalar("losses/q_loss", loss.item(), global_step)
@@ -299,13 +367,17 @@ def train(args: Args):
             writer.add_scalar("charts/epsilon", epsilon, global_step)
             if global_step % 1000 == 0:
                 writer.add_scalar("charts/episode_return", ep_reward, global_step)
-                print(f"step={global_step} eps={epsilon:.3f} ep_reward={ep_reward:.2f} "
-                      f"buffer={replay.size}")
+                print(
+                    f"step={global_step} eps={epsilon:.3f} ep_reward={ep_reward:.2f} "
+                    f"buffer={replay.size}"
+                )
 
             if args.eval_every > 0 and global_step % args.eval_every == 0:
                 os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
                 for a in AGENTS:
-                    torch.save(q_nets[a].state_dict(), f"checkpoints/{run_name}/{a}_q.pt")
+                    torch.save(
+                        q_nets[a].state_dict(), f"checkpoints/{run_name}/{a}_q.pt"
+                    )
                 torch.save(mixing.state_dict(), f"checkpoints/{run_name}/mixing.pt")
                 eval_policies(global_step)
                 # eval resets the live env, invalidating the current training

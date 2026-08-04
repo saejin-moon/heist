@@ -31,8 +31,8 @@ Two families of metrics:
 import numpy as np
 import torch
 
+from constants import WAIT
 from env import AGENTS
-from constants import WAIT, INTERACT, ACTION_DELTAS, OBSERVATION_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +85,13 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
             legal = np.argwhere(mask == 1).ravel()
             if greedy and len(legal) > 0:
                 actions[a] = _select_action(
-                    policies[a], obs[a]["observation"], obs[a]["role_id"],
-                    mask, device, greedy=True)
+                    policies[a],
+                    obs[a]["observation"],
+                    obs[a]["role_id"],
+                    mask,
+                    device,
+                    greedy=True,
+                )
             else:
                 actions[a] = int(np.random.choice(legal))
         obs, rewards, terms, truncs, infos = env.step(actions)
@@ -124,18 +129,26 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
     }
 
 
-def evaluate_policies(policies, env, episodes=20, seed=0, algo="ippo",
-                      device="cpu", greedy=True):
+def evaluate_policies(
+    policies, env, episodes=20, seed=0, algo="ippo", device="cpu", greedy=True
+):
     """Run `episodes` evaluation episodes and aggregate standard metrics."""
     metrics = {
-        "win_rate": 0.0, "mean_return": 0.0, "mean_length": 0.0,
-        "mean_alarm": 0.0, "terminal_rate": 0.0, "loot_rate": 0.0,
-        "extraction_rate": 0.0, "mean_hack_progress": 0.0,
+        "win_rate": 0.0,
+        "mean_return": 0.0,
+        "mean_length": 0.0,
+        "mean_alarm": 0.0,
+        "terminal_rate": 0.0,
+        "loot_rate": 0.0,
+        "extraction_rate": 0.0,
+        "mean_hack_progress": 0.0,
     }
     if episodes <= 0:
         return metrics
-    results = [run_episode(env, policies, device, greedy=greedy, seed=seed + i)
-               for i in range(episodes)]
+    results = [
+        run_episode(env, policies, device, greedy=greedy, seed=seed + i)
+        for i in range(episodes)
+    ]
     wins = sum(r["win"] for r in results)
     metrics["win_rate"] = wins / episodes
     metrics["mean_return"] = np.mean([r["return"] for r in results])
@@ -156,8 +169,10 @@ def credit_attribution_index(policies, env, episodes=50, seed=0, device="cpu"):
     mean the agent's contributions predict team success.  Low values for
     upstream agents (scout/hacker) indicate Causal Credit Dilution.
     """
-    results = [run_episode(env, policies, device, greedy=True, seed=seed + i)
-               for i in range(episodes)]
+    results = [
+        run_episode(env, policies, device, greedy=True, seed=seed + i)
+        for i in range(episodes)
+    ]
     outcomes = np.array([r["terminal_reward"] for r in results])
     cai = {}
     for a in AGENTS:
@@ -176,15 +191,15 @@ def counterfactual_importance(policies, env, episodes=30, seed=0, device="cpu"):
     (always waits).  The drop (baseline - noop) is the agent's causal
     importance for the team.
     """
-    base = evaluate_policies(policies, env, episodes=episodes, seed=seed,
-                             device=device)
+    base = evaluate_policies(policies, env, episodes=episodes, seed=seed, device=device)
     base_win = base["win_rate"]
     importance = {}
     for a in AGENTS:
         wins = 0
         for i in range(episodes):
-            r = run_episode(env, policies, device, greedy=True,
-                            seed=seed + i, noop_agent=a)
+            r = run_episode(
+                env, policies, device, greedy=True, seed=seed + i, noop_agent=a
+            )
             wins += int(r["win"])
         importance[a] = base_win - wins / episodes
     return {"baseline_win_rate": base_win, "importance": importance}
@@ -195,7 +210,9 @@ def summarize(policies, env, episodes=50, seed=0, device="cpu"):
     print("=" * 64)
     print("HEIST evaluation")
     print("=" * 64)
-    metrics = evaluate_policies(policies, env, episodes=episodes, seed=seed, device=device)
+    metrics = evaluate_policies(
+        policies, env, episodes=episodes, seed=seed, device=device
+    )
     print(f"win_rate          : {metrics['win_rate']:.3f}")
     print(f"mean_return       : {metrics['mean_return']:.3f}")
     print(f"mean_length       : {metrics['mean_length']:.1f}")
@@ -206,13 +223,20 @@ def summarize(policies, env, episodes=50, seed=0, device="cpu"):
     print(f"mean_hack_progress: {metrics['mean_hack_progress']:.2f}")
     print("-" * 64)
     print("Credit Attribution Index (corr credit vs outcome):")
-    cai = credit_attribution_index(policies, env, episodes=episodes, seed=seed, device=device)
+    cai = credit_attribution_index(
+        policies, env, episodes=episodes, seed=seed, device=device
+    )
     for a in AGENTS:
         print(f"  {a:>9}: {cai[a]:+.3f}")
     print("-" * 64)
     print("Counterfactual importance (baseline - no-op win rate):")
-    imp = counterfactual_importance(policies, env, episodes=max(episodes // 2, 10),
-                                    seed=seed + 10_000, device=device)
+    imp = counterfactual_importance(
+        policies,
+        env,
+        episodes=max(episodes // 2, 10),
+        seed=seed + 10_000,
+        device=device,
+    )
     print(f"  baseline win rate: {imp['baseline_win_rate']:.3f}")
     for a in AGENTS:
         print(f"  {a:>9}: {imp['importance'][a]:+.3f}")
@@ -223,8 +247,9 @@ def summarize(policies, env, episodes=50, seed=0, device="cpu"):
 # ---------------------------------------------------------------------------
 # REV-7 (REVISION_PLAN.md §6) Phase B/C: communication-aware evaluation
 # ---------------------------------------------------------------------------
-def run_comm_episode(policy, env, device, greedy=True, seed=None,
-                     record_messages=False):
+def run_comm_episode(
+    policy, env, device, greedy=True, seed=None, record_messages=False
+):
     """Roll out one episode with a shared CommAgent (joint forward).
 
     Every step, all agents' observations are passed to the CommAgent at
@@ -243,34 +268,50 @@ def run_comm_episode(policy, env, device, greedy=True, seed=None,
     messages = []
 
     for _ in range(env.config["max_steps"]):
-        obs_list = [torch.tensor(obs[a]["observation"], dtype=torch.float32,
-                                 device=device).unsqueeze(0) for a in AGENTS]
-        role_list = [torch.tensor(obs[a]["role_id"], dtype=torch.float32,
-                                  device=device).unsqueeze(0) for a in AGENTS]
-        mask_list = [torch.tensor(obs[a]["action_mask"], dtype=torch.int64,
-                                  device=device).unsqueeze(0) for a in AGENTS]
+        obs_list = [
+            torch.tensor(
+                obs[a]["observation"], dtype=torch.float32, device=device
+            ).unsqueeze(0)
+            for a in AGENTS
+        ]
+        role_list = [
+            torch.tensor(
+                obs[a]["role_id"], dtype=torch.float32, device=device
+            ).unsqueeze(0)
+            for a in AGENTS
+        ]
+        mask_list = [
+            torch.tensor(
+                obs[a]["action_mask"], dtype=torch.int64, device=device
+            ).unsqueeze(0)
+            for a in AGENTS
+        ]
 
         with torch.no_grad():
             if greedy:
                 logits = _comm_logits(policy, obs_list, role_list)  # [n, A]
                 actions = []
                 for a, m in enumerate(mask_list):
-                    masked = torch.where(m == 1, logits[a],
-                                         torch.full_like(logits[a], -1e9))
+                    masked = torch.where(
+                        m == 1, logits[a], torch.full_like(logits[a], -1e9)
+                    )
                     actions.append(masked.argmax(dim=-1))
             else:
                 actions, _, _, _ = policy.get_action_and_value(
-                    obs_list, role_list, mask_list, state=None, action=None)
+                    obs_list, role_list, mask_list, state=None, action=None
+                )
                 actions = [actions[0, a] for a in range(len(AGENTS))]
 
         if record_messages:
             msg = policy._last_messages_gated  # [1, n, msg_dim]
-            messages.append({
-                "messages": msg.squeeze(0).cpu().numpy(),
-                "terminal_disabled": int(env.terminal_disabled),
-                "loot_acquired": int(env.loot_acquired),
-                "extraction_triggered": int(env.extraction_triggered),
-            })
+            messages.append(
+                {
+                    "messages": msg.squeeze(0).cpu().numpy(),
+                    "terminal_disabled": int(env.terminal_disabled),
+                    "loot_acquired": int(env.loot_acquired),
+                    "extraction_triggered": int(env.extraction_triggered),
+                }
+            )
 
         actions_dict = {a: int(actions[i].item()) for i, a in enumerate(AGENTS)}
         obs, rewards, terms, truncs, infos = env.step(actions_dict)
@@ -291,9 +332,13 @@ def run_comm_episode(policy, env, device, greedy=True, seed=None,
             break
 
     metrics = {
-        "return": total_return, "length": length,
-        "terminal_reward": terminal_reward, "win": win, "credit": credit,
-        "alarm": env.alarm, "terminal_disabled": env.terminal_disabled,
+        "return": total_return,
+        "length": length,
+        "terminal_reward": terminal_reward,
+        "win": win,
+        "credit": credit,
+        "alarm": env.alarm,
+        "terminal_disabled": env.terminal_disabled,
         "loot_acquired": env.loot_acquired,
         "extraction_triggered": env.extraction_triggered,
         "hack_progress": env.hack_progress,
@@ -314,18 +359,24 @@ def _comm_logits(policy, obs_list, role_list):
     return logits.view(B, n, -1)[0]  # [n, ACTION_DIM]
 
 
-def evaluate_comm_policies(policy, env, episodes=20, seed=0, device="cpu",
-                           greedy=True):
+def evaluate_comm_policies(policy, env, episodes=20, seed=0, device="cpu", greedy=True):
     """Standard metrics for a shared CommAgent."""
     metrics = {
-        "win_rate": 0.0, "mean_return": 0.0, "mean_length": 0.0,
-        "mean_alarm": 0.0, "terminal_rate": 0.0, "loot_rate": 0.0,
-        "extraction_rate": 0.0, "mean_hack_progress": 0.0,
+        "win_rate": 0.0,
+        "mean_return": 0.0,
+        "mean_length": 0.0,
+        "mean_alarm": 0.0,
+        "terminal_rate": 0.0,
+        "loot_rate": 0.0,
+        "extraction_rate": 0.0,
+        "mean_hack_progress": 0.0,
     }
     if episodes <= 0:
         return metrics
-    results = [run_comm_episode(policy, env, device, greedy=greedy,
-                                seed=seed + i)[0] for i in range(episodes)]
+    results = [
+        run_comm_episode(policy, env, device, greedy=greedy, seed=seed + i)[0]
+        for i in range(episodes)
+    ]
     metrics["win_rate"] = np.mean([r["win"] for r in results])
     metrics["mean_return"] = np.mean([r["return"] for r in results])
     metrics["mean_length"] = np.mean([r["length"] for r in results])
@@ -348,23 +399,25 @@ def message_outcome_correlation(policy, env, episodes=20, seed=0, device="cpu"):
     If the agents learn to signal "terminal hacked" (the intended message),
     some message dimension should correlate strongly with terminal_disabled.
     """
-    all_msgs = []        # [T, n_agents, msg_dim]
-    all_flags = []       # [T, 3]
+    all_msgs = []  # [T, n_agents, msg_dim]
+    all_flags = []  # [T, 3]
     attn_sum = np.zeros((len(AGENTS), len(AGENTS)))
     attn_count = 0
     for i in range(episodes):
-        _, steps = run_comm_episode(policy, env, device, greedy=True,
-                                    seed=seed + i, record_messages=True)
+        _, steps = run_comm_episode(
+            policy, env, device, greedy=True, seed=seed + i, record_messages=True
+        )
         for s in steps:
             all_msgs.append(s["messages"])
-            all_flags.append([s["terminal_disabled"], s["loot_acquired"],
-                              s["extraction_triggered"]])
+            all_flags.append(
+                [s["terminal_disabled"], s["loot_acquired"], s["extraction_triggered"]]
+            )
             attn = policy._last_attention  # [1, n, n]
             attn_sum += attn.squeeze(0).cpu().numpy()
             attn_count += 1
 
-    msgs = np.array(all_msgs)      # [T, n, d]
-    flags = np.array(all_flags)    # [T, 3]
+    msgs = np.array(all_msgs)  # [T, n, d]
+    flags = np.array(all_flags)  # [T, 3]
     n_agents, d = msgs.shape[1], msgs.shape[2]
 
     # per-agent: corr of each message dim with each phase flag
@@ -380,13 +433,17 @@ def message_outcome_correlation(policy, env, episodes=20, seed=0, device="cpu"):
                     corr[a, dim, f] = float(np.corrcoef(x, y)[0, 1])
 
     diag = {
-        "message_phase_corr": corr,                     # [n, d, 3]
+        "message_phase_corr": corr,  # [n, d, 3]
         "mean_attention": attn_sum / max(attn_count, 1),  # [n, n]
         "n_steps": len(all_msgs),
     }
     # headline scalar: strongest |corr| between any message dim and
     # terminal_disabled across all agents (the intended signal).
     terminal_corr = np.abs(corr[:, :, 0])
-    diag["max_terminal_message_corr"] = float(terminal_corr.max()) if terminal_corr.size else 0.0
-    diag["mean_terminal_message_corr"] = float(terminal_corr.mean()) if terminal_corr.size else 0.0
+    diag["max_terminal_message_corr"] = (
+        float(terminal_corr.max()) if terminal_corr.size else 0.0
+    )
+    diag["mean_terminal_message_corr"] = (
+        float(terminal_corr.mean()) if terminal_corr.size else 0.0
+    )
     return diag

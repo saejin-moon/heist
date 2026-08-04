@@ -16,11 +16,13 @@ committed (see `REVISION_PLAN.md` for per-revision status + gates).
    reading the model's results.  Training is the slowest, noisiest feedback
    loop in the repo; a bug can silently corrupt a multi-hour run.
 3. Keep the fast loops in front of the slow loop:
-   - unit/shape smoke tests (`pytest`, seconds)
+   - lint/format (`uv run ruff check`, `uv run ruff format --check`, seconds)
+   - unit/shape smoke tests (`uv run pytest`, ~20s)
    - 2048-step trainer smoke (seconds to a minute)
    - `parallel_api_test` + `dummy.py` (contract regressions)
    - scripted-curriculum revalidation (mechanics regressions, ~1 min)
-   Only after all of those pass, launch a real training run.
+
+Only after all of those pass, launch a real training run.
 
 > History: the `train_comm.py` GAE indexing bug (`next_values[ai]` vs
 > `next_values[:, ai]`) passed the 2048-step smoke (num_envs=4) and only

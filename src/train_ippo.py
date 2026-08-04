@@ -28,10 +28,14 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
-from env import AGENTS, parse_env_config
 from constants import (
-    OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, N_AGENTS,
+    ACTION_SPACE_SIZE as ACTION_DIM,
 )
+from constants import (
+    N_AGENTS,
+    OBSERVATION_SIZE,
+)
+from env import AGENTS, parse_env_config
 from model import HeistAgent
 from vec_env import VectorEnv
 
@@ -111,16 +115,26 @@ def train(args: Args):
     run_name = f"{args.exp_name}_s{args.seed}"
     if args.track:
         import wandb
-        wandb.init(project=args.wandb_project_name, entity=args.wandb_entity,
-                   sync_tensorboard=True, config=vars(args), name=run_name,
-                   monitor_gym=True, save_code=True)
+
+        wandb.init(
+            project=args.wandb_project_name,
+            entity=args.wandb_entity,
+            sync_tensorboard=True,
+            config=vars(args),
+            name=run_name,
+            monitor_gym=True,
+            save_code=True,
+        )
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % "\n".join([f"|{k}|{v}|" for k, v in vars(args).items()]),
+        "|param|value|\n|-|-|\n"
+        + "\n".join([f"|{k}|{v}|" for k, v in vars(args).items()]),
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
     print(f"device: {device}")
 
     args.save_model = not getattr(args, "no_save_model", False)
@@ -142,11 +156,17 @@ def train(args: Args):
         # observation contract is updated (REV-1).
         shared_policy = HeistAgent().to(device)
         policies = {a: shared_policy for a in AGENTS}
-        optimizers = {"all": torch.optim.Adam(shared_policy.parameters(), lr=args.learning_rate, eps=1e-5)}
+        optimizers = {
+            "all": torch.optim.Adam(
+                shared_policy.parameters(), lr=args.learning_rate, eps=1e-5
+            )
+        }
     else:
         policies = {a: HeistAgent().to(device) for a in AGENTS}
-        optimizers = {a: torch.optim.Adam(p.parameters(), lr=args.learning_rate, eps=1e-5)
-                      for a, p in policies.items()}
+        optimizers = {
+            a: torch.optim.Adam(p.parameters(), lr=args.learning_rate, eps=1e-5)
+            for a, p in policies.items()
+        }
 
     vec_env = VectorEnv(args.num_envs, config=env_config, base_seed=args.seed)
     next_obs, next_state = vec_env.reset(seed=args.seed)
@@ -163,12 +183,20 @@ def train(args: Args):
     buffers = {}
     for a in AGENTS:
         buffers[a] = {
-            "obs": torch.zeros((args.num_steps, args.num_envs, obs_h, obs_w), device=device),
-            "action_mask": torch.zeros((args.num_steps, args.num_envs, ACTION_DIM), device=device),
+            "obs": torch.zeros(
+                (args.num_steps, args.num_envs, obs_h, obs_w), device=device
+            ),
+            "action_mask": torch.zeros(
+                (args.num_steps, args.num_envs, ACTION_DIM), device=device
+            ),
             # REV-7 (REVISION_PLAN.md §6): no global_state buffer; baselines
             # navigate from local view + role one-hot only.
-            "role_id": torch.zeros((args.num_steps, args.num_envs, N_AGENTS), device=device),
-            "actions": torch.zeros((args.num_steps, args.num_envs), dtype=torch.long, device=device),
+            "role_id": torch.zeros(
+                (args.num_steps, args.num_envs, N_AGENTS), device=device
+            ),
+            "actions": torch.zeros(
+                (args.num_steps, args.num_envs), dtype=torch.long, device=device
+            ),
             "logprobs": torch.zeros((args.num_steps, args.num_envs), device=device),
             "rewards": torch.zeros((args.num_steps, args.num_envs), device=device),
             "terminated": torch.zeros((args.num_steps, args.num_envs), device=device),
@@ -185,16 +213,21 @@ def train(args: Args):
     def eval_policies(step):
         """Run a quick greedy evaluation of current policies."""
         from evaluate import evaluate_policies
+
         metrics = evaluate_policies(
             {a: policies[a] for a in AGENTS},
-            vec_env.envs[0], episodes=args.eval_episodes,
+            vec_env.envs[0],
+            episodes=args.eval_episodes,
             seed=args.seed + 1_000_000,
-            algo="ippo", device=device,
+            algo="ippo",
+            device=device,
         )
         for k, v in metrics.items():
             writer.add_scalar(f"eval/{k}", v, step)
-        print(f"  eval@{step}: win_rate={metrics['win_rate']:.3f} "
-              f"return={metrics['mean_return']:.3f} len={metrics['mean_length']:.1f}")
+        print(
+            f"  eval@{step}: win_rate={metrics['win_rate']:.3f} "
+            f"return={metrics['mean_return']:.3f} len={metrics['mean_length']:.1f}"
+        )
 
     start_time = time.time()
     global_step = 0
@@ -218,7 +251,8 @@ def train(args: Args):
                     role_t = torch.tensor(next_obs[a]["role_id"], device=device)
                     mask_t = torch.tensor(next_obs[a]["action_mask"], device=device)
                     action, logprob, _, value = policies[a].get_action_and_value(
-                        obs_t, role_t, mask_t)
+                        obs_t, role_t, mask_t
+                    )
                 buffers[a]["obs"][step] = obs_t
                 buffers[a]["role_id"][step] = role_t
                 buffers[a]["action_mask"][step] = mask_t
@@ -227,8 +261,12 @@ def train(args: Args):
                 buffers[a]["values"][step] = value.flatten()
                 actions_dict[a] = action.cpu().numpy()
 
-            next_obs, rewards, terminations, truncations, infos = vec_env.step(actions_dict)
-            next_terminations = torch.tensor(terminations["scout"], device=device).float()
+            next_obs, rewards, terminations, truncations, infos = vec_env.step(
+                actions_dict
+            )
+            next_terminations = torch.tensor(
+                terminations["scout"], device=device
+            ).float()
             next_truncations = torch.tensor(truncations["scout"], device=device).float()
             last_infos = infos
             for a in AGENTS:
@@ -241,12 +279,26 @@ def train(args: Args):
                 with torch.no_grad():
                     t_idx = trunc_t.bool().nonzero(as_tuple=False).flatten()
                     if t_idx.numel():
-                        t_obs = torch.stack([torch.tensor(
-                            infos[int(i)]["terminal_observation"][a]["observation"],
-                            device=device) for i in t_idx])
-                        t_role = torch.stack([torch.tensor(
-                            infos[int(i)]["terminal_observation"][a]["role_id"],
-                            device=device) for i in t_idx])
+                        t_obs = torch.stack(
+                            [
+                                torch.tensor(
+                                    infos[int(i)]["terminal_observation"][a][
+                                        "observation"
+                                    ],
+                                    device=device,
+                                )
+                                for i in t_idx
+                            ]
+                        )
+                        t_role = torch.stack(
+                            [
+                                torch.tensor(
+                                    infos[int(i)]["terminal_observation"][a]["role_id"],
+                                    device=device,
+                                )
+                                for i in t_idx
+                            ]
+                        )
                         val = policies[a].get_value(t_obs, t_role).flatten()
                         buffers[a]["bootstrap"][step][t_idx] = val
 
@@ -255,19 +307,39 @@ def train(args: Args):
         advantages = {}
         for a in AGENTS:
             with torch.no_grad():
-                next_value = policies[a].get_value(
-                    torch.tensor(next_obs[a]["observation"], device=device),
-                    torch.tensor(next_obs[a]["role_id"], device=device),
-                ).flatten()
+                next_value = (
+                    policies[a]
+                    .get_value(
+                        torch.tensor(next_obs[a]["observation"], device=device),
+                        torch.tensor(next_obs[a]["role_id"], device=device),
+                    )
+                    .flatten()
+                )
                 # REV-3: truncated envs bootstrap to value(terminal obs), not 0.
                 t_idx = next_truncations.bool().nonzero(as_tuple=False).flatten()
                 if t_idx.numel():
-                    t_obs = torch.stack([torch.tensor(
-                        last_infos[int(i)]["terminal_observation"][a]["observation"],
-                        device=device) for i in t_idx])
-                    t_role = torch.stack([torch.tensor(
-                        last_infos[int(i)]["terminal_observation"][a]["role_id"],
-                        device=device) for i in t_idx])
+                    t_obs = torch.stack(
+                        [
+                            torch.tensor(
+                                last_infos[int(i)]["terminal_observation"][a][
+                                    "observation"
+                                ],
+                                device=device,
+                            )
+                            for i in t_idx
+                        ]
+                    )
+                    t_role = torch.stack(
+                        [
+                            torch.tensor(
+                                last_infos[int(i)]["terminal_observation"][a][
+                                    "role_id"
+                                ],
+                                device=device,
+                            )
+                            for i in t_idx
+                        ]
+                    )
                     next_value[t_idx] = policies[a].get_value(t_obs, t_role).flatten()
                 # terminated envs bootstrap to 0
                 next_value = next_value * (1.0 - next_terminations)
@@ -285,28 +357,45 @@ def train(args: Args):
                         buffers[a]["bootstrap"][t + 1],
                         buffers[a]["values"][t + 1],
                     )
-                delta = buffers[a]["rewards"][t] + args.gamma * nextvalues * nextnonterminal \
-                        - buffers[a]["values"][t]
-                adv[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                delta = (
+                    buffers[a]["rewards"][t]
+                    + args.gamma * nextvalues * nextnonterminal
+                    - buffers[a]["values"][t]
+                )
+                adv[t] = lastgaelam = (
+                    delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                )
             advantages[a] = adv
             returns[a] = adv + buffers[a]["values"]
 
         # ---------------- policy update ----------------
         # each agent updates its own policy on its own data (IPPO);
         # when --shared, all data is concatenated into one batch.
-        if args.shared:
-            groups = [("all", AGENTS)]
-        else:
-            groups = [(a, [a]) for a in AGENTS]
+        groups = [("all", AGENTS)] if args.shared else [(a, [a]) for a in AGENTS]
 
         for group_name, agent_list in groups:
-            for epoch in range(args.update_epochs):
-                b_obs = torch.cat([buffers[a]["obs"].reshape(-1, obs_h, obs_w) for a in agent_list])
-                b_mask = torch.cat([buffers[a]["action_mask"].reshape(-1, ACTION_DIM) for a in agent_list])
-                b_role = torch.cat([buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in agent_list])
-                b_actions = torch.cat([buffers[a]["actions"].reshape(-1) for a in agent_list])
-                b_logprobs = torch.cat([buffers[a]["logprobs"].reshape(-1) for a in agent_list])
-                b_advantages = torch.cat([advantages[a].reshape(-1) for a in agent_list])
+            for _ in range(args.update_epochs):
+                b_obs = torch.cat(
+                    [buffers[a]["obs"].reshape(-1, obs_h, obs_w) for a in agent_list]
+                )
+                b_mask = torch.cat(
+                    [
+                        buffers[a]["action_mask"].reshape(-1, ACTION_DIM)
+                        for a in agent_list
+                    ]
+                )
+                b_role = torch.cat(
+                    [buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in agent_list]
+                )
+                b_actions = torch.cat(
+                    [buffers[a]["actions"].reshape(-1) for a in agent_list]
+                )
+                b_logprobs = torch.cat(
+                    [buffers[a]["logprobs"].reshape(-1) for a in agent_list]
+                )
+                b_advantages = torch.cat(
+                    [advantages[a].reshape(-1) for a in agent_list]
+                )
                 b_returns = torch.cat([returns[a].reshape(-1) for a in agent_list])
                 b_inds = np.arange(b_obs.shape[0])
                 np.random.shuffle(b_inds)
@@ -317,31 +406,36 @@ def train(args: Args):
                     mb = b_inds[start:end]
                     policy = policies[agent_list[0]]
                     _, newlogprob, entropy, newvalue = policy.get_action_and_value(
-                        b_obs[mb], b_role[mb], b_mask[mb], b_actions[mb])
+                        b_obs[mb], b_role[mb], b_mask[mb], b_actions[mb]
+                    )
 
                     logratio = newlogprob - b_logprobs[mb]
                     ratio = logratio.exp()
                     with torch.no_grad():
                         approx_kl = ((ratio - 1.0) - logratio).mean()
-                        clipfrac = ((ratio - 1.0).abs() > args.clip_coef).float().mean()
 
                     adv = b_advantages[mb]
                     adv = (adv - adv.mean()) / (adv.std() + 1e-8)
                     pg_loss1 = -adv * ratio
-                    pg_loss2 = -adv * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                    pg_loss2 = -adv * torch.clamp(
+                        ratio, 1 - args.clip_coef, 1 + args.clip_coef
+                    )
                     pg_loss = torch.max(pg_loss1, pg_loss2).mean()
                     v_loss = ((newvalue.flatten() - b_returns[mb]) ** 2).mean()
                     entropy_loss = entropy.mean()
-                    loss = pg_loss - args.ent_coef * entropy_loss + args.vf_coef * v_loss
+                    loss = (
+                        pg_loss - args.ent_coef * entropy_loss + args.vf_coef * v_loss
+                    )
 
                     optimizers[group_name].zero_grad()
                     loss.backward()
-                    nn.utils.clip_grad_norm_(policies[agent_list[0]].parameters(), args.max_grad_norm)
+                    nn.utils.clip_grad_norm_(
+                        policies[agent_list[0]].parameters(), args.max_grad_norm
+                    )
                     optimizers[group_name].step()
 
-            if args.target_kl is not None:
-                if approx_kl > args.target_kl:
-                    break
+            if args.target_kl is not None and approx_kl > args.target_kl:
+                break
 
         # ---------------- logging ----------------
         if update % 1 == 0:
@@ -350,8 +444,14 @@ def train(args: Args):
             writer.add_scalar("charts/global_step", global_step, global_step)
             writer.add_scalar("charts/sps", sps, global_step)
             writer.add_scalar("charts/mean_reward", avg_reward, global_step)
-            writer.add_scalar("charts/lr", optimizers[list(optimizers)[0]].param_groups[0]["lr"], global_step)
-            print(f"update={update} step={global_step} sps={sps} mean_reward={avg_reward:.4f}")
+            writer.add_scalar(
+                "charts/lr",
+                optimizers[list(optimizers)[0]].param_groups[0]["lr"],
+                global_step,
+            )
+            print(
+                f"update={update} step={global_step} sps={sps} mean_reward={avg_reward:.4f}"
+            )
 
         if args.save_model and update % args.eval_every == 0:
             os.makedirs(f"checkpoints/{run_name}", exist_ok=True)

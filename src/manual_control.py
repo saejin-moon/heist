@@ -13,8 +13,8 @@
 
 import pygame as pg
 
+from constants import INTERACT, TILE_SIZE, WAIT
 from env import HeistEnv
-from constants import TILE_SIZE, WAIT, INTERACT
 
 
 def run_manual(env):
@@ -27,10 +27,19 @@ def run_manual(env):
     font = pg.font.SysFont("monospace", 16)
     clock = pg.time.Clock()
 
-    agent_select = {pg.K_1: "scout", pg.K_2: "hacker", pg.K_3: "muscle", pg.K_4: "extractor"}
+    agent_select = {
+        pg.K_1: "scout",
+        pg.K_2: "hacker",
+        pg.K_3: "muscle",
+        pg.K_4: "extractor",
+    }
     pg_key_map = {
-        pg.K_w: 0, pg.K_s: 1, pg.K_a: 2, pg.K_d: 3,
-        pg.K_SPACE: WAIT, pg.K_e: INTERACT,
+        pg.K_w: 0,
+        pg.K_s: 1,
+        pg.K_a: 2,
+        pg.K_d: 3,
+        pg.K_SPACE: WAIT,
+        pg.K_e: INTERACT,
     }
 
     running = True
@@ -53,8 +62,10 @@ def run_manual(env):
             actions[active_agent] = action
             obs, rewards, terms, truncs, infos = env.step(actions)
 
-            print(f"[ {active_agent.upper()} ] Reward: {rewards.get(active_agent, 0):.2f} "
-                  f"| Mask: {obs[active_agent]['action_mask']}")
+            print(
+                f"[ {active_agent.upper()} ] Reward: {rewards.get(active_agent, 0):.2f} "
+                f"| Mask: {obs[active_agent]['action_mask']}"
+            )
             print(f"Observation: {obs[active_agent]['observation']}")
 
             if any(terms.values()) or any(truncs.values()):

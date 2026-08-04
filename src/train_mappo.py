@@ -22,10 +22,14 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
-from env import AGENTS, parse_env_config
 from constants import (
-    OBSERVATION_SIZE, ACTION_SPACE_SIZE as ACTION_DIM, N_AGENTS,
+    ACTION_SPACE_SIZE as ACTION_DIM,
 )
+from constants import (
+    N_AGENTS,
+    OBSERVATION_SIZE,
+)
+from env import AGENTS, parse_env_config
 from model import MappoAgent
 from vec_env import VectorEnv
 
@@ -88,10 +92,13 @@ def train(args: Args):
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % "\n".join([f"|{k}|{v}|" for k, v in vars(args).items()]),
+        "|param|value|\n|-|-|\n"
+        + "\n".join([f"|{k}|{v}|" for k, v in vars(args).items()]),
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
     print(f"device: {device}")
     args.save_model = not getattr(args, "no_save_model", False)
 
@@ -120,13 +127,21 @@ def train(args: Args):
     buffers = {}
     for a in AGENTS:
         buffers[a] = {
-            "obs": torch.zeros((args.num_steps, args.num_envs, obs_h, obs_w), device=device),
-            "action_mask": torch.zeros((args.num_steps, args.num_envs, ACTION_DIM), device=device),
+            "obs": torch.zeros(
+                (args.num_steps, args.num_envs, obs_h, obs_w), device=device
+            ),
+            "action_mask": torch.zeros(
+                (args.num_steps, args.num_envs, ACTION_DIM), device=device
+            ),
             # REV-7 (REVISION_PLAN.md §6): no global_state buffer; the MAPPO
             # actor sees local view + role only, the centralized critic sees
             # env.state() from the shared state_buffer.
-            "role_id": torch.zeros((args.num_steps, args.num_envs, N_AGENTS), device=device),
-            "actions": torch.zeros((args.num_steps, args.num_envs), dtype=torch.long, device=device),
+            "role_id": torch.zeros(
+                (args.num_steps, args.num_envs, N_AGENTS), device=device
+            ),
+            "actions": torch.zeros(
+                (args.num_steps, args.num_envs), dtype=torch.long, device=device
+            ),
             "logprobs": torch.zeros((args.num_steps, args.num_envs), device=device),
             "rewards": torch.zeros((args.num_steps, args.num_envs), device=device),
             "terminated": torch.zeros((args.num_steps, args.num_envs), device=device),
@@ -136,22 +151,30 @@ def train(args: Args):
             "bootstrap": torch.zeros((args.num_steps, args.num_envs), device=device),
             "values": torch.zeros((args.num_steps, args.num_envs), device=device),
         }
-    state_buffer = torch.zeros((args.num_steps, args.num_envs, state_dim), device=device)
+    state_buffer = torch.zeros(
+        (args.num_steps, args.num_envs, state_dim), device=device
+    )
 
     num_updates = args.total_timesteps // (args.num_steps * args.num_envs)
     print(f"num_updates: {num_updates}")
 
     def eval_policies(step):
         from evaluate import evaluate_policies
+
         metrics = evaluate_policies(
-            {a: policy for a in AGENTS}, vec_env.envs[0],
-            episodes=args.eval_episodes, seed=args.seed + 1_000_000,
-            algo="mappo", device=device,
+            {a: policy for a in AGENTS},
+            vec_env.envs[0],
+            episodes=args.eval_episodes,
+            seed=args.seed + 1_000_000,
+            algo="mappo",
+            device=device,
         )
         for k, v in metrics.items():
             writer.add_scalar(f"eval/{k}", v, step)
-        print(f"  eval@{step}: win_rate={metrics['win_rate']:.3f} "
-              f"return={metrics['mean_return']:.3f} len={metrics['mean_length']:.1f}")
+        print(
+            f"  eval@{step}: win_rate={metrics['win_rate']:.3f} "
+            f"return={metrics['mean_return']:.3f} len={metrics['mean_length']:.1f}"
+        )
 
     start_time = time.time()
     global_step = 0
@@ -175,7 +198,8 @@ def train(args: Args):
                     role_t = torch.tensor(next_obs[a]["role_id"], device=device)
                     mask_t = torch.tensor(next_obs[a]["action_mask"], device=device)
                     action, logprob, _, value = policy.get_action_and_value(
-                        obs_t, role_t, mask_t, state_t)
+                        obs_t, role_t, mask_t, state_t
+                    )
                 buffers[a]["obs"][step] = obs_t
                 buffers[a]["role_id"][step] = role_t
                 buffers[a]["action_mask"][step] = mask_t
@@ -184,8 +208,12 @@ def train(args: Args):
                 buffers[a]["values"][step] = value.flatten()
                 actions_dict[a] = action.cpu().numpy()
 
-            next_obs, rewards, terminations, truncations, infos = vec_env.step(actions_dict)
-            next_terminations = torch.tensor(terminations["scout"], device=device).float()
+            next_obs, rewards, terminations, truncations, infos = vec_env.step(
+                actions_dict
+            )
+            next_terminations = torch.tensor(
+                terminations["scout"], device=device
+            ).float()
             next_truncations = torch.tensor(truncations["scout"], device=device).float()
             last_infos = infos
             for a in AGENTS:
@@ -198,8 +226,14 @@ def train(args: Args):
                 with torch.no_grad():
                     t_idx = trunc_t.bool().nonzero(as_tuple=False).flatten()
                     if t_idx.numel():
-                        t_states = torch.stack([torch.tensor(
-                            infos[int(i)]["terminal_state"], device=device) for i in t_idx])
+                        t_states = torch.stack(
+                            [
+                                torch.tensor(
+                                    infos[int(i)]["terminal_state"], device=device
+                                )
+                                for i in t_idx
+                            ]
+                        )
                         val = policy.get_value(t_states).flatten()
                         buffers[a]["bootstrap"][step][t_idx] = val
             next_state = vec_env.state
@@ -207,12 +241,19 @@ def train(args: Args):
         # ---------------- GAE + returns (centralized critic) ----------------
         with torch.no_grad():
             next_value = policy.get_value(
-                torch.tensor(next_state, device=device)).flatten()
+                torch.tensor(next_state, device=device)
+            ).flatten()
             # REV-3: truncated envs bootstrap to critic(terminal_state), not 0.
             t_idx = next_truncations.bool().nonzero(as_tuple=False).flatten()
             if t_idx.numel():
-                t_states = torch.stack([torch.tensor(
-                    last_infos[int(i)]["terminal_state"], device=device) for i in t_idx])
+                t_states = torch.stack(
+                    [
+                        torch.tensor(
+                            last_infos[int(i)]["terminal_state"], device=device
+                        )
+                        for i in t_idx
+                    ]
+                )
                 next_value[t_idx] = policy.get_value(t_states).flatten()
             # terminated envs bootstrap to 0
             next_value = next_value * (1.0 - next_terminations)
@@ -232,16 +273,25 @@ def train(args: Args):
                         buffers[a]["bootstrap"][t + 1],
                         buffers[a]["values"][t + 1],
                     )
-                delta = buffers[a]["rewards"][t] + args.gamma * nextvalues * nextnonterminal \
-                        - buffers[a]["values"][t]
-                adv[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                delta = (
+                    buffers[a]["rewards"][t]
+                    + args.gamma * nextvalues * nextnonterminal
+                    - buffers[a]["values"][t]
+                )
+                adv[t] = lastgaelam = (
+                    delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                )
             advantages[a] = adv
             returns[a] = adv + buffers[a]["values"]
 
         # ---------------- policy update (concatenated across agents) ---------
         b_obs = torch.cat([buffers[a]["obs"].reshape(-1, obs_h, obs_w) for a in AGENTS])
-        b_mask = torch.cat([buffers[a]["action_mask"].reshape(-1, ACTION_DIM) for a in AGENTS])
-        b_role = torch.cat([buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in AGENTS])
+        b_mask = torch.cat(
+            [buffers[a]["action_mask"].reshape(-1, ACTION_DIM) for a in AGENTS]
+        )
+        b_role = torch.cat(
+            [buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in AGENTS]
+        )
         b_actions = torch.cat([buffers[a]["actions"].reshape(-1) for a in AGENTS])
         b_logprobs = torch.cat([buffers[a]["logprobs"].reshape(-1) for a in AGENTS])
         b_advantages = torch.cat([advantages[a].reshape(-1) for a in AGENTS])
@@ -250,7 +300,7 @@ def train(args: Args):
         # (each agent's flattened block shares the same (step, env) states)
         b_states = torch.cat([state_buffer.reshape(-1, state_dim) for _ in AGENTS])
 
-        for epoch in range(args.update_epochs):
+        for _ in range(args.update_epochs):
             b_inds = np.arange(b_obs.shape[0])
             np.random.shuffle(b_inds)
             minibatch_size = b_obs.shape[0] // args.num_minibatches
@@ -259,18 +309,20 @@ def train(args: Args):
                 end = start + minibatch_size
                 mb = b_inds[start:end]
                 _, newlogprob, entropy, newvalue = policy.get_action_and_value(
-                    b_obs[mb], b_role[mb], b_mask[mb], b_states[mb], b_actions[mb])
+                    b_obs[mb], b_role[mb], b_mask[mb], b_states[mb], b_actions[mb]
+                )
 
                 logratio = newlogprob - b_logprobs[mb]
                 ratio = logratio.exp()
                 with torch.no_grad():
                     approx_kl = ((ratio - 1.0) - logratio).mean()
-                    clipfrac = ((ratio - 1.0).abs() > args.clip_coef).float().mean()
 
                 adv = b_advantages[mb]
                 adv = (adv - adv.mean()) / (adv.std() + 1e-8)
                 pg_loss1 = -adv * ratio
-                pg_loss2 = -adv * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                pg_loss2 = -adv * torch.clamp(
+                    ratio, 1 - args.clip_coef, 1 + args.clip_coef
+                )
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
                 v_loss = ((newvalue.flatten() - b_returns[mb]) ** 2).mean()
                 entropy_loss = entropy.mean()
@@ -281,9 +333,8 @@ def train(args: Args):
                 nn.utils.clip_grad_norm_(policy.parameters(), args.max_grad_norm)
                 optimizer.step()
 
-            if args.target_kl is not None:
-                if approx_kl > args.target_kl:
-                    break
+            if args.target_kl is not None and approx_kl > args.target_kl:
+                break
 
         # ---------------- logging ----------------
         sps = int(global_step / (time.time() - start_time))
@@ -292,7 +343,9 @@ def train(args: Args):
         writer.add_scalar("charts/sps", sps, global_step)
         writer.add_scalar("charts/mean_reward", avg_reward, global_step)
         writer.add_scalar("charts/lr", optimizer.param_groups[0]["lr"], global_step)
-        print(f"update={update} step={global_step} sps={sps} mean_reward={avg_reward:.4f}")
+        print(
+            f"update={update} step={global_step} sps={sps} mean_reward={avg_reward:.4f}"
+        )
 
         if update % args.eval_every == 0:
             if args.save_model:

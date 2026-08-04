@@ -69,6 +69,7 @@ CURRICULUM = [
     },
 ]
 
+
 # ---------------------------------------------------------------------------
 # Automatic curriculum driver
 # ---------------------------------------------------------------------------
@@ -100,6 +101,7 @@ def env_config_str(config: dict) -> str:
         # -> '{"map_size": [11, 11], "num_rooms_range": [1, 2], ...}'
     """
     import json
+
     return json.dumps(config)
 
 

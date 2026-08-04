@@ -17,7 +17,7 @@ estimates correctly on truncation (REV-3, REVISION_PLAN.md §3b).
 
 import numpy as np
 
-from env import HeistEnv, AGENTS
+from env import AGENTS, HeistEnv
 
 
 class VectorEnv:

@@ -8,9 +8,16 @@ Run with:  uv run python src/test_comm_smoke.py
 """
 
 import torch
-from env import HeistEnv
+
 from constants import N_AGENTS
-from model import TarMACComm, CommAgent, COMM_HIDDEN_DIM, COMM_MESSAGE_DIM, LOCAL_INPUT_DIM
+from env import HeistEnv
+from model import (
+    COMM_HIDDEN_DIM,
+    COMM_MESSAGE_DIM,
+    LOCAL_INPUT_DIM,
+    CommAgent,
+    TarMACComm,
+)
 from vec_env import VectorEnv
 
 
@@ -20,14 +27,16 @@ def test_tarmac_forward():
     B = 4
     features = torch.randn(B, N_AGENTS, COMM_HIDDEN_DIM)
     aggregated, msgs_gated, attn = comm(features)
-    assert aggregated.shape == (B, N_AGENTS, COMM_MESSAGE_DIM), \
+    assert aggregated.shape == (B, N_AGENTS, COMM_MESSAGE_DIM), (
         f"expected ({B},{N_AGENTS},{COMM_MESSAGE_DIM}), got {aggregated.shape}"
+    )
     assert msgs_gated.shape == aggregated.shape
     assert attn.shape == (B, N_AGENTS, N_AGENTS)
     # attention rows should sum to 1
     row_sums = attn.sum(dim=-1)
-    assert torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-5), \
+    assert torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-5), (
         f"attention rows don't sum to 1: {row_sums}"
+    )
     print("  TarMACComm forward OK")
 
 
@@ -43,7 +52,8 @@ def test_comm_agent_shapes():
     obs_list = [obs[:, i] for i in range(N_AGENTS)]
 
     actions, logprobs, entropy, values = agent.get_action_and_value(
-        obs_list, roles, masks)
+        obs_list, roles, masks
+    )
     assert actions.shape == (B, N_AGENTS)
     assert logprobs.shape == (B, N_AGENTS)
     assert entropy.shape == (B, N_AGENTS)
@@ -65,8 +75,7 @@ def test_comm_agent_centralized():
     obs_list = [obs[:, i] for i in range(N_AGENTS)]
     state = torch.randn(B, 100)
 
-    _, _, _, values = agent.get_action_and_value(
-        obs_list, roles, masks, state=state)
+    _, _, _, values = agent.get_action_and_value(obs_list, roles, masks, state=state)
     assert values.shape == (B, N_AGENTS)
     print("  CommAgent centralized OK")
 
@@ -87,15 +96,22 @@ def test_comm_gradient_step():
     optimizer = torch.optim.Adam(agent.parameters(), lr=1e-3)
 
     # collect one step
-    obs_list = [torch.tensor(next_obs[a]["observation"], device="cpu")
-                for a in vec_env.envs[0].possible_agents]
-    role_list = [torch.tensor(next_obs[a]["role_id"], device="cpu")
-                 for a in vec_env.envs[0].possible_agents]
-    mask_list = [torch.tensor(next_obs[a]["action_mask"], device="cpu")
-                 for a in vec_env.envs[0].possible_agents]
+    obs_list = [
+        torch.tensor(next_obs[a]["observation"], device="cpu")
+        for a in vec_env.envs[0].possible_agents
+    ]
+    role_list = [
+        torch.tensor(next_obs[a]["role_id"], device="cpu")
+        for a in vec_env.envs[0].possible_agents
+    ]
+    mask_list = [
+        torch.tensor(next_obs[a]["action_mask"], device="cpu")
+        for a in vec_env.envs[0].possible_agents
+    ]
 
     actions, logprobs, entropy, values = agent.get_action_and_value(
-        obs_list, role_list, mask_list)
+        obs_list, role_list, mask_list
+    )
 
     # dummy loss
     loss = -entropy.mean() + values.mean()
@@ -107,27 +123,31 @@ def test_comm_gradient_step():
 
 def test_obs_contract():
     """Env obs dict no longer contains global_state."""
-    env = HeistEnv({
-        "map_size": (11, 11),
-        "guard_count": 0,
-        "camera_count": 0,
-        "door_count": 0,
-        "max_steps": 60,
-    })
+    env = HeistEnv(
+        {
+            "map_size": (11, 11),
+            "guard_count": 0,
+            "camera_count": 0,
+            "door_count": 0,
+            "max_steps": 60,
+        }
+    )
     obs, _ = env.reset(seed=0)
     for a in env.agents:
         assert "observation" in obs[a]
         assert "action_mask" in obs[a]
         assert "role_id" in obs[a]
-        assert "global_state" not in obs[a], \
+        assert "global_state" not in obs[a], (
             f"global_state should be removed (REV-7), but found in obs for {a}"
+        )
     print("  obs contract (no global_state) OK")
 
 
 def test_local_input_dim():
     """LOCAL_INPUT_DIM = 25 + N_AGENTS (no global_state)."""
-    assert LOCAL_INPUT_DIM == 25 + N_AGENTS, \
+    assert LOCAL_INPUT_DIM == 25 + N_AGENTS, (
         f"expected {25 + N_AGENTS}, got {LOCAL_INPUT_DIM}"
+    )
     print("  LOCAL_INPUT_DIM OK")
 
 

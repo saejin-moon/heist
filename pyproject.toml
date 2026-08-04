@@ -1,0 +1,39 @@
+[project]
+name = "heist"
+version = "0.1.0"
+description = "HEIST: Hierarchical Environment for Interdependent Sequential Tasks (multi-agent RL)"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy<2.5",
+    "numba>=0.66",
+    "pettingzoo>=1.24",
+    "gymnasium>=1.0",
+    "pygame>=2.5",
+    "torch>=2.2",
+    "tensorboard>=2.14",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+src = ["src"]
+
+[tool.ruff.format]
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",    # line length handled by formatter
+    "SIM105",  # contextlib.suppress nitpicks
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/env.py" = ["F403", "F405"]  # constants imported via star for readability
+"src/test_*.py" = ["SIM"]        # smoke tests favor explicit asserts
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.1",
+]

@@ -13,8 +13,8 @@ import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
 
-from env import HeistEnv, AGENTS
-from constants import ACTION_SPACE_SIZE, N_AGENTS
+from constants import ACTION_SPACE_SIZE
+from env import AGENTS, HeistEnv
 from model import LOCAL_INPUT_DIM
 
 

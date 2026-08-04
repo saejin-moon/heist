@@ -16,11 +16,19 @@ from collections import deque
 
 import numpy as np
 
-from env import AGENTS, HeistEnv
 from constants import (
-    ACTION_DELTAS, INTERACT, UP, DOWN, LEFT, RIGHT, WAIT,
-    WALL, DOOR, WIN_CONVERGE_RADIUS,
+    ACTION_DELTAS,
+    DOOR,
+    DOWN,
+    INTERACT,
+    LEFT,
+    RIGHT,
+    UP,
+    WAIT,
+    WALL,
+    WIN_CONVERGE_RADIUS,
 )
+from env import AGENTS, HeistEnv
 
 
 def bfs_next_step(grid, start, goal, blocked=None):
@@ -83,22 +91,27 @@ class ScriptedTeam:
 
     def _move_toward(self, agent, goal, avoid_guards=True):
         blocked = _danger_zone(self.env) if avoid_guards else set()
-        step = bfs_next_step(self.env.grid, self.env.agent_positions[agent],
-                             goal, blocked=blocked)
+        step = bfs_next_step(
+            self.env.grid, self.env.agent_positions[agent], goal, blocked=blocked
+        )
         if step is None:
             return WAIT
         return step
 
     def _near_goal(self, agent, goal):
-        return (bfs_next_step(self.env.grid, self.env.agent_positions[agent], goal)
-                is None)
+        return (
+            bfs_next_step(self.env.grid, self.env.agent_positions[agent], goal) is None
+        )
 
     def _adjacent_door(self, pos):
         grid = self.env.grid
         for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             nr, nc = pos[0] + dr, pos[1] + dc
-            if 0 <= nr < self.env.map_h and 0 <= nc < self.env.map_w \
-                    and grid[nr, nc] == DOOR:
+            if (
+                0 <= nr < self.env.map_h
+                and 0 <= nc < self.env.map_w
+                and grid[nr, nc] == DOOR
+            ):
                 return True
         return False
 
@@ -128,13 +141,11 @@ class ScriptedTeam:
                     best_adj_d, best_adj = d, (ar, ac)
         if best_adj is None:
             return WAIT
-        step = bfs_next_step(grid, pos, best_adj,
-                             blocked=_danger_zone(env))
+        step = bfs_next_step(grid, pos, best_adj, blocked=_danger_zone(env))
         return step if step is not None else WAIT
 
     def act(self):
         env = self.env
-        blocked = _danger_zone(env)
         actions = {}
         for agent in AGENTS:
             pos = env.agent_positions[agent]
@@ -151,8 +162,7 @@ class ScriptedTeam:
                     actions[agent] = WAIT
             elif agent == "hacker":
                 # disable the terminal once the scout has tagged it
-                if (env.terminal_pos in env.tagged_pois
-                        and not env.terminal_disabled):
+                if env.terminal_pos in env.tagged_pois and not env.terminal_disabled:
                     if self._near_goal(agent, env.terminal_pos):
                         actions[agent] = INTERACT
                     else:
@@ -160,21 +170,26 @@ class ScriptedTeam:
                         if step == WAIT and self._adjacent_door(pos):
                             actions[agent] = INTERACT
                         else:
-                            actions[agent] = step if step != WAIT \
-                                else self._hacker_clear_door()
+                            actions[agent] = (
+                                step if step != WAIT else self._hacker_clear_door()
+                            )
                 elif not self._within_win_radius(agent):
                     actions[agent] = self._move_toward(agent, env.extract_pos)
                 else:
                     actions[agent] = WAIT
             elif agent == "muscle":
                 # neutralize a nearby guard, else converge on extract
-                best_g = min(env.guard_positions,
-                             key=lambda g: abs(pos[0] - g[0]) + abs(pos[1] - g[1]),
-                             default=None)
+                best_g = min(
+                    env.guard_positions,
+                    key=lambda g: abs(pos[0] - g[0]) + abs(pos[1] - g[1]),
+                    default=None,
+                )
                 if best_g is not None:
                     gi = env.guard_positions.index(best_g)
-                    if (env.neutralized[gi] == 0
-                            and abs(pos[0] - best_g[0]) + abs(pos[1] - best_g[1]) <= 2):
+                    if (
+                        env.neutralized[gi] == 0
+                        and abs(pos[0] - best_g[0]) + abs(pos[1] - best_g[1]) <= 2
+                    ):
                         actions[agent] = INTERACT
                         continue
                 if not self._within_win_radius(agent):
@@ -246,8 +261,10 @@ def run_scripted_episode(env, seed=None, noop_agent=None):
 
 
 def evaluate_scripted(env, episodes=30, seed=0, noop_agent=None):
-    results = [run_scripted_episode(env, seed=seed + i, noop_agent=noop_agent)
-               for i in range(episodes)]
+    results = [
+        run_scripted_episode(env, seed=seed + i, noop_agent=noop_agent)
+        for i in range(episodes)
+    ]
     wins = sum(r["win"] for r in results)
     return {
         "win_rate": wins / episodes,
@@ -283,16 +300,19 @@ def scripted_counterfactual(env, episodes=30, seed=0):
 
 
 if __name__ == "__main__":
-    import json
     import argparse
+    import json
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--episodes", type=int, default=60)
     ap.add_argument("--seed", type=int, default=555)
-    ap.add_argument("--env-config", type=str,
-                    default='{"map_size": [11, 11], "num_rooms_range": [1, 2], '
-                            '"guard_count": 0, "camera_count": 0, "door_count": 0, '
-                            '"max_steps": 90}')
+    ap.add_argument(
+        "--env-config",
+        type=str,
+        default='{"map_size": [11, 11], "num_rooms_range": [1, 2], '
+        '"guard_count": 0, "camera_count": 0, "door_count": 0, '
+        '"max_steps": 90}',
+    )
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -309,16 +329,25 @@ if __name__ == "__main__":
     for a in AGENTS:
         print(f"  {a:>9}: {cai[a]:+.3f}")
     print("-" * 64)
-    imp = scripted_counterfactual(env, episodes=max(args.episodes // 2, 10),
-                                  seed=args.seed + 10_000)
+    imp = scripted_counterfactual(
+        env, episodes=max(args.episodes // 2, 10), seed=args.seed + 10_000
+    )
     print("Counterfactual importance (scripted):")
     print(f"  baseline win rate: {imp['baseline_win_rate']:.3f}")
     for a in AGENTS:
         print(f"  {a:>9}: {imp['importance'][a]:+.3f}")
     if args.out:
         with open(args.out, "w") as f:
-            json.dump({"metrics": m, "cai": cai, "counterfactual": imp,
-                       "controller": "scripted_bfs",
-                       "episodes": args.episodes, "seed": args.seed},
-                      f, indent=2)
+            json.dump(
+                {
+                    "metrics": m,
+                    "cai": cai,
+                    "counterfactual": imp,
+                    "controller": "scripted_bfs",
+                    "episodes": args.episodes,
+                    "seed": args.seed,
+                },
+                f,
+                indent=2,
+            )
         print(f"\nsaved results to {args.out}")

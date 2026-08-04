@@ -27,12 +27,12 @@ spawn placement, hack difficulty) so curriculum.py can stage difficulty.
 """
 
 import numpy as np
+from gymnasium.spaces import Box, Dict, Discrete
 from pettingzoo import ParallelEnv
-from gymnasium.spaces import Dict, Discrete, Box
 
 from constants import *
-from vision import calculate_fov, camera_exposure, line_is_clear
 from map_gen import generate_procedural_map
+from vision import calculate_fov, camera_exposure, line_is_clear
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +55,7 @@ def parse_env_config(env_config_str: str) -> dict | None:
     if not env_config_str:
         return None
     import json
+
     cfg = json.loads(env_config_str)
     # accept JSON arrays for tuple-typed config keys
     for k, v in cfg.items():
@@ -74,7 +75,7 @@ DEFAULT_CONFIG = {
     "agent_vision": AGENT_VISION_RADIUS,
     "hack_turns": HACK_TURNS,
     "extraction_countdown": EXTRACTION_COUNTDOWN,
-    "spawn_mode": "role",            # "role" | "random"
+    "spawn_mode": "role",  # "role" | "random"
     "catch_distance": CATCH_DISTANCE,
     "converge_alarm": CONVERGE_ALARM,
     "neutral_turns": NEUTRALIZE_TURNS,
@@ -125,16 +126,24 @@ class HeistEnv(ParallelEnv):
 
         # REV-1: fixed Box shape and bounds (kept for backward compat during
         # M0/M1; REV-7 removes global_state entirely - see below).
-        self.action_spaces = {a: Discrete(ACTION_SPACE_SIZE) for a in self.possible_agents}
+        self.action_spaces = {
+            a: Discrete(ACTION_SPACE_SIZE) for a in self.possible_agents
+        }
         self.observation_spaces = {
-            a: Dict({
-                "observation": Box(low=FOG, high=255, shape=OBSERVATION_SIZE, dtype=np.int32),
-                "action_mask": Box(low=0, high=1, shape=(ACTION_SPACE_SIZE,), dtype=np.int8),
-                # REV-7 (REVISION_PLAN.md §6): global_state is deleted from the
-                # per-agent observation contract.  Centralized critics keep
-                # env.state().  Agents must communicate phase status instead.
-                "role_id": Box(low=0, high=1, shape=(N_AGENTS,), dtype=np.int8),
-            })
+            a: Dict(
+                {
+                    "observation": Box(
+                        low=FOG, high=255, shape=OBSERVATION_SIZE, dtype=np.int32
+                    ),
+                    "action_mask": Box(
+                        low=0, high=1, shape=(ACTION_SPACE_SIZE,), dtype=np.int8
+                    ),
+                    # REV-7 (REVISION_PLAN.md §6): global_state is deleted from the
+                    # per-agent observation contract.  Centralized critics keep
+                    # env.state().  Agents must communicate phase status instead.
+                    "role_id": Box(low=0, high=1, shape=(N_AGENTS,), dtype=np.int8),
+                }
+            )
             for a in self.possible_agents
         }
 
@@ -174,7 +183,7 @@ class HeistEnv(ParallelEnv):
         # REV-8: per-guard FSM state ("patrol" | "search" | "converge")
         self.guard_states = []
         self._guard_search_target = []  # (r,c) or None per guard
-        self._guard_search_turns = []   # remaining search steps per guard
+        self._guard_search_turns = []  # remaining search steps per guard
 
     # ------------------------------------------------------------------
     # PettingZoo API
@@ -262,10 +271,13 @@ class HeistEnv(ParallelEnv):
             self._move_agent(agent, action)
 
         # interruption of a multi-turn hack resets progress and raises alarm
-        if self.hack_progress > 0 and not self.terminal_disabled:
-            if manhattan(self.agent_positions["hacker"], self.terminal_pos) > 1:
-                self.hack_progress = 0
-                self._add_alarm(self.config["alarm_hack_turn"])
+        if (
+            self.hack_progress > 0
+            and not self.terminal_disabled
+            and manhattan(self.agent_positions["hacker"], self.terminal_pos) > 1
+        ):
+            self.hack_progress = 0
+            self._add_alarm(self.config["alarm_hack_turn"])
 
         # ------------------ guards ------------------
         self._move_guards()
@@ -273,8 +285,11 @@ class HeistEnv(ParallelEnv):
         # ------------------ cameras ------------------
         if not self.terminal_disabled and self.camera_positions:
             exposure = camera_exposure(
-                self.grid, self.camera_positions,
-                list(self.agent_positions.values()), WALL, DOOR,
+                self.grid,
+                self.camera_positions,
+                list(self.agent_positions.values()),
+                WALL,
+                DOOR,
                 self.config["camera_range"],
             )
             n_visible = int(exposure.sum())
@@ -316,8 +331,13 @@ class HeistEnv(ParallelEnv):
             rewards = {a: self.config["reward_lose"] for a in self.agents}
 
         terminations = {a: bool(win or lose) for a in self.agents}
-        truncations = {a: bool(self.current_step >= self.config["max_steps"]) for a in self.agents}
-        infos = {a: {"alarm": self.alarm, "win": bool(win), "lose": bool(lose)} for a in self.agents}
+        truncations = {
+            a: bool(self.current_step >= self.config["max_steps"]) for a in self.agents
+        }
+        infos = {
+            a: {"alarm": self.alarm, "win": bool(win), "lose": bool(lose)}
+            for a in self.agents
+        }
 
         observations = {a: self._get_obs(a) for a in self.agents}
 
@@ -335,6 +355,7 @@ class HeistEnv(ParallelEnv):
     def render_pygame(self, screen, active_agent=None, font=None):
         """Pygame renderer with fog, cameras, doors, and an alarm meter."""
         import pygame as pg
+
         screen.fill((0, 0, 0))
         for row in range(self.map_h):
             for col in range(self.map_w):
@@ -345,24 +366,42 @@ class HeistEnv(ParallelEnv):
                     pg_rect = (x, y, TILE_SIZE, TILE_SIZE)
                     pg.draw.rect(screen, color, pg_rect)
                     if tile == DOOR:
-                        pg.draw.line(screen, (60, 40, 10),
-                                     (x + 2, y + 2), (x + TILE_SIZE - 2, y + TILE_SIZE - 2), 3)
+                        pg.draw.line(
+                            screen,
+                            (60, 40, 10),
+                            (x + 2, y + 2),
+                            (x + TILE_SIZE - 2, y + TILE_SIZE - 2),
+                            3,
+                        )
                     elif tile == CAMERA:
-                        pg.draw.circle(screen, (0, 0, 0), (x + TILE_SIZE // 2, y + TILE_SIZE // 2), 3)
+                        pg.draw.circle(
+                            screen,
+                            (0, 0, 0),
+                            (x + TILE_SIZE // 2, y + TILE_SIZE // 2),
+                            3,
+                        )
 
         # fog of war
-        fog_surface = pg.Surface((self.map_w * TILE_SIZE, self.map_h * TILE_SIZE), pg.SRCALPHA)
+        fog_surface = pg.Surface(
+            (self.map_w * TILE_SIZE, self.map_h * TILE_SIZE), pg.SRCALPHA
+        )
         for row in range(self.map_h):
             for col in range(self.map_w):
                 if not self.explored_map[row][col]:
-                    pg.draw.rect(fog_surface, COLORS["EXPLORED"],
-                                 (col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE))
+                    pg.draw.rect(
+                        fog_surface,
+                        COLORS["EXPLORED"],
+                        (col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE),
+                    )
         screen.blit(fog_surface, (0, 0))
 
         # agents
         for agent in self.agents:
             pos = self.agent_positions[agent]
-            circle = (pos[1] * TILE_SIZE + TILE_SIZE // 2, pos[0] * TILE_SIZE + TILE_SIZE // 2)
+            circle = (
+                pos[1] * TILE_SIZE + TILE_SIZE // 2,
+                pos[0] * TILE_SIZE + TILE_SIZE // 2,
+            )
             color = COLORS["AGENT"].get(agent)
             if agent == active_agent:
                 pg.draw.circle(screen, (255, 255, 255), circle, TILE_SIZE // 2 + 4)
@@ -374,14 +413,25 @@ class HeistEnv(ParallelEnv):
         for gi, gpos in enumerate(self.guard_positions):
             if self.neutralized[gi] > 0:
                 continue
-            circle = (gpos[1] * TILE_SIZE + TILE_SIZE // 2, gpos[0] * TILE_SIZE + TILE_SIZE // 2)
+            circle = (
+                gpos[1] * TILE_SIZE + TILE_SIZE // 2,
+                gpos[0] * TILE_SIZE + TILE_SIZE // 2,
+            )
             pg.draw.circle(screen, COLORS[GUARD], circle, TILE_SIZE // 2)
 
         # alarm meter
         bar_w = self.map_w * TILE_SIZE
         pg.draw.rect(screen, (40, 40, 40), (0, self.map_h * TILE_SIZE, bar_w, 10))
-        pg.draw.rect(screen, (255, 60, 60),
-                     (0, self.map_h * TILE_SIZE, int(bar_w * min(self.alarm, ALARM_MAX) / ALARM_MAX), 10))
+        pg.draw.rect(
+            screen,
+            (255, 60, 60),
+            (
+                0,
+                self.map_h * TILE_SIZE,
+                int(bar_w * min(self.alarm, ALARM_MAX) / ALARM_MAX),
+                10,
+            ),
+        )
         if font is not None:
             status = f"step {self.current_step} | alarm {self.alarm:.0f}/100"
             if self.terminal_disabled:
@@ -392,7 +442,10 @@ class HeistEnv(ParallelEnv):
                 status += f" | extract: {self.extraction_countdown}"
             if self._pending_events:
                 status += f" | delayed_events: {len(self._pending_events)}"
-            screen.blit(font.render(status, True, (255, 255, 255)), (4, self.map_h * TILE_SIZE + 14))
+            screen.blit(
+                font.render(status, True, (255, 255, 255)),
+                (4, self.map_h * TILE_SIZE + 14),
+            )
 
     # ------------------------------------------------------------------
     # Internals: spawning
@@ -453,7 +506,7 @@ class HeistEnv(ParallelEnv):
         if not (0 <= nr < self.map_h and 0 <= nc < self.map_w):
             return
         tile = self.grid[nr, nc]
-        if tile == WALL or tile == DOOR:
+        if tile in (WALL, DOOR):
             return
         self.agent_positions[agent] = (nr, nc)
         self._reveal_around(agent, self.config["agent_vision"])
@@ -462,13 +515,22 @@ class HeistEnv(ParallelEnv):
 
     def _refresh_scout_fov(self):
         sr, sc = self.agent_positions["scout"]
-        calculate_fov(self.grid, self.explored_map, sr, sc,
-                      self.config["scout_vision"], self.map_h, self.map_w, WALL)
+        calculate_fov(
+            self.grid,
+            self.explored_map,
+            sr,
+            sc,
+            self.config["scout_vision"],
+            self.map_h,
+            self.map_w,
+            WALL,
+        )
 
     def _reveal_around(self, agent, radius):
         r, c = self.agent_positions[agent]
-        calculate_fov(self.grid, self.explored_map, r, c,
-                      radius, self.map_h, self.map_w, WALL)
+        calculate_fov(
+            self.grid, self.explored_map, r, c, radius, self.map_h, self.map_w, WALL
+        )
 
     # ------------------------------------------------------------------
     # Internals: role special actions (action 5)
@@ -492,8 +554,11 @@ class HeistEnv(ParallelEnv):
         step, which collapses the policy into reward-hacking instead of
         executing the causal chain.
         """
-        pois = [self.terminal_pos, self.loot_pos, self.extract_pos] \
-               + self.camera_positions + self.door_positions
+        pois = (
+            [self.terminal_pos, self.loot_pos, self.extract_pos]
+            + self.camera_positions
+            + self.door_positions
+        )
         for p in pois:
             if p not in self.tagged_pois and manhattan(pos, p) <= 1:
                 self.tagged_pois.add(p)
@@ -505,8 +570,11 @@ class HeistEnv(ParallelEnv):
         The terminal must first be tagged by the scout (causal gate), so
         the scout's action is a strict prerequisite for the whole chain.
         """
-        if (not self.terminal_disabled and self.terminal_pos in self.tagged_pois
-                and manhattan(pos, self.terminal_pos) <= 1):
+        if (
+            not self.terminal_disabled
+            and self.terminal_pos in self.tagged_pois
+            and manhattan(pos, self.terminal_pos) <= 1
+        ):
             self.hack_progress += 1
             self._add_alarm(self.config["alarm_hack_turn"])
             if self.hack_progress >= self.config["hack_turns"]:
@@ -520,7 +588,11 @@ class HeistEnv(ParallelEnv):
         # guards within breach_radius repath).
         for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             nr, nc = pos[0] + dr, pos[1] + dc
-            if 0 <= nr < self.map_h and 0 <= nc < self.map_w and self.grid[nr, nc] == DOOR:
+            if (
+                0 <= nr < self.map_h
+                and 0 <= nc < self.map_w
+                and self.grid[nr, nc] == DOOR
+            ):
                 self.grid[nr, nc] = EMPTY
                 self._add_alarm(self.config["alarm_bypass"])
                 return
@@ -547,11 +619,13 @@ class HeistEnv(ParallelEnv):
             self.neutralized[best] = self.config["neutral_turns"]
             self._neutralized_pos[best] = self.guard_positions[best]
             # REV-9: delayed, not instant
-            self._pending_events.append((
-                self.current_step + self.config["alarm_neut_delay"],
-                self.config["alarm_neutralize"],
-                ("neutralize", best),
-            ))
+            self._pending_events.append(
+                (
+                    self.current_step + self.config["alarm_neut_delay"],
+                    self.config["alarm_neutralize"],
+                    ("neutralize", best),
+                )
+            )
             rewards["muscle"] += self.config["reward_task"]
             return
 
@@ -585,7 +659,9 @@ class HeistEnv(ParallelEnv):
         due = [e for e in self._pending_events if e[0] <= self.current_step]
         if not due:
             return
-        self._pending_events = [e for e in self._pending_events if e[0] > self.current_step]
+        self._pending_events = [
+            e for e in self._pending_events if e[0] > self.current_step
+        ]
         for _, amount, source in due:
             self._add_alarm(amount)
             # command noticed a missing guard: nearby guards go Search its last spot
@@ -594,15 +670,22 @@ class HeistEnv(ParallelEnv):
                 last = self._neutralized_pos.get(gi)
                 if last is not None:
                     for j, jpos in enumerate(self.guard_positions):
-                        if j != gi and self.neutralized[j] == 0 \
-                                and manhattan(jpos, last) <= self.config["breach_radius"]:
+                        if (
+                            j != gi
+                            and self.neutralized[j] == 0
+                            and manhattan(jpos, last) <= self.config["breach_radius"]
+                        ):
                             self.guard_states[j] = "search"
                             self._guard_search_target[j] = last
                             self._guard_search_turns[j] = self.config["search_turns"]
 
     def _extractor_act(self, pos, rewards):
         """Secure loot (needs disabled terminal), then call extraction."""
-        if not self.loot_acquired and self.terminal_disabled and manhattan(pos, self.loot_pos) <= 1:
+        if (
+            not self.loot_acquired
+            and self.terminal_disabled
+            and manhattan(pos, self.loot_pos) <= 1
+        ):
             self.loot_acquired = True
             self._burden_start_step = self.current_step  # REV-6 slow-turn clock
             rewards["extractor"] += self.config["reward_task"]
@@ -659,10 +742,11 @@ class HeistEnv(ParallelEnv):
             # ---- decide ------------------------------------------
             if converge:
                 self.guard_states[gi] = "converge"
-            elif self.guard_states[gi] == "search":
-                if self._guard_search_turns[gi] <= 0:
-                    self.guard_states[gi] = "patrol"
-                    self._guard_search_target[gi] = None
+            elif (
+                self.guard_states[gi] == "search" and self._guard_search_turns[gi] <= 0
+            ):
+                self.guard_states[gi] = "patrol"
+                self._guard_search_target[gi] = None
 
             valid = self._valid_moves(gr, gc)
             if not valid:
@@ -671,11 +755,15 @@ class HeistEnv(ParallelEnv):
 
             state = self.guard_states[gi]
             if state == "converge":
-                target = min(self.agent_positions.values(),
-                             key=lambda p: manhattan(p, (gr, gc)))
+                target = min(
+                    self.agent_positions.values(), key=lambda p: manhattan(p, (gr, gc))
+                )
                 nxt = self._bfs_next(gr, gc, target)
-                new_positions.append(nxt if nxt is not None
-                                     else min(valid, key=lambda p: manhattan(p, target)))
+                new_positions.append(
+                    nxt
+                    if nxt is not None
+                    else min(valid, key=lambda p: manhattan(p, target))
+                )
             elif state == "search" and self._guard_search_target[gi] is not None:
                 target = self._guard_search_target[gi]
                 if (gr, gc) == target:
@@ -698,7 +786,7 @@ class HeistEnv(ParallelEnv):
         or None.  Uses vision.line_is_clear over a bounded manhattan range so
         guards cannot see through walls or locked doors."""
         los_range = self.config["guard_los_range"]
-        for agent, apos in self.agent_positions.items():
+        for _agent, apos in self.agent_positions.items():
             if manhattan((gr, gc), apos) > los_range:
                 continue
             if line_is_clear(self.grid, gr, gc, apos[0], apos[1], WALL, DOOR):
@@ -731,6 +819,7 @@ class HeistEnv(ParallelEnv):
         if (gr, gc) == target:
             return None
         from collections import deque
+
         prev = {}
         q = deque([(gr, gc)])
         seen = {(gr, gc)}
@@ -749,7 +838,7 @@ class HeistEnv(ParallelEnv):
                 if not (0 <= nr < self.map_h and 0 <= nc < self.map_w):
                     continue
                 tile = self.grid[nr, nc]
-                if tile == WALL or tile == DOOR:
+                if tile in (WALL, DOOR):
                     continue
                 if (nr, nc) not in seen:
                     seen.add((nr, nc))
@@ -798,44 +887,58 @@ class HeistEnv(ParallelEnv):
         for a in range(4):
             dr, dc = ACTION_DELTAS[a]
             nr, nc = pos[0] + dr, pos[1] + dc
-            if not (0 <= nr < self.map_h and 0 <= nc < self.map_w):
-                mask[a] = 0
-            elif self.grid[nr, nc] == WALL or self.grid[nr, nc] == DOOR:
+            if (
+                not (0 <= nr < self.map_h and 0 <= nc < self.map_w)
+                or self.grid[nr, nc] == WALL
+                or self.grid[nr, nc] == DOOR
+            ):
                 mask[a] = 0
 
         # causal gate: only allow INTERACT when it is actually possible
         if agent == "scout":
-            pois = [self.terminal_pos, self.loot_pos, self.extract_pos] \
-                   + self.camera_positions + self.door_positions
+            pois = (
+                [self.terminal_pos, self.loot_pos, self.extract_pos]
+                + self.camera_positions
+                + self.door_positions
+            )
             if any(manhattan(pos, p) <= 1 for p in pois):
                 mask[INTERACT] = 1
         elif agent == "hacker":
             # causal gate: the terminal must have been tagged by the scout
             # before the hacker can act on it (RG-Dec-POMDP chain step 1)
-            near_terminal = (not self.terminal_disabled
-                             and self.terminal_pos in self.tagged_pois
-                             and manhattan(pos, self.terminal_pos) <= 1)
+            near_terminal = (
+                not self.terminal_disabled
+                and self.terminal_pos in self.tagged_pois
+                and manhattan(pos, self.terminal_pos) <= 1
+            )
             near_door = any(
-                0 <= pos[0] + dr < self.map_h and 0 <= pos[1] + dc < self.map_w
+                0 <= pos[0] + dr < self.map_h
+                and 0 <= pos[1] + dc < self.map_w
                 and self.grid[pos[0] + dr, pos[1] + dc] == DOOR
                 for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0))
             )
             if near_terminal or near_door:
                 mask[INTERACT] = 1
         elif agent == "muscle":
-            near_guard = any(self.neutralized[gi] == 0 and manhattan(pos, gpos) <= 2
-                             for gi, gpos in enumerate(self.guard_positions))
+            near_guard = any(
+                self.neutralized[gi] == 0 and manhattan(pos, gpos) <= 2
+                for gi, gpos in enumerate(self.guard_positions)
+            )
             # REV-5: wall breach is a valid INTERACT when adjacent to a wall
             near_wall = any(
-                0 <= pos[0] + dr < self.map_h and 0 <= pos[1] + dc < self.map_w
+                0 <= pos[0] + dr < self.map_h
+                and 0 <= pos[1] + dc < self.map_w
                 and self.grid[pos[0] + dr, pos[1] + dc] == WALL
                 for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0))
             )
             if near_guard or near_wall:
                 mask[INTERACT] = 1
         elif agent == "extractor":
-            near_loot = (not self.loot_acquired and self.terminal_disabled
-                         and manhattan(pos, self.loot_pos) <= 1)
+            near_loot = (
+                not self.loot_acquired
+                and self.terminal_disabled
+                and manhattan(pos, self.loot_pos) <= 1
+            )
             can_call = self.loot_acquired and not self.extraction_triggered
             if near_loot or can_call:
                 mask[INTERACT] = 1
@@ -844,7 +947,10 @@ class HeistEnv(ParallelEnv):
             # turn ahead to match the movement gate in _move_agent.
             if self.loot_acquired and self._burden_start_step >= 0:
                 turns_since = (self.current_step + 1) - self._burden_start_step
-                if turns_since > 0 and turns_since % self.config["extractor_burden"] == 0:
+                if (
+                    turns_since > 0
+                    and turns_since % self.config["extractor_burden"] == 0
+                ):
                     mask[:4] = 0
         return mask
 
@@ -859,14 +965,20 @@ class HeistEnv(ParallelEnv):
 
         pos = self.agent_positions[agent]
         pad = OBSERVATION_SIZE[0] // 2  # 2 -> 5x5 window
-        pad_grid = np.pad(composite, pad_width=pad, mode="constant", constant_values=WALL)
+        pad_grid = np.pad(
+            composite, pad_width=pad, mode="constant", constant_values=WALL
+        )
         vpos = (pos[0] + pad, pos[1] + pad)
-        obs = pad_grid[vpos[0] - pad:vpos[0] + pad + 1, vpos[1] - pad:vpos[1] + pad + 1]
+        obs = pad_grid[
+            vpos[0] - pad : vpos[0] + pad + 1, vpos[1] - pad : vpos[1] + pad + 1
+        ]
 
-        pad_explored = np.pad(self.explored_map, pad_width=pad, mode="constant",
-                              constant_values=False)
-        obs_explored = pad_explored[vpos[0] - pad:vpos[0] + pad + 1,
-                                    vpos[1] - pad:vpos[1] + pad + 1]
+        pad_explored = np.pad(
+            self.explored_map, pad_width=pad, mode="constant", constant_values=False
+        )
+        obs_explored = pad_explored[
+            vpos[0] - pad : vpos[0] + pad + 1, vpos[1] - pad : vpos[1] + pad + 1
+        ]
         masked = np.where(obs_explored, obs, FOG)
 
         mask = self._action_mask(agent)
@@ -878,8 +990,7 @@ class HeistEnv(ParallelEnv):
         # Phase B comm agents learn to share phase status via TarMAC messages.
         role_id = np.array(ROLE_ONEHOT[agent], dtype=np.int8)
 
-        return {"observation": masked, "action_mask": mask,
-                "role_id": role_id}
+        return {"observation": masked, "action_mask": mask, "role_id": role_id}
 
     def state(self):
         """Rich global state for centralized critics (MAPPO) / QMIX mixing.
@@ -887,11 +998,19 @@ class HeistEnv(ParallelEnv):
         Concatenates scalar phase indicators, the full grid, all agent
         positions, all guard positions, and neutralization timers.
         """
-        parts = [np.array([
-            self.current_step, self.alarm, int(self.terminal_disabled),
-            int(self.loot_acquired), int(self.extraction_triggered),
-            self.extraction_countdown,
-        ], dtype=np.float32)]
+        parts = [
+            np.array(
+                [
+                    self.current_step,
+                    self.alarm,
+                    int(self.terminal_disabled),
+                    int(self.loot_acquired),
+                    int(self.extraction_triggered),
+                    self.extraction_countdown,
+                ],
+                dtype=np.float32,
+            )
+        ]
         parts.append(self.grid.astype(np.float32).ravel())
         for a in self.possible_agents:
             parts.append(np.array(self.agent_positions[a], dtype=np.float32))
@@ -905,8 +1024,14 @@ class HeistEnv(ParallelEnv):
     # ------------------------------------------------------------------
     def _render_ansi(self):
         map_dict = {
-            EMPTY: " ", WALL: "#", TERMINAL: "T", LOOT: "$",
-            EXTRACT: "@", GUARD: "G", CAMERA: "C", DOOR: "D",
+            EMPTY: " ",
+            WALL: "#",
+            TERMINAL: "T",
+            LOOT: "$",
+            EXTRACT: "@",
+            GUARD: "G",
+            CAMERA: "C",
+            DOOR: "D",
         }
         v_map = np.vectorize(map_dict.get, otypes=[str])
         char_grid = v_map(self.grid).copy()
@@ -917,10 +1042,12 @@ class HeistEnv(ParallelEnv):
             pos = self.agent_positions[agent]
             char_grid[pos[0], pos[1]] = AGENT_CHAR[agent]
         lines = ["".join(row) for row in char_grid]
-        status = (f"step={self.current_step} alarm={self.alarm:.1f}/100 "
-                  f"terminal={'off' if self.terminal_disabled else 'on'} "
-                  f"loot={'yes' if self.loot_acquired else 'no'} "
-                  f"extract={'calling' if self.extraction_triggered else 'idle'}")
+        status = (
+            f"step={self.current_step} alarm={self.alarm:.1f}/100 "
+            f"terminal={'off' if self.terminal_disabled else 'on'} "
+            f"loot={'yes' if self.loot_acquired else 'no'} "
+            f"extract={'calling' if self.extraction_triggered else 'idle'}"
+        )
         # REV-9: pending alarm event count
         if self._pending_events:
             status += f" pending_events={len(self._pending_events)}"

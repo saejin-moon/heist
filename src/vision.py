@@ -17,7 +17,8 @@ camera_exposure : which cameras see which agents (vectorized over agents)
 
 import numpy as np
 from numba import njit
-from constants import WALL, DOOR
+
+from constants import DOOR, WALL
 
 
 @njit(cache=True)
@@ -96,8 +97,9 @@ def line_is_clear(grid, r0, c0, r1, c1, wall_val, door_val):
             return False
 
 
-def camera_exposure(grid, camera_positions, agent_positions,
-                    wall_val=WALL, door_val=DOOR, max_range=12):
+def camera_exposure(
+    grid, camera_positions, agent_positions, wall_val=WALL, door_val=DOOR, max_range=12
+):
     """Return a boolean matrix [n_cameras, n_agents] indicating which cameras
     currently have a clear line of sight to which agents, restricted to
     `max_range` Manhattan distance.  Thin Python wrapper around the

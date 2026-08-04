@@ -14,8 +14,15 @@ up to the full 50x50, guard/camera-rich benchmark.
 """
 
 import numpy as np
+
 from constants import (
-    EMPTY, WALL, TERMINAL, LOOT, EXTRACT, CAMERA, DOOR,
+    CAMERA,
+    DOOR,
+    EMPTY,
+    EXTRACT,
+    LOOT,
+    TERMINAL,
+    WALL,
 )
 
 
@@ -50,7 +57,7 @@ def generate_procedural_map(
         rw = rng.integers(4, min(9, w - 2))
         rr = rng.integers(1, h - rh - 1)
         rc = rng.integers(1, w - rw - 1)
-        grid[rr:rr + rh, rc:rc + rw] = EMPTY
+        grid[rr : rr + rh, rc : rc + rw] = EMPTY
         room_rects.append((rr, rc, rh, rw))
 
     # --- connect rooms with L-shaped corridors ------------------------------
@@ -76,7 +83,7 @@ def generate_procedural_map(
     all_empty = np.argwhere(grid == EMPTY)
     # classify which empty tiles belong to a room vs corridor
     room_set: set[tuple[int, int]] = set()
-    for (rr, rc, rh, rw) in room_rects:
+    for rr, rc, rh, rw in room_rects:
         for r in range(rr, rr + rh):
             for c in range(rc, rc + rw):
                 room_set.add((r, c))

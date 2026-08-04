@@ -6,22 +6,23 @@ mixing network forward/backward pass, and one full TD gradient step.
 Run with:  uv run python src/test_qmix_smoke.py
 """
 
-import numpy as np
 import torch
 
 from env import HeistEnv
-from model import QNetwork, QMixMixing
+from model import QMixMixing, QNetwork
 from train_qmix import ReplayBuffer, select_actions
 
 
 def main():
-    env = HeistEnv({
-        "map_size": (11, 11),
-        "guard_count": 0,
-        "camera_count": 0,
-        "door_count": 0,
-        "max_steps": 60,
-    })
+    env = HeistEnv(
+        {
+            "map_size": (11, 11),
+            "guard_count": 0,
+            "camera_count": 0,
+            "door_count": 0,
+            "max_steps": 60,
+        }
+    )
     obs, _ = env.reset(seed=0)
     state_dim = env.state().shape[0]
 
@@ -41,8 +42,16 @@ def main():
         acts = select_actions(env, obs, q, epsilon=0.5, device="cpu")
         nobs, rewards, terms, truncs, _ = env.step(acts)
         done = bool(any(terms.values()) or any(truncs.values()))
-        buf.push(obs, acts, rewards, any(terms.values()), any(truncs.values()),
-                 env.state(), nobs, env.state())
+        buf.push(
+            obs,
+            acts,
+            rewards,
+            any(terms.values()),
+            any(truncs.values()),
+            env.state(),
+            nobs,
+            env.state(),
+        )
         obs = nobs
         if done:
             obs, _ = env.reset(seed=i)
@@ -57,8 +66,11 @@ def main():
     batch = buf.sample(32)
     qv = []
     for a in env.agents:
-        qa = q[a](batch["obs"][a], batch["role"][a]) \
-              .gather(1, batch["actions"][a].unsqueeze(1)).squeeze(1)
+        qa = (
+            q[a](batch["obs"][a], batch["role"][a])
+            .gather(1, batch["actions"][a].unsqueeze(1))
+            .squeeze(1)
+        )
         qv.append(qa)
     qv = torch.stack(qv, dim=1)
     q_tot = mixing(qv, batch["states"])
@@ -71,7 +83,9 @@ def main():
             tqv.append(m.max(dim=1).values)
         tqv = torch.stack(tqv, dim=1)
         q_tot_target = tmix(tqv, batch["next_states"])
-        rewards = torch.stack([batch["rewards"][a] for a in env.agents], dim=1).mean(dim=1)
+        rewards = torch.stack([batch["rewards"][a] for a in env.agents], dim=1).mean(
+            dim=1
+        )
         # REV-3: bootstrap uses terminations only; truncations keep the target
         # from the stored (terminal) next state.
         y = rewards + 0.99 * (1 - batch["terminated"]) * q_tot_target

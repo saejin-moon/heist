@@ -23,6 +23,7 @@ CommAgent     : actor-critic that consumes TarMAC aggregated messages
 """
 
 import math
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -34,7 +35,7 @@ from constants import N_AGENTS
 LOCAL_INPUT_DIM = 25 + N_AGENTS  # 29
 
 # TarMAC communication dimensions (Phase B)
-COMM_HIDDEN_DIM = 64   # shared encoder dim for message / query
+COMM_HIDDEN_DIM = 64  # shared encoder dim for message / query
 COMM_MESSAGE_DIM = 32  # per-agent message vector length
 # Comm agent input: obs (25) + role (4) + attended message (32) = 61
 COMM_INPUT_DIM = LOCAL_INPUT_DIM + COMM_MESSAGE_DIM  # 61
@@ -43,7 +44,9 @@ ACTION_DIM = 6
 HIDDEN_DIM = 64
 
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+def layer_init(layer, std=None, bias_const=0.0):
+    if std is None:
+        std = np.sqrt(2)
     torch.nn.init.orthogonal_(layer.weight, std)
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
@@ -128,8 +131,7 @@ class MappoAgent(nn.Module):
         return self.critic(state)
 
     def get_action_and_value(self, obs, role_id, action_mask, state, action=None):
-        x = torch.cat((torch.flatten(obs, start_dim=1).float(),
-                       role_id.float()), dim=1)
+        x = torch.cat((torch.flatten(obs, start_dim=1).float(), role_id.float()), dim=1)
         logits = self.actor(x)
         HUGE_NEG = torch.tensor(-1e9, device=logits.device)
         masked_logits = torch.where(action_mask == 1, logits, HUGE_NEG)
@@ -157,8 +159,7 @@ class QNetwork(nn.Module):
         )
 
     def forward(self, obs, role_id):
-        x = torch.cat((torch.flatten(obs, start_dim=1).float(),
-                       role_id.float()), dim=1)
+        x = torch.cat((torch.flatten(obs, start_dim=1).float(), role_id.float()), dim=1)
         return self.net(x)
 
 
@@ -178,18 +179,21 @@ class QMixMixing(nn.Module):
 
         # hypernetworks: state -> per-agent mixing weights
         self.hyper_w1 = nn.Sequential(
-            nn.Linear(state_dim, hyper_hidden), nn.ReLU(),
+            nn.Linear(state_dim, hyper_hidden),
+            nn.ReLU(),
             nn.Linear(hyper_hidden, embed_dim * n_agents),
         )
         # state -> scalar bias for first mixing layer
         self.hyper_b1 = nn.Linear(state_dim, embed_dim)
         # hypernetwork: state -> weights for second mixing layer
         self.hyper_w2 = nn.Sequential(
-            nn.Linear(state_dim, hyper_hidden), nn.ReLU(),
+            nn.Linear(state_dim, hyper_hidden),
+            nn.ReLU(),
             nn.Linear(hyper_hidden, embed_dim),
         )
         self.hyper_b2 = nn.Sequential(
-            nn.Linear(state_dim, hyper_hidden), nn.ReLU(),
+            nn.Linear(state_dim, hyper_hidden),
+            nn.ReLU(),
             nn.Linear(hyper_hidden, 1),
         )
 
@@ -235,18 +239,22 @@ class TarMACComm(nn.Module):
         self.message_dim = message_dim
         # sender: feature -> message
         self.key = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim), nn.Tanh(),
+            nn.Linear(in_dim, hidden_dim),
+            nn.Tanh(),
             nn.Linear(hidden_dim, message_dim),
         )
         # receiver: feature -> query
         self.query = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim), nn.Tanh(),
+            nn.Linear(in_dim, hidden_dim),
+            nn.Tanh(),
             nn.Linear(hidden_dim, message_dim),
         )
         # per-agent gate (sigmoid) controls message strength
         self.gate = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim), nn.Tanh(),
-            nn.Linear(hidden_dim, message_dim), nn.Sigmoid(),
+            nn.Linear(in_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, message_dim),
+            nn.Sigmoid(),
         )
         self.scale = math.sqrt(message_dim)
 
@@ -259,15 +267,15 @@ class TarMACComm(nn.Module):
             messages_gated: [batch, n_agents, message_dim]  (for diagnostics)
             attention: [batch, n_agents, n_agents]
         """
-        keys = self.key(features)           # [B, n, msg]
-        queries = self.query(features)      # [B, n, msg]
-        gates = self.gate(features)         # [B, n, msg]
+        keys = self.key(features)  # [B, n, msg]
+        queries = self.query(features)  # [B, n, msg]
+        gates = self.gate(features)  # [B, n, msg]
 
         # attention scores: [B, n, n]  (receiver x sender)
         scores = torch.bmm(queries, keys.transpose(1, 2)) / self.scale
         attention = torch.softmax(scores, dim=-1)
 
-        messages_gated = gates * keys        # [B, n, msg]
+        messages_gated = gates * keys  # [B, n, msg]
         # each receiver aggregates across all senders (including self)
         aggregated = torch.bmm(attention, messages_gated)  # [B, n, msg]
 
@@ -340,15 +348,16 @@ class CommAgent(nn.Module):
             features: [B, N_AGENTS, LOCAL_INPUT_DIM]
         """
         # stack per-agent obs: [n_agents, B, C, H, W] -> [B, n_agents, C*H*W]
-        flat = torch.stack([torch.flatten(o, start_dim=1).float()
-                            for o in obs_list], dim=1)  # [B, n, 25]
+        flat = torch.stack(
+            [torch.flatten(o, start_dim=1).float() for o in obs_list], dim=1
+        )  # [B, n, 25]
         roles = torch.stack([r.float() for r in role_list], dim=1)  # [B, n, 4]
         return torch.cat([flat, roles], dim=-1)  # [B, n, 29]
 
     def get_value(self, obs_list, role_list, state=None):
         features = self._joint_features(obs_list, role_list)  # [B, n, 29]
-        encoded = self.encoder(features)         # [B, n, hidden]
-        aggregated, _, _ = self.comm(encoded)    # [B, n, msg]
+        encoded = self.encoder(features)  # [B, n, hidden]
+        aggregated, _, _ = self.comm(encoded)  # [B, n, msg]
 
         if self.centralized and state is not None:
             return self.critic(state)
@@ -359,8 +368,9 @@ class CommAgent(nn.Module):
         # flatten for critic: [B*n, 61]
         return self.critic(x.view(B * n, -1)).view(B, n)
 
-    def get_action_and_value(self, obs_list, role_list, action_mask_list,
-                             state=None, action=None):
+    def get_action_and_value(
+        self, obs_list, role_list, action_mask_list, state=None, action=None
+    ):
         """
         Args:
             obs_list: list of [B, C, H, W] for n_agents
@@ -372,7 +382,7 @@ class CommAgent(nn.Module):
             actions, log_probs, entropy, values  (all appropriately shaped)
         """
         features = self._joint_features(obs_list, role_list)  # [B, n, 29]
-        encoded = self.encoder(features)         # [B, n, hidden]
+        encoded = self.encoder(features)  # [B, n, hidden]
         aggregated, messages_gated, attention = self.comm(encoded)
 
         # store for diagnostics
@@ -392,10 +402,7 @@ class CommAgent(nn.Module):
         masked_logits = torch.where(flat_mask == 1, logits, HUGE_NEG)
         probs = Categorical(logits=masked_logits)
 
-        if action is None:
-            actions = probs.sample().view(B, n)
-        else:
-            actions = action
+        actions = probs.sample().view(B, n) if action is None else action
         flat_actions = actions.view(B * n)
         log_probs = probs.log_prob(flat_actions).view(B, n)
         entropy = probs.entropy().view(B, n)
