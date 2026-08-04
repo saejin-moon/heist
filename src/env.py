@@ -37,8 +37,10 @@ from vision import (
     calculate_fov,
     camera_exposure,
     distance_to_nearest_target,
+    get_valid_moves,
     line_is_clear,
     next_step_from_distance,
+    pick_search_tile,
 )
 
 
@@ -264,6 +266,10 @@ class HeistEnv(ParallelEnv):
         self.current_step += 1
         rewards = {a: self.config["reward_time_bleed"] for a in self.agents}
 
+        # --- CAR Tracking: Capture pre-step masks & actors ---
+        old_masks = {a: self._action_mask(a) for a in self.agents}
+        interact_actors = [a for a in self.agents if actions.get(a) == INTERACT]
+
         # REV-9: fire any delayed alarms (neutralization notices) due this turn
         self._process_pending_events()
 
@@ -341,12 +347,26 @@ class HeistEnv(ParallelEnv):
         truncations = {
             a: bool(self.current_step >= self.config["max_steps"]) for a in self.agents
         }
+
+        # --- CAR Tracking: Detect affordance unlocks ---
+        new_masks = {a: self._action_mask(a) for a in self.agents}
+        expansion_occurred = False
+        for a in self.agents:
+            if old_masks[a][INTERACT] == 0 and new_masks[a][INTERACT] == 1:
+                expansion_occurred = True
+                break
+
         infos = {
-            a: {"alarm": self.alarm, "win": bool(win), "lose": bool(lose)}
+            a: {
+                "alarm": self.alarm,
+                "win": bool(win),
+                "lose": bool(lose),
+                "car_unlocked": (expansion_occurred and a in interact_actors),
+            }
             for a in self.agents
         }
 
-        observations = self._get_all_obs()
+        observations = self._get_all_obs(precomputed_masks=new_masks)
 
         # PettingZoo: once the episode is over, drop the agent handles
         if any(terminations.values()) or any(truncations.values()):
@@ -706,17 +726,21 @@ class HeistEnv(ParallelEnv):
     # Internals: guards and alarm
     # ------------------------------------------------------------------
     def _valid_moves(self, r, c):
-        moves = []
-        for dr, dc in ACTION_DELTAS.values():
-            if dr == 0 and dc == 0:
-                continue
-            nr, nc = r + dr, c + dc
-            if not (0 <= nr < self.map_h and 0 <= nc < self.map_w):
-                continue
-            tile = self.grid[nr, nc]
-            if tile != WALL and tile != DOOR:
-                moves.append((nr, nc))
-        return moves
+        moves = get_valid_moves(self.grid, r, c, WALL, DOOR)
+        return [(int(m[0]), int(m[1])) for m in moves]
+
+    def _pick_search_tile(self, center):
+        """REV-8: a random walkable tile within search_radius of `center`."""
+        r, c = pick_search_tile(
+            self.grid,
+            center[0],
+            center[1],
+            self.config["search_radius"],
+            WALL,
+            DOOR,
+            float(self.rng.random()),
+        )
+        return (int(r), int(c))
 
     def _move_guards(self):
         """REV-8 (REVISION_PLAN.md §7): per-guard Patrol/Search/Converge FSM.
@@ -809,22 +833,6 @@ class HeistEnv(ParallelEnv):
             if line_is_clear(self.grid, gr, gc, apos[0], apos[1], WALL, DOOR):
                 return apos
         return None
-
-    def _pick_search_tile(self, center):
-        """REV-8: a random walkable tile within search_radius of `center`."""
-        radius = self.config["search_radius"]
-        walkable = {EMPTY, LOOT, EXTRACT, TERMINAL}
-        candidates = []
-        for dr in range(-radius, radius + 1):
-            for dc in range(-radius, radius + 1):
-                nr, nc = center[0] + dr, center[1] + dc
-                if not (0 <= nr < self.map_h and 0 <= nc < self.map_w):
-                    continue
-                if self.grid[nr, nc] in walkable:
-                    candidates.append((nr, nc))
-        if not candidates:
-            return center
-        return candidates[int(self.rng.integers(len(candidates)))]
 
     def _bfs_next(self, gr, gc, target):
         """REV-8: BFS from (gr, gc) toward `target`, returning the first step.
@@ -944,7 +952,7 @@ class HeistEnv(ParallelEnv):
                     mask[:4] = 0
         return mask
 
-    def _get_all_obs(self):
+    def _get_all_obs(self, precomputed_masks=None):
         """Build all local observations from one dynamic-grid composition.
 
         The static map and explored mask are shared by every agent.  Drawing
@@ -979,10 +987,15 @@ class HeistEnv(ParallelEnv):
                 vpos[0] - pad : vpos[0] + pad + 1,
                 vpos[1] - pad : vpos[1] + pad + 1,
             ]
+            mask = (
+                precomputed_masks[agent]
+                if precomputed_masks is not None and agent in precomputed_masks
+                else self._action_mask(agent)
+            )
             observations[agent] = {
                 "observation": np.where(obs_explored, obs, FOG),
-                "action_mask": self._action_mask(agent),
-                "role_id": np.array(ROLE_ONEHOT[agent], dtype=np.int8),
+                "action_mask": mask,
+                "role_id": ROLE_ONEHOT_ARRAYS[agent],
             }
         return observations
 

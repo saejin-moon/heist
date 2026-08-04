@@ -54,7 +54,7 @@ class Args:
     ent_coef: float = 0.01
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
-    target_kl: float | None = None
+    car_coef: float = 0.0
     eval_every: int = 20
     eval_episodes: int = 20
     env_config: str = ""
@@ -82,6 +82,9 @@ def parse_args():
     p.add_argument("--vf-coef", type=float, default=Args.vf_coef)
     p.add_argument("--max-grad-norm", type=float, default=Args.max_grad_norm)
     p.add_argument("--target-kl", type=float, default=None)
+    p.add_argument(
+        "--car-coef", type=float, default=0.0, help="CAR intrinsic reward coefficient."
+    )
     p.add_argument("--eval-every", type=int, default=Args.eval_every)
     p.add_argument("--eval-episodes", type=int, default=Args.eval_episodes)
     p.add_argument("--env-config", type=str, default="")
@@ -90,7 +93,9 @@ def parse_args():
 
 def train(args: Args):
     run_name = f"{args.exp_name}_s{args.seed}"
+    os.makedirs(f"runs/{run_name}", exist_ok=True)
     writer = SummaryWriter(f"runs/{run_name}")
+
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n"
@@ -219,9 +224,23 @@ def train(args: Args):
             next_obs, rewards, terminations, truncations, infos = vec_env.step(
                 actions_dict
             )
+            # --- CAR: Counterfactual Affordance Reward ---
+            if getattr(args, "car_coef", 0.0) > 0.0:
+                with torch.no_grad():
+                    next_state_t = torch.as_tensor(vec_env.state, device=device)
+                    v_s_next = policy.get_value(next_state_t).squeeze(-1)
+                for env_idx in range(args.num_envs):
+                    for a in AGENTS:
+                        if infos[env_idx].get(a, {}).get("car_unlocked", False):
+                            bonus = args.car_coef * max(
+                                0.0, float(v_s_next[env_idx].item())
+                            )
+                            rewards[a][env_idx] += bonus
+
             next_terminations = torch.as_tensor(
                 terminations["scout"], device=device
             ).float()
+
             next_truncations = torch.as_tensor(
                 truncations["scout"], device=device
             ).float()

@@ -74,7 +74,20 @@ def parse_args():
         default=4096,
         help="Run message-outcome correlation diagnostic every N steps.",
     )
+    p.add_argument(
+        "--cir-coef",
+        type=float,
+        default=0.0,
+        help="Causal Influence Routing (CIR) coefficient.",
+    )
+    p.add_argument(
+        "--car-coef",
+        type=float,
+        default=0.0,
+        help="Counterfactual Affordance Reward (CAR) coefficient.",
+    )
     args = p.parse_args()
+
     if args.num_minibatches < 1:
         p.error("--num-minibatches must be positive")
     if args.num_steps * args.num_envs % args.num_minibatches:
@@ -104,7 +117,9 @@ if __name__ == "__main__":
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
+    os.makedirs(f"runs/{run_name}", exist_ok=True)
     writer = SummaryWriter(f"runs/{run_name}")
+
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n"
@@ -149,6 +164,7 @@ if __name__ == "__main__":
     buf_bootstrap = torch.zeros((args.num_steps, args.num_envs, n), device=device)
     # centralized critic consumes env.state() at every (step, env)
     buf_state = torch.zeros((args.num_steps, args.num_envs, state_dim), device=device)
+    buf_influence = torch.zeros((args.num_steps, args.num_envs, n, n), device=device)
 
     num_updates = args.total_steps // (args.num_steps * args.num_envs)
     print(f"num_updates: {num_updates}")
@@ -176,6 +192,11 @@ if __name__ == "__main__":
                     mask_list,
                     state=(state_t if args.centralized else None),
                 )
+                if args.cir_coef > 0.0:
+                    buf_influence[step] = policy.get_influence_matrix(
+                        obs_list, role_list
+                    )
+
             # actions/logprobs/values: [num_envs, n_agents]
 
             for i, _a in enumerate(AGENTS):
@@ -193,6 +214,27 @@ if __name__ == "__main__":
             next_obs, rewards, terminations, truncations, infos = vec_env.step(
                 actions_dict
             )
+
+            # --- CAR: Counterfactual Affordance Reward ---
+            if args.car_coef > 0.0:
+                with torch.no_grad():
+                    next_state_t = (
+                        torch.as_tensor(next_state, device=device)
+                        if args.centralized
+                        else None
+                    )
+                    next_obs_l, next_role_l, _ = _stack_obs(next_obs)
+                    v_s_next = policy.get_value(
+                        next_obs_l, next_role_l, state=next_state_t
+                    )  # [num_envs, n]
+                for env_idx in range(args.num_envs):
+                    for i, a in enumerate(AGENTS):
+                        if infos[env_idx].get(a, {}).get("car_unlocked", False):
+                            bonus = args.car_coef * max(
+                                0.0, float(v_s_next[env_idx, i].item())
+                            )
+                            rewards[a][env_idx] += bonus
+
             next_terminations = torch.as_tensor(
                 terminations["scout"], device=device
             ).float()
@@ -302,6 +344,14 @@ if __name__ == "__main__":
             args.gamma,
             args.gae_lambda,
         )
+
+        # --- CIR: Causal Influence Routing ---
+        if args.cir_coef > 0.0:
+            adv_t = stacked_advantages.permute(1, 2, 0)  # [steps, envs, n_agents]
+            routed_adv = torch.einsum("sten,ste->stn", buf_influence, adv_t)
+            adv_t_new = (1.0 - args.cir_coef) * adv_t + (args.cir_coef * routed_adv)
+            stacked_advantages = adv_t_new.permute(2, 0, 1)
+            stacked_returns = stacked_advantages + buf_values.permute(2, 0, 1)
 
         # ---------------- policy update ----------------
         # flatten to (T * num_envs * n_agents, ...) for minibatch SGD

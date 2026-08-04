@@ -126,7 +126,9 @@ def train(args: Args):
             monitor_gym=True,
             save_code=True,
         )
+    os.makedirs(f"runs/{run_name}", exist_ok=True)
     writer = SummaryWriter(f"runs/{run_name}")
+
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n"

@@ -19,27 +19,28 @@ def compute_gae(
 ):
     """Compute GAE for all agents together.
 
-    Inputs use ``[agents, time, env]`` layout.  Time is necessarily a
+    Inputs use ``[agents, time, env]`` layout. Time is necessarily a
     backwards recurrence, but the agent and environment dimensions are
     vectorized so a rollout no longer launches four independent GPU-op chains.
     """
     advantages = torch.zeros_like(rewards)
     last_gae = torch.zeros_like(next_values)
-    for step in range(rewards.shape[1] - 1, -1, -1):
-        if step == rewards.shape[1] - 1:
-            nonterminal = 1.0 - next_terminated
+    num_steps = rewards.shape[1]
+    for step in range(num_steps - 1, -1, -1):
+        if step == num_steps - 1:
             following_values = next_values
         else:
-            nonterminal = 1.0 - terminated[:, step + 1]
             following_values = torch.where(
-                truncated[:, step + 1].bool(),
-                bootstrap[:, step + 1],
+                truncated[:, step].bool(),
+                bootstrap[:, step],
                 values[:, step + 1],
             )
+        nonterminal = 1.0 - terminated[:, step]
+        gae_mask = (1.0 - terminated[:, step]) * (1.0 - truncated[:, step])
         delta = (
             rewards[:, step] + gamma * following_values * nonterminal - values[:, step]
         )
-        last_gae = delta + gamma * gae_lambda * nonterminal * last_gae
+        last_gae = delta + gamma * gae_lambda * gae_mask * last_gae
         advantages[:, step] = last_gae
     return advantages, advantages + values
 

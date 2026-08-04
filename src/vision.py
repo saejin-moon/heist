@@ -251,3 +251,53 @@ def camera_exposure(
                 continue
             exposure[i, j] = line_is_clear(grid, cr, cc, ar, ac, wall_val, door_val)
     return exposure
+
+
+@njit(cache=True)
+def pick_search_tile(grid, center_r, center_c, radius, wall_val, door_val, rand_val):
+    height, width = grid.shape
+    count = 0
+    for dr in range(-radius, radius + 1):
+        for dc in range(-radius, radius + 1):
+            nr, nc = center_r + dr, center_c + dc
+            if 0 <= nr < height and 0 <= nc < width:
+                tile = grid[nr, nc]
+                if tile != wall_val and tile != door_val:
+                    count += 1
+    if count == 0:
+        return center_r, center_c
+    idx = int(rand_val * count)
+    curr = 0
+    for dr in range(-radius, radius + 1):
+        for dc in range(-radius, radius + 1):
+            nr, nc = center_r + dr, center_c + dc
+            if 0 <= nr < height and 0 <= nc < width:
+                tile = grid[nr, nc]
+                if tile != wall_val and tile != door_val:
+                    if curr == idx:
+                        return nr, nc
+                    curr += 1
+    return center_r, center_c
+
+
+@njit(cache=True)
+def get_valid_moves(grid, r, c, wall_val, door_val):
+    height, width = grid.shape
+    moves = np.empty((4, 2), dtype=np.int32)
+    count = 0
+    for direction in range(4):
+        if direction == 0:
+            nr, nc = r - 1, c
+        elif direction == 1:
+            nr, nc = r + 1, c
+        elif direction == 2:
+            nr, nc = r, c - 1
+        else:
+            nr, nc = r, c + 1
+        if 0 <= nr < height and 0 <= nc < width:
+            tile = grid[nr, nc]
+            if tile != wall_val and tile != door_val:
+                moves[count, 0] = nr
+                moves[count, 1] = nc
+                count += 1
+    return moves[:count]

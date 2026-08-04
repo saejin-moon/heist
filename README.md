@@ -17,6 +17,12 @@ status (e.g., "terminal hacked") through learned TarMAC-style messages; a
 centralized critic (`env.state()`) remains available for MAPPO/QMIX value
 estimation but is not part of the per-agent observation dict.
 
+## Novel Credit Assignment Algorithms
+HEIST introduces two novel, theoretically grounded MARL credit-assignment algorithms designed to conquer Causal Credit Dilution:
+
+1. **CIR (Causal Influence Routing):** Counterfactual message ablation in the TarMAC communication channel (`src/model.py:CommAgent.get_influence_matrix`). By measuring the absolute change in a receiver's value function when muting each sender, GAE advantage vectors are causally routed from receivers back to the senders who enabled them (`--cir-coef`).
+2. **CAR (Counterfactual Affordance Reward):** Detects when an agent's `INTERACT` action flips a teammate's `action_mask` from 0 to 1 (`src/env.py:HeistEnv.step`). Unlocking a causal affordance awards an intrinsic reward proportional to the Centralized Critic's valuation of the new state (`--car-coef`).
+
 ## Adversary and Loss Conditions
 To prevent the environment from degrading into a trivial pathfinding task, HEIST introduces two opposing adversarial pressures. First, Rule-Based Adversaries (Guards) execute dynamic random-walk patrols. If a guard's Manhattan distance to any agent closes to $\le 1$, a global alarm triggers, terminating the episode with a catastrophic `-10.0` shared reward. Second, a constant time penalty (`-0.01` per step) acts as a baseline bleed. This dual-pressure system prevents policy collapse: agents cannot safely sprint blindly to objectives, nor can they exploit a "hide-and-wait" policy to avoid the guards entirely.
 
@@ -37,119 +43,80 @@ Always invoke commands through `uv run` (never `source activate`):
 ```bash
 uv run python src/manual_control.py                              # human play
 uv run python -m pettingzoo.test.parallel_test -e src.dummy:make_env  # API smoke
-uv run pytest                                                     # 11 unit/mechanics smokes
+uv run pytest                                                     # 18 unit/mechanics smokes
 uv run ruff check                                                 # lint (E/F/W/I/UP/B/SIM)
 uv run ruff format --check                                        # formatting
+uv run python tools/status.py                                    # active training status
 ```
 
-## Full research experiment (300k, stage-0)
+## Quick Start & Research Campaign (`train.zsh`)
 
-> **Status: SETUP ONLY. This campaign is not scheduled to run yet.** The
-> intent is to launch it later on a dedicated machine. Do not run the
-> end-to-end campaign on this box; only short trainer smokes are expected
-> during setup. See `FUTURE_PLANS.md §1` and the banner at the top of
-> `experiment_stage0_300k.sh`.
+The entrypoint script `train.zsh` provisions dependencies, verifies GPU CUDA availability, runs all validation gates, and executes multi-stage campaigns.
 
-### 1. Set up the environment on the target machine
 ```bash
-# requires: uv, a CUDA-capable GPU, ~4-8h of wall time for all 12 runs
-# one-shot alternative (installs system pkgs + uv, clones, syncs, gates,
-# smokes, then runs the campaign; --daemon backgrounds it):
-#   zsh train-stage-0.zsh [--daemon] [--eval]
-git clone https://github.com/saejin-moon/heist.git
-cd heist
-uv sync --locked        # install pinned deps from uv.lock (fails if stale)
-uv run pytest -q        # 11 unit/mechanics smokes must pass
-uv run ruff check       # lint must pass
-```
-Verify the GPU is visible to torch:
-```bash
-uv run python -c "import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO CUDA')"
+# 1. Run a 15-second sample test across all algorithm variants:
+./train.zsh --sample
+
+# 2. Run custom coefficient tuning (20,480 steps on Stage 0):
+./train.zsh --steps 20480 --cir-coef 0.3 --car-coef 0.4
+
+# 3. Launch full campaign in background (daemon mode):
+./train.zsh --num-stages 5 --daemon
+
+# 4. Monitor live training status & log tailing:
+uv run python tools/status.py --watch
 ```
 
-### 1b. Estimate wall-clock time on THIS machine first
-Before launching anything, measure real throughput and get campaign
-estimates (env speed per stage, rollout overhead, end-to-end trainer
-steps/s for each algo, and extrapolated hours for the full 1M grid):
+### Wall-Clock Assessment (`assess-time.zsh`)
+Measure exact CUDA throughput and extrapolated wall-clock times for your hardware:
 ```bash
-./assess-time.zsh                    # full assessment (~5-10 min)
-./assess-time.zsh --trainer-steps 10240   # faster, less precise
+./assess-time.zsh
 ```
-Notes: the trainer logs `sps` in rollout-iterations/s (each iteration steps
-8 envs) -- multiply by `num_envs` for env-steps/s.  This is why campaign
-estimates here are ~8x smaller than the earlier pre-correction guesses.
-
-### 2. Launch the campaign
-```bash
-# Sequential driver: IPPO, MAPPO, QMIX, comm at 300k steps on stage-0
-# (seeds 0-2). Logs to log/experiment_stage0_300k.log. Resumable: reruns
-# skip any <algo>_s<seed> that already has a checkpoint in checkpoints/.
-mkdir -p log           # log/ is gitignored, not present on a fresh clone
-nohup bash experiment_stage0_300k.sh > log/launch.out 2>&1 &
-
-# watch progress
-tail -f log/experiment_stage0_300k.log
-```
-Each trainer logs to TensorBoard under `runs/<algo>_s<seed>/`:
-```bash
-uv run tensorboard --logdir runs --port 6006
-```
-
-### 3. Evaluate after the campaign finishes
-```bash
-# G4 comparison: win rate + CAI/counterfactual (IPPO/MAPPO/QMIX) and
-# message-outcome correlation (comm), 60 episodes, seed 555.
-# Writes results/stage0_300k_comparison.json
-uv run python src/eval_stage0_300k.py
-```
-Refresh `PLAN.md` "Baseline Validation Campaign" and `results/README.md`
-with the resulting tables.
+*Current benchmark throughput on CUDA (NVIDIA RTX 3000 Ada): MAPPO/Comm ~1080 steps/s, IPPO ~870 steps/s, QMIX ~500 steps/s. Full 5-stage campaign completes in ~32 hours.*
 
 ## Project Layout
 ```
-PERFORMANCE.md      measured bottlenecks + prioritized optimization plan
-train-stage-0.zsh   one-shot provision + run for the target machine
+train.zsh           one-shot provision, setup, and campaign runner
 assess-time.zsh     throughput benchmark + wall-clock estimate wrapper
-tools/assess_time.py  the benchmark itself (env, rollout, trainer sps, extrapolation)
+tools/assess_time.py  the benchmark itself (env, rollout, trainer sps)
+tools/status.py     live training status monitor and log tailer
 src/constants.py    reward/alarm constants, ROLE_ACTIONS, tile palette
 src/map_gen.py      procedural map generation (rooms, doors, cameras, spawns)
 src/vision.py       numba-JIT Bresenham line-of-sight + camera exposure
-src/env.py          HeistEnv, the PettingZoo ParallelEnv (causal gating)
-src/vec_env.py      vectorized env wrapper for PPO-style rollouts
-src/model.py        HeistAgent (PPO actor-critic), MappoAgent, QMixNet + mixer
-src/train_ippo.py   independent PPO baseline (--shared for param sharing)
-src/train_mappo.py  shared actor + centralized critic baseline
-src/train_qmix.py   value-decomposition baseline (replay buffer + monotonic mixer)
-src/train_comm.py   REV-7 learned-communication baseline (TarMAC messages)
+src/env.py          HeistEnv, PettingZoo ParallelEnv (causal gating & CAR tracking)
+src/vec_env.py      vectorized env wrapper for PPO/QMIX rollouts
+src/model.py        HeistAgent, CommAgent (CIR influence matrix), QMixNet + mixer
+src/train_ippo.py   independent PPO baseline
+src/train_mappo.py  shared actor + centralized critic + CAR intrinsic reward
+src/train_qmix.py   value-decomposition baseline (batched GPU action selection)
+src/train_comm.py   TarMAC communication baseline + CIR advantage routing
 src/evaluate.py     win rate, Credit Attribution Index, counterfactual importance
 src/curriculum.py   5 staged configs from 11x11 (no security) to 50x50 (full)
-src/dummy.py        random-policy smoke-test entrypoint
-src/test_qmix_smoke.py  standalone QMIX logic test
+src/test_cir_smoke.py CIR influence matrix & routing unit test
+src/test_car_smoke.py CAR affordance unlock & info pass-through unit test
 ```
 
 ## Training
 
 All trainers are CleanRL-style scripts with TensorBoard logging, checkpointing
-to `src/runs/<algo>_s<seed>/`, and `--env-config` taking a **JSON string**
-(comma-separated key=value breaks on tuple values like map_size).
+to `checkpoints/<run_name>/`, and `--env-config` taking a **JSON string**.
 
 ```bash
-# Independent PPO, tiny stage-0 map, smoke test (~1 min on CUDA)
-uv run python src/train_ippo.py --total-timesteps 2048 --num-envs 2 --num-steps 128 \
-  --eval-every 2 --eval-episodes 2 \
-  --env-config '{"map_size": [11, 11], "num_rooms_range": [1, 2], "guard_count": 0, "camera_count": 0, "door_count": 0, "max_steps": 60}'
+# Independent PPO, tiny stage-0 map
+uv run python src/train_ippo.py --total-timesteps 20480 --num-envs 8 --num-steps 256
 
-# MAPPO (shared actor, centralized critic)
-uv run python src/train_mappo.py --total-timesteps 200000 --num-envs 8 --num-steps 256 \
-  --env-config '{"map_size": [15, 15], "guard_count": 2, "camera_count": 0, "max_steps": 120}'
+# MAPPO + CAR (Counterfactual Affordance Rewards)
+uv run python src/train_mappo.py --total-timesteps 200000 --num-envs 8 --num-steps 256 --car-coef 0.5
 
-# QMIX (off-policy; use --no-cuda for quick CPU smoke tests to skip triton JIT warmup)
-uv run python src/train_qmix.py --total-steps 100000 --no-cuda \
-  --env-config '{"map_size": [15, 15], "guard_count": 0, "camera_count": 0, "max_steps": 120}'
+# TarMAC Comm + CIR (Causal Influence Routing) + CAR
+uv run python src/train_comm.py --total-steps 200000 --num-envs 8 --num-steps 256 --cir-coef 0.5 --car-coef 0.5
 
-# Comm (REV-7): shared TarMAC policy with learned messages
-uv run python src/train_comm.py --total-steps 100000 \
-  --env-config '{"map_size": [11, 11], "guard_count": 0, "camera_count": 0, "max_steps": 120}'
+# QMIX (off-policy value-decomposition)
+uv run python src/train_qmix.py --total-steps 200000 --train-freq 4
+```
+
+Common flags: `--no-cuda`, `--no-save-model`, `--seed`, `--eval-every`,
+`--eval-episodes`, `--anneal-lr`, `--cir-coef`, `--car-coef`.
 
 # Curriculum: stage-0 config up to the full 50x50 benchmark
 uv run python -c "from curriculum import CURRICULUM; [print(s) for s in CURRICULUM]"

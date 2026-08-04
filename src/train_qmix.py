@@ -179,32 +179,47 @@ class ReplayBuffer:
 def select_actions(env, obs, q_nets, epsilon, device):
     """Epsilon-greedy joint action selection respecting action masks."""
     actions = {}
-    for a in AGENTS:
+    obs_batch = torch.tensor(
+        np.stack([obs[a]["observation"] for a in AGENTS]),
+        dtype=torch.float32,
+        device=device,
+    )
+    role_batch = torch.tensor(
+        np.stack([obs[a]["role_id"] for a in AGENTS]),
+        dtype=torch.float32,
+        device=device,
+    )
+    mask_batch = torch.tensor(
+        np.stack([obs[a]["action_mask"] for a in AGENTS]),
+        dtype=torch.long,
+        device=device,
+    )
+    with torch.no_grad():
+        q_list = []
+        for i, a in enumerate(AGENTS):
+            q_i = q_nets[a](obs_batch[i : i + 1], role_batch[i : i + 1])
+            q_list.append(q_i.squeeze(0))
+        q_all = torch.stack(q_list, dim=0)  # [n_agents, ACTION_DIM]
+        q_masked = torch.where(mask_batch == 1, q_all, torch.full_like(q_all, -1e9))
+        greedy_actions = q_masked.argmax(dim=-1).cpu().numpy()
+
+    for i, a in enumerate(AGENTS):
         mask = obs[a]["action_mask"]
-        legal = np.argwhere(mask == 1).ravel()
+        legal = np.flatnonzero(mask)
         if len(legal) == 0:
             actions[a] = int(np.random.randint(ACTION_DIM))
-            continue
-        if np.random.rand() < epsilon:
+        elif np.random.rand() < epsilon:
             actions[a] = int(np.random.choice(legal))
-            continue
-        obs_t = torch.tensor(
-            obs[a]["observation"], dtype=torch.float32, device=device
-        ).unsqueeze(0)
-        role_t = torch.tensor(
-            obs[a]["role_id"], dtype=torch.float32, device=device
-        ).unsqueeze(0)
-        with torch.no_grad():
-            q = q_nets[a](obs_t, role_t).squeeze(0)
-        q = q.cpu().numpy()
-        q[~mask.astype(bool)] = -1e9
-        actions[a] = int(np.argmax(q))
+        else:
+            actions[a] = int(greedy_actions[i])
     return actions
 
 
 def train(args: Args):
     run_name = f"{args.exp_name}_s{args.seed}"
+    os.makedirs(f"runs/{run_name}", exist_ok=True)
     writer = SummaryWriter(f"runs/{run_name}")
+
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n"

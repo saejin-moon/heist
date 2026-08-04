@@ -226,6 +226,15 @@ def vec_rollout_bench(steps: int = 20, num_envs: int = 8) -> list[dict]:
 
 def run_trainer(algo: str, steps: int) -> float:
     """Run a short real training run; return measured steps/s."""
+    run_dir = REPO_ROOT / "runs" / f"assess_{algo}_s999"
+    ckpt_dir = REPO_ROOT / "checkpoints" / f"assess_{algo}_s999"
+    if run_dir.is_dir():
+        shutil.rmtree(run_dir, ignore_errors=True)
+    if ckpt_dir.is_dir():
+        shutil.rmtree(ckpt_dir, ignore_errors=True)
+    os.makedirs(run_dir, exist_ok=True)
+    os.makedirs(ckpt_dir, exist_ok=True)
+
     spec = ALGOS[algo]
     cfg = json.dumps(CURRICULUM[0])
     cmd = [
@@ -253,32 +262,47 @@ def run_trainer(algo: str, steps: int) -> float:
         print(f"    ! {algo} benchmark FAILED (exit {proc.returncode}):\n{tail}")
         return 0.0
     sps = steps / wall
-    # clean up artifacts the benchmark produced (never the real campaign's)
-    run_dir = REPO_ROOT / "runs" / f"assess_{algo}_s999"
-    if run_dir.is_dir():
-        shutil.rmtree(run_dir, ignore_errors=True)
-    ckpt_dir = REPO_ROOT / "checkpoints" / f"assess_{algo}_s999"
-    if ckpt_dir.is_dir():
-        shutil.rmtree(ckpt_dir, ignore_errors=True)
     return sps
 
 
 def estimate_trainer_sps(
-    measured: dict[str, float], env_rows: list[dict]
+    measured: dict[str, float],
+    env_rows: list[dict],
+    vec_rows: list[dict] | None = None,
 ) -> dict[str, list[float]]:
-    """Model per-stage sps per algo from measured stage-0 sps + env scaling."""
-    env_ms = {r["stage"]: r["random_ms"] for r in env_rows}
+    """Model per-stage sps per algo from measured stage-0 sps + vec-rollout scaling."""
     out: dict[str, list[float]] = {}
     for algo, sps0 in measured.items():
-        vec = ALGOS[algo]["vec"]
-        mult = 8.0 if vec else 1.0
+        if sps0 <= 0:
+            out[algo] = [0.0] * len(env_rows)
+            continue
+
         per_step0 = 1.0 / sps0
-        const = per_step0 - mult * env_ms[0] / 1e3  # non-env overhead per step
-        est = []
-        for s in range(len(env_rows)):
-            per_step_s = mult * env_ms[s] / 1e3 + const
-            est.append(1.0 / per_step_s if per_step_s > 0 else 0.0)
-        out[algo] = est
+        vec = ALGOS[algo]["vec"]
+
+        if vec_rows and len(vec_rows) == len(env_rows):
+            base_vec_ms = vec_rows[0]["vec_step_ms"]
+            est = []
+            for s in range(len(env_rows)):
+                stage_vec_ms = vec_rows[s]["vec_step_ms"]
+                non_rollout_s = max(
+                    0.0,
+                    per_step0 - (base_vec_ms / 1e3 if vec else base_vec_ms / (8 * 1e3)),
+                )
+                stage_step_s = (
+                    stage_vec_ms / 1e3 if vec else stage_vec_ms / (8 * 1e3)
+                ) + non_rollout_s
+                est.append(1.0 / stage_step_s if stage_step_s > 0 else 0.0)
+            out[algo] = est
+        else:
+            env_ms = {r["stage"]: r["random_ms"] for r in env_rows}
+            mult = 8.0 if vec else 1.0
+            const = max(0.0, per_step0 - mult * env_ms[0] / 1e3)
+            est = []
+            for s in range(len(env_rows)):
+                per_step_s = mult * env_ms[s] / 1e3 + const
+                est.append(1.0 / per_step_s if per_step_s > 0 else 0.0)
+            out[algo] = est
     return out
 
 
@@ -291,8 +315,8 @@ def main() -> int:
     ap.add_argument(
         "--trainer-steps",
         type=int,
-        default=20_480,
-        help="steps per trainer benchmark run (default 20480 = 10 updates)",
+        default=10_240,
+        help="steps per trainer benchmark run (default 10240 = 5 updates)",
     )
     ap.add_argument(
         "--env-bench-steps",
@@ -372,7 +396,8 @@ def main() -> int:
         print("    ! all trainer benchmarks failed; cannot extrapolate.")
         return 1
 
-    est = estimate_trainer_sps(measured, env_rows)
+    vec_rows_list = vec_rows if not args.skip_vec else None
+    est = estimate_trainer_sps(measured, env_rows, vec_rows_list)
 
     print(
         "\n[5] Estimated per-stage steps/s (stage-0 measured, 1-4 scaled by env cost)"

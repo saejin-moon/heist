@@ -12,7 +12,10 @@ revealed the tile, which is what makes the environment partially observable
 in a way that is causally gated by upstream behavior.
 """
 
+import numpy as np
+
 # ---------------------------------------------------------------------------
+
 # Tile types (values observed by agents / used by the renderer)
 # ---------------------------------------------------------------------------
 FOG = -1  # tile hidden behind fog of war
@@ -58,13 +61,14 @@ AGENT_CHAR = {"scout": "S", "hacker": "H", "muscle": "M", "extractor": "E"}
 
 # Role identity: a one-hot vector emitted as its own observation key so that
 # shared policies (IPPO --shared, MAPPO, and the learned-communication agents)
-# can distinguish which role the network is currently controlling.  This
-# survives the REV-7 removal of global_state.
 N_AGENTS = len(AGENTS)
+
 ROLE_IDS = {a: i for i, a in enumerate(AGENTS)}
 ROLE_ONEHOT = {
     a: [1 if i == j else 0 for j in range(N_AGENTS)] for i, a in enumerate(AGENTS)
 }
+ROLE_ONEHOT_ARRAYS = {a: np.array(ROLE_ONEHOT[a], dtype=np.int8) for a in AGENTS}
+
 
 # What each agent's INTERACT (action 5) does.  This is the per-role
 # specialization that replaces the monolithic "interact" of the prototype.

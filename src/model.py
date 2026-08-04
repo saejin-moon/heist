@@ -366,6 +366,38 @@ class CommAgent(nn.Module):
         # flatten for critic: [B*n, 61]
         return self.critic(x.view(B * n, -1)).view(B, n)
 
+    def get_influence_matrix(self, obs_list, role_list):
+        """Calculates the Causal Influence Routing (CIR) matrix via Counterfactual Message Ablation."""
+        features = self._joint_features(obs_list, role_list)
+        encoded = self.encoder(features)
+        aggregated, messages_gated, attention = self.comm(encoded)
+
+        B, n, _ = features.shape
+        x_base = torch.cat([features, aggregated], dim=-1)
+        base_values = self.critic(x_base.view(B * n, -1)).view(B, n)
+
+        influence_matrix = torch.zeros((B, n, n), device=features.device)
+
+        for sender in range(n):
+            alt_aggregated = aggregated.clone()
+            msg_s = messages_gated[:, sender : sender + 1, :]  # [B, 1, dim]
+            att_s = attention[:, :, sender : sender + 1]  # [B, n, 1]
+
+            alt_aggregated -= att_s * msg_s
+
+            x_alt = torch.cat([features, alt_aggregated], dim=-1)
+            alt_values = self.critic(x_alt.view(B * n, -1)).view(B, n)
+
+            influence_matrix[:, :, sender] = torch.abs(base_values - alt_values)
+
+        mask = torch.eye(n, device=features.device).bool()
+        influence_matrix.masked_fill_(mask, 0.0)
+
+        row_sums = influence_matrix.sum(dim=-1, keepdim=True) + 1e-8
+        routing_weights = influence_matrix / row_sums
+
+        return routing_weights
+
     def get_action_and_value(
         self, obs_list, role_list, action_mask_list, state=None, action=None
     ):

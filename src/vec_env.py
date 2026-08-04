@@ -31,28 +31,33 @@ class VectorEnv:
 
     # ------------------------------------------------------------------
     def _pack(self, obs_list):
+        n_envs = len(obs_list)
+        obs_shape = obs_list[0]["scout"]["observation"].shape
+        mask_shape = obs_list[0]["scout"]["action_mask"].shape
+        role_shape = obs_list[0]["scout"]["role_id"].shape
+
+        n_agents = len(AGENTS)
+        obs_array = np.empty((n_agents, n_envs) + obs_shape, dtype=np.int32)
+        mask_array = np.empty((n_agents, n_envs) + mask_shape, dtype=np.int8)
+        role_array = np.empty((n_agents, n_envs) + role_shape, dtype=np.int8)
+
+        for i, a in enumerate(AGENTS):
+            for j, o in enumerate(obs_list):
+                obs_array[i, j] = o[a]["observation"]
+                mask_array[i, j] = o[a]["action_mask"]
+                role_array[i, j] = o[a]["role_id"]
+
         packed = {}
-        observations, masks, roles = [], [], []
-        for a in AGENTS:
-            observation = np.stack([o[a]["observation"] for o in obs_list])
-            action_mask = np.stack([o[a]["action_mask"] for o in obs_list])
-            role_id = np.stack([o[a]["role_id"] for o in obs_list])
+        for i, a in enumerate(AGENTS):
             packed[a] = {
-                "observation": observation,
-                "action_mask": action_mask,
-                # REV-7 (REVISION_PLAN.md §6): global_state deleted from the
-                # per-agent obs contract; central critics still get env.state().
-                "role_id": role_id,
+                "observation": obs_array[i],
+                "action_mask": mask_array[i],
+                "role_id": role_array[i],
             }
-            observations.append(observation)
-            masks.append(action_mask)
-            roles.append(role_id)
-        # PPO-family trainers consume this agent-major layout directly.  Keep
-        # the named-agent entries for evaluation and existing callers.
         packed["_stacked"] = {
-            "observation": np.stack(observations),
-            "action_mask": np.stack(masks),
-            "role_id": np.stack(roles),
+            "observation": obs_array,
+            "action_mask": mask_array,
+            "role_id": role_array,
         }
         return packed
 
@@ -98,6 +103,7 @@ class VectorEnv:
                 env.reset()
             acts = {a: int(actions[a][i]) for a in AGENTS}
             o, r, t, tr, inf = env.step(acts)
+            infos[i] = inf
             done = bool(any(t.values()) or any(tr.values()))
             for a in AGENTS:
                 rewards[a][i] = r[a]
@@ -108,6 +114,7 @@ class VectorEnv:
                 infos[i]["terminal_observation"] = self._pack([o])
                 infos[i]["terminal_state"] = env.state()
                 o, _ = env.reset()
+
             next_obs_list.append(o)
             next_states[i] = env.state()
 
