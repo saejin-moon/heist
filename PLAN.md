@@ -160,6 +160,18 @@ Before trusting CAI/counterfactual numbers, we validated that the training basel
 | v4 IPPO/MAPPO | + objective bearings (gs 4->10), + PBRS converge bonus | 0.000 | terminal 75% / loot 62% / extraction 62% | ~0 |
 | v5 IPPO (300k) | more compute on v4 config | 0.03-0.10 | terminal 97% / loot 87% / extraction 87% | 0.7-1.5 |
 | v5 MAPPO (300k) | more compute on v4 config | 0.067 | terminal 67% / loot 42% / extraction 42% | 0.59 |
+| v5 QMIX (300k) | default 500k eps-anneal | 0.000 | terminal 83% / loot 0% / extraction 0% | -0.28 |
+| v5 QMIX-a (300k) | + 200k eps-anneal (greedy by 200k) | 0.000 | terminal 47% / loot 0% / extraction 0% | -0.50 |
+
+**Three-way baseline result (stage-0, 60-episode re-eval, seed 555):**
+
+| Algo | Win rate | terminal / loot / extraction | CAI (s/h/m/e) | Counterfactual |
+|---|---|---|---|---|
+| IPPO | 0.033 | 97% / 87% / 87% | +0.56 / +0.24 / +0.32 / +0.10 | scout/hacker/extractor strict, muscle nearly |
+| MAPPO | 0.067 | 67% / 42% / 42% | +0.84 / +0.35 / +0.76 / +0.38 | scout/hacker/extractor strict, muscle nearly |
+| QMIX | 0.000 | 83%/47% / 0% / 0% | 0 / 0 / 0 / 0 | all 0 (no baseline wins) |
+
+QMIX learns the first gate (terminal hack) but never the downstream chain (loot 0%, extraction 0%, win 0%), and this holds with a proper epsilon schedule annealed to 0.05 by step 200k. The value-decomposition baseline is the most strongly diluted: per-agent Q-functions receive zero credit-to-outcome correlation because the joint mixer only fires on the (never-reached) terminal win. This is the cleanest Causal Credit Dilution demonstration: the chain's downstream phases are invisible to QMIX's credit signal at this budget.
 
 **IPPO vs MAPPO contrast (v5, 60-episode re-eval, seed 555):**
 - IPPO completes the chain far more often (97%/87%/87% vs 67%/42%/42%) but both reach similar win rates (~3-7%), because MAPPO's fewer completions are more coordinated (mean_alarm 12.8 vs 25.8 — MAPPO avoids the countdown-expiry penalty).
@@ -176,5 +188,5 @@ Before trusting CAI/counterfactual numbers, we validated that the training basel
 * **Baseline compute:** simple IPPO needs ~300k steps to reach a noisy 3-10% win at stage-0; scale campaigns to 1-2M steps, or switch to `spawn_mode="random"` (forces navigation in early phases too) and/or add an intrinsic exploration bonus to break the final-converge plateau.
 * **Throughput:** ~40-70 SPS on CUDA; the per-env Python loop in `vec_env.step` and per-agent tensor moves dominate. Next step: batch env stepping or move the sim loop into NumPy/Numba.
 * **Reward/alarm balance:** alarm builds fast enough that a 3-turn hack chain raises it ~7 units; longer runs are needed to tune this so mid-difficulty stages are solvable but not trivial.
-* **Baseline comparison:** IPPO/MAPPO stage-0 tables are in `results_stage0_ippo_v5.json` / `results_stage0_mappo_v5.json`; run QMIX to 300k+ and re-emit all three for the research writeup, then extend to curriculum stages 1-2.
+* **Baseline comparison:** the three-way stage-0 comparison is complete. Tables in `results_stage0_ippo_v5.json` / `results_stage0_mappo_v5.json` / `results_stage0_qmix_a_v5.json` (QMIX default-schedule variant: `results_stage0_qmix_v5.json`). Extend to curriculum stages 1-2 with cameras/guards.
 * **Result tables:** `src/run_eval.py` emits win-rate/CAI/counterfactual tables (optionally JSON); run it on final checkpoints per stage once baselines converge.
