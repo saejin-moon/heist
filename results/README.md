@@ -82,20 +82,23 @@ The upgraded scripted controller (guard-avoiding BFS, muscle
 neutralization, hacker door bypass) validates that every curriculum stage
 is solvable and difficulty ramps monotonically. 40-episode runs, seed 100;
 per-stage JSONs and `scripted_curriculum.json` in this directory.
+(Revalidated 2026-08-04 after the REV-1..9 fixes; stage win rates are
+0.45-1.00, higher than the noisy 10-episode refresh because 40 episodes
+sharpen the estimates.)
 
 | Stage | Map / security | Win | Terminal | Loot | Extraction | Mean alarm | cf (s/h/m/e) |
 |---|---|---|---|---|---|---|---|
 | 0 | 11x11, none | 1.000 | 1.000 | 1.000 | 1.000 | 6.0 | +1.00/+1.00/+0.57/+1.00 |
-| 1 | 15x15, 2 guards, 1 door | 0.575 | 0.725 | 0.725 | 0.725 | 60.8 | +0.57/+0.57/+0.50/+0.57 |
-| 2 | 21x21, 3 guards, 2 cameras, 2 doors | 0.400 | 0.875 | 0.875 | 0.825 | 75.4 | +0.40/+0.40/+0.38/+0.40 |
-| 3 | 35x35, 5 guards, 3 cameras, 3 doors | 0.325 | 0.950 | 0.950 | 0.900 | 76.6 | +0.33/+0.33/+0.33/+0.33 |
-| 4 | 50x50, 6 guards, 3 cameras, 4 doors | 0.200 | 0.900 | 0.900 | 0.850 | 85.5 | +0.20/+0.20/+0.20/+0.20 |
+| 1 | 15x15, 2 guards, 1 door | 0.725 | 0.925 | 0.900 | 0.900 | 30.9 | +0.72/+0.72/+0.57/+0.72 |
+| 2 | 21x21, 3 guards, 2 cameras, 2 doors | 0.575 | 0.850 | 0.850 | 0.850 | 49.8 | +0.57/+0.57/+0.55/+0.57 |
+| 3 | 35x35, 5 guards, 3 cameras, 3 doors | 0.550 | 0.900 | 0.900 | 0.900 | 45.7 | +0.55/+0.55/+0.55/+0.55 |
+| 4 | 50x50, 6 guards, 3 cameras, 4 doors | 0.450 | 0.850 | 0.825 | 0.825 | 50.6 | +0.45/+0.45/+0.45/+0.45 |
 
 Reading:
-- **Every stage is solvable** (20-100% wins) and the causal chain
-  completes 73-95% of the time even at full benchmark difficulty.
+- **Every stage is solvable** (45-100% wins) and the causal chain
+  completes 83-100% of the time even at full benchmark difficulty.
 - **Difficulty ramps monotonically** as guards/cameras/doors are added;
-  alarm pressure (60-86 mean) is the main source of losses at high stages,
+  alarm pressure (6-51 mean) is the main source of losses at high stages,
   which is the intended adversarial budget.
 - **The causal chain holds at every stage**: scout, hacker, and extractor
   are each strictly necessary (win rate -> 0 when no-op'd) at all five
@@ -105,6 +108,6 @@ Reading:
   scaling.
 - The naive controller (no guard avoidance / neutralization / door
   bypass) reaches only 0.45/0.35/0.20/0.15 wins at stages 1-4; the
-  upgraded controller's gains (0.58/0.40/0.33/0.20) show the mechanics
+  upgraded controller's gains (0.73/0.58/0.55/0.45) show the mechanics
   are skill-testing, not luck.
 

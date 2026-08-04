@@ -8,6 +8,7 @@ Run after experiment_stage0_300k.sh completes:
 
 Saves JSON to results/stage0_300k_comparison.json.
 """
+
 import json
 import os
 
@@ -23,7 +24,6 @@ from evaluate import (
     evaluate_policies,
     message_outcome_correlation,
 )
-from model import CommAgent, HeistAgent, MappoAgent, QNetwork
 from run_eval import load_policies
 
 STAGE0 = CURRICULUM[0]
@@ -32,10 +32,10 @@ EVAL_SEED = 555
 CHECKPOINT_ROOT = "checkpoints"
 
 ALGOS = {
-    "ippo":  {"exp_name": "ippo_s0",  "class": "ippo"},
+    "ippo": {"exp_name": "ippo_s0", "class": "ippo"},
     "mappo": {"exp_name": "mappo_s0", "class": "mappo"},
-    "qmix":  {"exp_name": "qmix_s0",  "class": "qmix"},
-    "comm":  {"exp_name": "comm_s0",  "class": "comm"},
+    "qmix": {"exp_name": "qmix_s0", "class": "qmix"},
+    "comm": {"exp_name": "comm_s0", "class": "comm"},
 }
 SEEDS = [0, 1, 2]
 
@@ -85,7 +85,7 @@ def main():
 
     all_results = {}
     for algo, info in ALGOS.items():
-        print(f"\n{'='*64}\n  {algo.upper()}\n{'='*64}")
+        print(f"\n{'=' * 64}\n  {algo.upper()}\n{'=' * 64}")
         seeds = []
         for seed in SEEDS:
             r = eval_one(algo, info["exp_name"], seed, env, state_dim, device)
@@ -94,9 +94,9 @@ def main():
         all_results[algo] = seeds
 
     # ── summary table ──────────────────────────────────────────────────
-    print(f"\n\n{'='*80}")
+    print(f"\n\n{'=' * 80}")
     print("G4 COMPARISON: stage-0 300k-step campaign (60-episode eval, seed 555)")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     header = f"{'Algo':<8} {'Seed':>4}  {'Win':>5} {'Term':>5} {'Loot':>5} {'Extr':>5} {'Return':>7}"
     print(header)
@@ -112,7 +112,9 @@ def main():
             lr = m.get("loot_rate", 0)
             er = m.get("extraction_rate", 0)
             ret = m.get("mean_return", 0)
-            print(f"{algo:<8} {seed_label:>4}  {wr:>5.3f} {tr:>5.3f} {lr:>5.3f} {er:>5.3f} {ret:>7.3f}")
+            print(
+                f"{algo:<8} {seed_label:>4}  {wr:>5.3f} {tr:>5.3f} {lr:>5.3f} {er:>5.3f} {ret:>7.3f}"
+            )
             if algo == "ippo":
                 floor_wins.append(wr)
             if algo == "comm":
@@ -128,7 +130,9 @@ def main():
             lr = avg_m.get("loot_rate", 0)
             er = avg_m.get("extraction_rate", 0)
             ret = avg_m.get("mean_return", 0)
-            print(f"{'>>> '+algo:<8} {'avg':>4}  {wr:>5.3f} {tr:>5.3f} {lr:>5.3f} {er:>5.3f} {ret:>7.3f}")
+            print(
+                f"{'>>> ' + algo:<8} {'avg':>4}  {wr:>5.3f} {tr:>5.3f} {lr:>5.3f} {er:>5.3f} {ret:>7.3f}"
+            )
 
     # ── CAI summary ────────────────────────────────────────────────────
     for algo in ["ippo", "mappo", "qmix"]:
@@ -139,27 +143,37 @@ def main():
                 vals = [e["cai"][a] for e in entries if a in e["cai"]]
                 if vals:
                     avg_cai[a] = sum(vals) / len(vals)
-            print(f"\n  CAI ({algo} avg): " + " ".join(
-                f"{a}:{avg_cai.get(a, 0):+.3f}" for a in AGENTS
-            ))
+            print(
+                f"\n  CAI ({algo} avg): "
+                + " ".join(f"{a}:{avg_cai.get(a, 0):+.3f}" for a in AGENTS)
+            )
 
     # ── comm diagnostic summary ────────────────────────────────────────
     for entry in all_results.get("comm", []):
         if "diag" in entry:
             print(f"\n  Comm diagnostics (seed {entry['seed']}):")
-            print(f"    max terminal corr : {entry['diag']['max_terminal_message_corr']:.4f}")
-            print(f"    mean terminal corr: {entry['diag']['mean_terminal_message_corr']:.4f}")
+            print(
+                f"    max terminal corr : {entry['diag']['max_terminal_message_corr']:.4f}"
+            )
+            print(
+                f"    mean terminal corr: {entry['diag']['mean_terminal_message_corr']:.4f}"
+            )
             att = entry["diag"]["mean_attention"]
             print("    mean attention (rows=receiver, cols=sender):")
             for i, a in enumerate(AGENTS):
-                print(f"      {a:>9}: " + " ".join(f"{att[i][j]:.3f}" for j in range(len(AGENTS))))
+                print(
+                    f"      {a:>9}: "
+                    + " ".join(f"{att[i][j]:.3f}" for j in range(len(AGENTS)))
+                )
 
     # ── G4 verdict ─────────────────────────────────────────────────────
     if floor_wins and comm_wins:
         avg_floor = sum(floor_wins) / len(floor_wins)
         avg_comm = sum(comm_wins) / len(comm_wins)
         verdict = "PASS" if avg_comm >= avg_floor else "FAIL"
-        print(f"\n  G4 verdict: comm avg win={avg_comm:.3f} vs IPPO floor={avg_floor:.3f} -> {verdict}")
+        print(
+            f"\n  G4 verdict: comm avg win={avg_comm:.3f} vs IPPO floor={avg_floor:.3f} -> {verdict}"
+        )
 
     # ── save JSON ──────────────────────────────────────────────────────
     os.makedirs("results", exist_ok=True)

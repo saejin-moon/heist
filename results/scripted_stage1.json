@@ -16,27 +16,27 @@
     "spawn_mode": "role"
   },
   "metrics": {
-    "win_rate": 0.6,
-    "mean_return": 6.3255,
-    "mean_length": 50.9,
-    "mean_alarm": 30.9,
-    "terminal_rate": 1.0,
+    "win_rate": 0.725,
+    "mean_return": 7.326625000000002,
+    "mean_length": 31.775,
+    "mean_alarm": 30.925,
+    "terminal_rate": 0.925,
     "loot_rate": 0.9,
     "extraction_rate": 0.9
   },
   "cai": {
-    "scout": 0.5214136785572475,
-    "hacker": 0.6721938014391953,
-    "muscle": -0.326148185048576,
-    "extractor": 0.5942686182402003
+    "scout": 0.30815533135969825,
+    "hacker": 0.594241658841123,
+    "muscle": -0.17703547203856537,
+    "extractor": 0.5647191737240929
   },
   "counterfactual": {
-    "baseline_win_rate": 0.6,
+    "baseline_win_rate": 0.725,
     "importance": {
-      "scout": 0.6,
-      "hacker": 0.6,
-      "muscle": 0.5,
-      "extractor": 0.6
+      "scout": 0.725,
+      "hacker": 0.725,
+      "muscle": 0.575,
+      "extractor": 0.725
     }
   }
 }
