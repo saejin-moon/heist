@@ -10,7 +10,7 @@ By forcing four heterogeneous agents (**Scout**, **Hacker**, **Muscle**, **Extra
 
 ---
 
-## 🔬 Core Problem: Causal Credit Dilution
+## Core Problem: Causal Credit Dilution
 
 Standard cooperative MARL algorithms rely on shared team rewards, implicitly assuming that all agents contribute to global state transitions simultaneously. However, real-world multi-agent systems operate under **sequential causal dependencies**:
 
@@ -20,7 +20,7 @@ If a downstream agent (e.g., Extractor) fails late in the episode, standard algo
 
 ---
 
-## ⚡ Novel Credit Assignment Algorithms
+## Novel Credit Assignment Algorithms
 
 HEIST introduces two novel, theoretically grounded algorithms designed to eliminate Causal Credit Dilution:
 
@@ -39,7 +39,7 @@ $$R_{bonus} = \beta \cdot \max(0.0, V(S_{next}))$$
 
 ---
 
-## 🎮 Environment Architecture
+## Environment Architecture
 
 Each agent observes a multi-tensor `Dict` observation space designed to preserve the Markov property under partial observability:
 
@@ -53,7 +53,7 @@ Each agent observes a multi-tensor `Dict` observation space designed to preserve
 
 ---
 
-## 🚀 Quick Start & Installation
+## Quick Start & Installation
 
 ### 1. Installation
 The repository uses `uv` for ultra-fast, reproducible dependency management:
@@ -77,7 +77,7 @@ uv run ruff format --check       # Check formatting
 
 ---
 
-## 🏃 Running Training Campaigns (`train.zsh`)
+## Running Training Campaigns (`train.zsh`)
 
 [`train.zsh`](file:///home/fuddle/git/heist/train.zsh) is the automated entrypoint for provisioning packages, verifying CUDA hardware, running validation gates, and launching multi-stage MARL campaigns.
 
@@ -121,7 +121,7 @@ Measure exact CUDA rollout latency and extrapolate full campaign wall-clock time
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```
 .
@@ -153,7 +153,7 @@ Measure exact CUDA rollout latency and extrapolate full campaign wall-clock time
 
 ---
 
-## 📜 Citation & License
+## Citation & License
 
 If you use HEIST, CIR, or CAR in your research, please cite this repository:
 
