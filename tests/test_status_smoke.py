@@ -84,3 +84,40 @@ def test_active_training_predicts_next_run_id(tmp_path):
          patch.object(status, "get_running_pids", return_value={1234}):
         info = status.get_active_campaign_info()
         assert info["run_id"] == "run020"
+        assert info["active_stages"] == {0}
+
+
+def test_stale_checkpoints_and_logs_ignored_in_new_run(tmp_path):
+    log_dir = tmp_path / "log"
+    ckpt_dir = tmp_path / "checkpoints"
+    log_dir.mkdir()
+    ckpt_dir.mkdir()
+
+    old_time = time.time() - 7200
+    current_start = time.time() - 60
+
+    # Create old log and checkpoint for coma_s0
+    old_log = log_dir / "coma_s0.log"
+    old_log.write_text("step=1000 sps=50 mean_reward=-1.0\ntraining done in 10s")
+    os.utime(old_log, (old_time, old_time))
+
+    coma_ckpt = ckpt_dir / "coma_s0"
+    coma_ckpt.mkdir()
+    marker = coma_ckpt / "complete.json"
+    marker.write_text('{"completed_steps": 1000}')
+    os.utime(coma_ckpt, (old_time, old_time))
+    os.utime(marker, (old_time, old_time))
+
+    # Active log for ippo_s0 started recently
+    ippo_log = log_dir / "ippo_s0.log"
+    ippo_log.write_text("step=100 sps=50 mean_reward=-0.1")
+    os.utime(ippo_log, (current_start, current_start))
+
+    with patch.object(status, "LOG_DIR", log_dir), \
+         patch.object(status, "CKPT_DIR", ckpt_dir):
+        models = status.check_models_status(
+            active_stages={0}, running_pids={1234}, active_run_start=current_start
+        )
+        coma_status = next(m for m in models if m["model"] == "coma")
+        assert coma_status["status"] == "QUEUED"
+        assert coma_status["checkpoint"] == "[dim yellow]STALE (OLD)[/dim yellow]"

@@ -89,10 +89,12 @@ def get_active_campaign_info() -> dict:
         "active_stages": set(),
         "side_tasks": False,
         "fast_mode": False,
+        "active_run_start": 0.0,
     }
 
     launch_mtime = launch_file.stat().st_mtime if launch_file.is_file() else 0
     launch_run_id = None
+    launch_stages = set()
 
     if launch_file.is_file():
         try:
@@ -108,21 +110,26 @@ def get_active_campaign_info() -> dict:
 
             m_stages = re.findall(r"Starting training for stage (\d+)", content)
             if m_stages:
-                info["active_stages"] = {int(s) for s in m_stages}
+                launch_stages = {int(s) for s in m_stages}
         except Exception:
             pass
 
     latest_log_mtime = 0
     latest_log_file = None
+    recent_log_mtimes = []
+
     if LOG_DIR.is_dir():
         for p in LOG_DIR.glob("*.log"):
             mtime = p.stat().st_mtime
             if mtime > latest_log_mtime:
                 latest_log_mtime = mtime
                 latest_log_file = p
-            m_stage = re.search(r"_s(\d+)\.log$", p.name)
-            if m_stage and (time.time() - mtime) < 30:
-                info["active_stages"].add(int(m_stage.group(1)))
+
+    if LOG_DIR.is_dir() and latest_log_mtime > 0:
+        for p in LOG_DIR.glob("*.log"):
+            mtime = p.stat().st_mtime
+            if (latest_log_mtime - mtime) < 600:
+                recent_log_mtimes.append(mtime)
 
     pids = get_running_pids()
     active_training = len(pids) > 0 or (
@@ -158,24 +165,34 @@ def get_active_campaign_info() -> dict:
 
     if is_launch_fresh:
         info["run_id"] = launch_run_id
+        info["active_stages"] = launch_stages or {0}
+        info["active_run_start"] = launch_mtime
     else:
-        # If launch.out is stale, determine side_tasks from latest active log file
+        # If launch.out is stale, determine side_tasks and active_stages from recent logs
         if latest_log_file and active_training:
             info["side_tasks"] = "_st_" in latest_log_file.name
+
+        if LOG_DIR.is_dir() and latest_log_mtime > 0 and (active_training or latest_log_mtime > latest_results_mtime):
+            for p in LOG_DIR.glob("*.log"):
+                mtime = p.stat().st_mtime
+                if (latest_log_mtime - mtime) < 300:
+                    m_stage = re.search(r"_s(\d+)\.log$", p.name)
+                    if m_stage:
+                        info["active_stages"].add(int(m_stage.group(1)))
 
         if active_training and latest_log_mtime > latest_results_mtime:
             prefix = "st" if info["side_tasks"] else "run"
             info["run_id"] = _get_next_run_id(RESULTS_DIR, prefix=prefix)
+            info["active_run_start"] = min(recent_log_mtimes) if recent_log_mtimes else latest_log_mtime
         else:
-            # If no active training or results are newer, use latest run directory or next run ID if latest was non-standard
             if latest_results_run_id and latest_results_run_id.startswith("run"):
                 info["run_id"] = latest_results_run_id
             elif latest_results_run_id:
-                # If latest results directory was e.g. local or st, but user asks for run, check max run directory
                 prefix = "st" if info["side_tasks"] else "run"
                 info["run_id"] = _get_next_run_id(RESULTS_DIR, prefix=prefix)
             else:
                 info["run_id"] = launch_run_id or "N/A"
+            info["active_run_start"] = latest_results_mtime or latest_log_mtime
 
     if not info["active_stages"]:
         info["active_stages"] = {0}
@@ -183,7 +200,11 @@ def get_active_campaign_info() -> dict:
     return info
 
 
-def check_models_status(active_stages: set[int], running_pids: set[int]) -> list[dict]:
+def check_models_status(
+    active_stages: set[int],
+    running_pids: set[int],
+    active_run_start: float = 0.0,
+) -> list[dict]:
     """Gather status across all 10 models for the active stage, ignoring stale checkpoints."""
     results = []
     active_stage = max(active_stages) if active_stages else 0
@@ -194,24 +215,48 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
             f"{name}_s{active_stage}.log",
         ]
         log_path = None
+        log_mtime = 0.0
         for p_name in possible_log_names:
             candidate = LOG_DIR / p_name
             if candidate.is_file():
                 log_path = candidate
+                log_mtime = candidate.stat().st_mtime
                 break
+
+        is_log_fresh = (
+            log_path is not None
+            and (
+                active_run_start == 0.0
+                or log_mtime >= active_run_start - 60
+                or (time.time() - log_mtime) < 300
+            )
+        )
 
         possible_ckpt_names = [
             f"{name}_st_s{active_stage}",
             f"{name}_s{active_stage}",
         ]
         ckpt_complete = False
+        ckpt_exists = False
+        ckpt_mtime = 0.0
         completed_steps = "-"
         for c_name in possible_ckpt_names:
-            marker = CKPT_DIR / c_name / "complete.json"
+            ckpt_dir = CKPT_DIR / c_name
+            marker = ckpt_dir / "complete.json"
+            if ckpt_dir.is_dir():
+                ckpt_exists = True
+                ckpt_mtime = ckpt_dir.stat().st_mtime
             if marker.is_file():
-                ckpt_mtime = marker.stat().st_mtime
-                log_mtime = log_path.stat().st_mtime if log_path else 0
-                if abs(ckpt_mtime - log_mtime) < 3600 or log_path is None:
+                ckpt_exists = True
+                marker_mtime = marker.stat().st_mtime
+                if marker_mtime > ckpt_mtime:
+                    ckpt_mtime = marker_mtime
+                is_marker_fresh = (
+                    active_run_start == 0.0
+                    or marker_mtime >= active_run_start - 60
+                    or (is_log_fresh and abs(marker_mtime - log_mtime) < 300)
+                )
+                if is_marker_fresh:
                     ckpt_complete = True
                     try:
                         data = json.loads(marker.read_text())
@@ -226,8 +271,8 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
         runtime_str = "-"
         status = "QUEUED"
 
-        if log_path and log_path.is_file():
-            mtime_diff = time.time() - log_path.stat().st_mtime
+        if is_log_fresh and log_path:
+            mtime_diff = time.time() - log_mtime
             is_recent = mtime_diff < 30
 
             lines = log_path.read_text(errors="replace").splitlines()
@@ -258,6 +303,23 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
             else:
                 status = "PAUSED"
 
+        if ckpt_complete and status == "COMPLETE":
+            checkpoint_cell = "[bold green]SAVED[/bold green]"
+        elif ckpt_exists:
+            is_ckpt_fresh = (
+                active_run_start == 0.0
+                or ckpt_mtime >= active_run_start - 60
+                or (is_log_fresh and abs(ckpt_mtime - log_mtime) < 300)
+            )
+            if is_ckpt_fresh and status == "RUNNING":
+                checkpoint_cell = "[bold yellow]SAVING[/bold yellow]"
+            elif is_ckpt_fresh:
+                checkpoint_cell = "[green]EXISTS[/green]"
+            else:
+                checkpoint_cell = "[dim yellow]STALE (OLD)[/dim yellow]"
+        else:
+            checkpoint_cell = "[dim]PENDING[/dim]"
+
         results.append(
             {
                 "model": name,
@@ -269,15 +331,7 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
                 "sps": sps_str if status == "RUNNING" else "-",
                 "mean_reward": reward_str,
                 "runtime": runtime_str,
-                "checkpoint": (
-                    "[bold green]SAVED[/bold green]"
-                    if (ckpt_complete and status == "COMPLETE")
-                    else (
-                        "[green]COMPLETE[/green]"
-                        if status == "COMPLETE"
-                        else "[dim]PENDING[/dim]"
-                    )
-                ),
+                "checkpoint": checkpoint_cell,
             }
         )
 
@@ -287,7 +341,11 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
 def make_dashboard_panel() -> Panel:
     info = get_active_campaign_info()
     pids = get_running_pids()
-    models = check_models_status(info["active_stages"], pids)
+    models = check_models_status(
+        info["active_stages"],
+        pids,
+        active_run_start=info.get("active_run_start", 0.0),
+    )
 
     active_stage = max(info["active_stages"]) if info["active_stages"] else 0
     st_text = (
