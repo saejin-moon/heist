@@ -113,16 +113,16 @@ def get_active_campaign_info() -> dict:
             pass
 
     latest_log_mtime = 0
+    latest_log_file = None
     if LOG_DIR.is_dir():
         for p in LOG_DIR.glob("*.log"):
             mtime = p.stat().st_mtime
             if mtime > latest_log_mtime:
                 latest_log_mtime = mtime
+                latest_log_file = p
             m_stage = re.search(r"_s(\d+)\.log$", p.name)
             if m_stage and (time.time() - mtime) < 30:
                 info["active_stages"].add(int(m_stage.group(1)))
-            if "_st_" in p.name and (time.time() - mtime) < 300:
-                info["side_tasks"] = True
 
     pids = get_running_pids()
     active_training = len(pids) > 0 or (
@@ -158,15 +158,24 @@ def get_active_campaign_info() -> dict:
 
     if is_launch_fresh:
         info["run_id"] = launch_run_id
-    elif active_training and latest_log_mtime > latest_results_mtime:
-        prefix = "st" if info["side_tasks"] else "run"
-        if latest_results_run_id:
-            m_pref = re.match(r"^([a-zA-Z]+)", latest_results_run_id)
-            if m_pref:
-                prefix = m_pref.group(1)
-        info["run_id"] = _get_next_run_id(RESULTS_DIR, prefix=prefix)
     else:
-        info["run_id"] = latest_results_run_id or launch_run_id or "N/A"
+        # If launch.out is stale, determine side_tasks from latest active log file
+        if latest_log_file and active_training:
+            info["side_tasks"] = "_st_" in latest_log_file.name
+
+        if active_training and latest_log_mtime > latest_results_mtime:
+            prefix = "st" if info["side_tasks"] else "run"
+            info["run_id"] = _get_next_run_id(RESULTS_DIR, prefix=prefix)
+        else:
+            # If no active training or results are newer, use latest run directory or next run ID if latest was non-standard
+            if latest_results_run_id and latest_results_run_id.startswith("run"):
+                info["run_id"] = latest_results_run_id
+            elif latest_results_run_id:
+                # If latest results directory was e.g. local or st, but user asks for run, check max run directory
+                prefix = "st" if info["side_tasks"] else "run"
+                info["run_id"] = _get_next_run_id(RESULTS_DIR, prefix=prefix)
+            else:
+                info["run_id"] = launch_run_id or "N/A"
 
     if not info["active_stages"]:
         info["active_stages"] = {0}
