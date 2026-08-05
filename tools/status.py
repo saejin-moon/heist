@@ -338,6 +338,124 @@ def check_models_status(
     return results
 
 
+def make_progress_bar(pct: float, width: int = 10) -> str:
+    pct = max(0.0, min(100.0, pct))
+    filled = int(round((pct / 100.0) * width))
+    bar = "█" * filled + "░" * (width - filled)
+    if pct > 85:
+        return f"[bold red]{bar}[/bold red]"
+    elif pct > 60:
+        return f"[yellow]{bar}[/yellow]"
+    else:
+        return f"[green]{bar}[/green]"
+
+
+def get_system_metrics() -> dict:
+    """Gather CPU, RAM, and GPU usage metrics."""
+    import os
+
+    metrics = {
+        "cpu_load": "0.00",
+        "cpu_cores": os.cpu_count() or 1,
+        "ram_used_gb": 0.0,
+        "ram_total_gb": 0.0,
+        "ram_pct": 0.0,
+        "gpu_name": "N/A",
+        "gpu_util_pct": 0,
+        "gpu_mem_used_mb": 0,
+        "gpu_mem_total_mb": 0,
+        "gpu_temp_c": 0,
+        "gpu_available": False,
+    }
+
+    try:
+        with open("/proc/meminfo") as f:
+            lines = f.readlines()
+        mem = {}
+        for l in lines:
+            parts = l.split(":")
+            if len(parts) == 2:
+                mem[parts[0].strip()] = int(parts[1].split()[0])
+        total_kb = mem.get("MemTotal", 0)
+        avail_kb = mem.get("MemAvailable", 0)
+        if total_kb > 0:
+            used_kb = total_kb - avail_kb
+            metrics["ram_total_gb"] = total_kb / (1024 * 1024)
+            metrics["ram_used_gb"] = used_kb / (1024 * 1024)
+            metrics["ram_pct"] = (used_kb / total_kb) * 100
+    except Exception:
+        pass
+
+    try:
+        load1, _, _ = os.getloadavg()
+        metrics["cpu_load"] = f"{load1:.2f}"
+    except Exception:
+        pass
+
+    try:
+        import subprocess
+
+        gpu_out = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+            timeout=2,
+        )
+        parts = [p.strip() for p in gpu_out.splitlines()[0].split(",")]
+        if len(parts) >= 5:
+            metrics["gpu_name"] = parts[0]
+            metrics["gpu_util_pct"] = int(parts[1]) if parts[1].isdigit() else 0
+            metrics["gpu_mem_used_mb"] = int(parts[2]) if parts[2].isdigit() else 0
+            metrics["gpu_mem_total_mb"] = int(parts[3]) if parts[3].isdigit() else 0
+            metrics["gpu_temp_c"] = int(parts[4]) if parts[4].isdigit() else 0
+            metrics["gpu_available"] = True
+    except Exception:
+        pass
+
+    return metrics
+
+
+def get_active_processes_info() -> list[dict]:
+    """Gather detailed process info for running HEIST processes."""
+    processes = []
+    try:
+        import subprocess
+
+        out = subprocess.check_output(["ps", "aux"], text=True)
+        for line in out.splitlines():
+            if (
+                "src/train_" in line
+                or "src/eval_stage.py" in line
+                or "train.zsh" in line
+            ) and "grep" not in line and "tools/status.py" not in line:
+                parts = line.split()
+                if len(parts) >= 11:
+                    pid = parts[1]
+                    cpu = parts[2]
+                    mem = parts[3]
+                    cmd_full = " ".join(parts[10:])
+                    script = "python"
+                    for token in parts[10:]:
+                        if "train_" in token or "eval_stage" in token or "train.zsh" in token:
+                            script = Path(token).name
+                            break
+                    processes.append(
+                        {
+                            "pid": pid,
+                            "script": script,
+                            "cpu": cpu,
+                            "mem": mem,
+                            "cmd": cmd_full,
+                        }
+                    )
+    except Exception:
+        pass
+    return processes
+
+
 def make_dashboard_panel() -> Panel:
     info = get_active_campaign_info()
     pids = get_running_pids()
@@ -346,6 +464,8 @@ def make_dashboard_panel() -> Panel:
         pids,
         active_run_start=info.get("active_run_start", 0.0),
     )
+    metrics = get_system_metrics()
+    active_procs = get_active_processes_info()
 
     active_stage = max(info["active_stages"]) if info["active_stages"] else 0
     st_text = (
@@ -364,7 +484,45 @@ def make_dashboard_panel() -> Panel:
         f"Fast Mode: {fast_text}"
     )
 
-    # 1. Models Matrix Table
+    # 1. System Resources Table
+    sys_table = Table(expand=True, box=None, padding=(0, 1))
+    sys_table.add_column("Hardware Resource", style="bold cyan", no_wrap=True)
+    sys_table.add_column("Utilization / Load", justify="left", no_wrap=True)
+    sys_table.add_column("Capacity / Memory Details", justify="left", no_wrap=True)
+
+    load_val = float(metrics["cpu_load"])
+    cores = metrics["cpu_cores"]
+    cpu_pct = min(100.0, (load_val / cores) * 100)
+    cpu_bar = make_progress_bar(cpu_pct, 10)
+    sys_table.add_row(
+        "CPU",
+        f"{cpu_bar}  Load: {metrics['cpu_load']} ({cpu_pct:.1f}%)",
+        f"{cores} Cores available",
+    )
+
+    ram_pct = metrics["ram_pct"]
+    ram_bar = make_progress_bar(ram_pct, 10)
+    sys_table.add_row(
+        "RAM",
+        f"{ram_bar}  Usage: {ram_pct:.1f}%",
+        f"{metrics['ram_used_gb']:.1f} GB / {metrics['ram_total_gb']:.1f} GB",
+    )
+
+    if metrics["gpu_available"]:
+        gpu_pct = metrics["gpu_util_pct"]
+        gpu_bar = make_progress_bar(gpu_pct, 10)
+        vram_used = metrics["gpu_mem_used_mb"]
+        vram_total = metrics["gpu_mem_total_mb"]
+        vram_pct = (vram_used / vram_total * 100) if vram_total > 0 else 0
+        sys_table.add_row(
+            "GPU",
+            f"{gpu_bar}  Util: {gpu_pct}%",
+            f"{metrics['gpu_name']}  |  VRAM: {vram_used}/{vram_total} MiB ({vram_pct:.1f}%)  |  {metrics['gpu_temp_c']}°C",
+        )
+    else:
+        sys_table.add_row("GPU", "[dim]N/A[/dim]", "No CUDA GPU detected")
+
+    # 2. Models Matrix Table
     table = Table(
         expand=True,
         box=None,
@@ -402,7 +560,33 @@ def make_dashboard_panel() -> Panel:
             m["checkpoint"],
         )
 
-    # 2. Live Log Feed
+    # 3. Active Processes Table
+    proc_table = Table(expand=True, box=None, padding=(0, 1))
+    proc_table.add_column("PID", style="bold cyan", justify="right", no_wrap=True)
+    proc_table.add_column("Script / Target", style="bold green", no_wrap=True)
+    proc_table.add_column("CPU %", justify="right", no_wrap=True)
+    proc_table.add_column("RAM %", justify="right", no_wrap=True)
+    proc_table.add_column("Command Line", justify="left", no_wrap=True)
+
+    if active_procs:
+        for p in active_procs:
+            proc_table.add_row(
+                p["pid"],
+                p["script"],
+                f"{p['cpu']}%",
+                f"{p['mem']}%",
+                p["cmd"],
+            )
+    else:
+        proc_table.add_row(
+            "[dim]-[/dim]",
+            "[dim italic]No active HEIST training or evaluation processes running.[/dim italic]",
+            "-",
+            "-",
+            "-",
+        )
+
+    # 4. Live Log Feed
     log_feed = Text()
     if LOG_DIR.is_dir():
         log_files = sorted(
@@ -429,6 +613,13 @@ def make_dashboard_panel() -> Panel:
     grid = Table.grid(expand=True)
     grid.add_row(
         Panel(
+            sys_table,
+            title="[bold white]System Resources & Hardware Utilization[/bold white]",
+            border_style="cyan",
+        )
+    )
+    grid.add_row(
+        Panel(
             table,
             title="[bold white]Model Execution Matrix[/bold white]",
             border_style="bright_blue",
@@ -436,10 +627,17 @@ def make_dashboard_panel() -> Panel:
     )
     grid.add_row(
         Panel(
+            proc_table,
+            title=f"[bold white]Active HEIST Processes ({len(active_procs)} PIDs)[/bold white]",
+            border_style="magenta",
+        )
+    )
+    grid.add_row(
+        Panel(
             log_feed,
             title="[bold white]Diagnostic Log Stream[/bold white]",
             border_style="dim blue",
-            height=6,
+            height=5,
         )
     )
 
