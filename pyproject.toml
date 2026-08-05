@@ -46,3 +46,6 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-q --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning:multiprocessing.popen_fork",
+]
