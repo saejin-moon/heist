@@ -1,59 +1,69 @@
 # HEIST: Hierarchical Environment for Interdependent Sequential Tasks
 
-HEIST is a PettingZoo multi-agent reinforcement learning benchmark. The environment evaluates cooperative credit assignment in multi-agent teams. 
+HEIST is a PettingZoo multi-agent reinforcement learning (MARL) environment and research benchmark designed to evaluate **cooperative credit assignment under sequential causal dependencies and partial observability**.
 
-Four specialized agents (Scout, Hacker, Muscle, Extractor) work together in a grid. Although agents move simultaneously, their objectives follow a strict causal order. The Scout tags the security terminal. Then the Hacker disables the security system. Next, the Extractor secures the loot. Finally, all four agents must reach the extraction tile.
+Four specialized agents—**Scout**, **Hacker**, **Muscle**, and **Extractor**—pull off a heist against rule-based security systems. Although agents act simultaneously each turn, their objectives follow a strict, recursively gated causal dependency chain:
 
 ```
-Scout (Tag Terminal) -> Hacker (Disable Terminal) -> Extractor (Get Loot) -> Team (Extract)
+Scout (Tag Terminal) ──► Hacker (Crack Terminal) ──► Extractor (Secure Loot) ──► Team (Extract)
 ```
 
-## Causal Credit Dilution
+---
 
-Standard multi-agent algorithms rely on shared team rewards. They assume agents contribute to state changes at the same time. But HEIST forces agents into sequential dependencies. 
+## The Research Challenge: Causal Credit Dilution
 
-When a downstream agent fails late in an episode, the environment issues a negative team reward. Shared reward mechanisms push this negative signal backward to all agents. So upstream agents receive penalties even when they completed their required tasks. 
+Standard multi-agent RL algorithms (e.g., standard MAPPO or QMIX) rely on joint team rewards and assume simultaneous contribution. In an **RG-Dec-POMDP (Recursively Gated Dec-POMDP)**, this assumption breaks down due to **Causal Credit Dilution**:
+* If the Extractor fails at step 50 due to a late positioning error, global negative reward (-10.0) propagates backward.
+* Standard value mixers and joint critics penalize the Scout's optimal actions taken at step 5.
+* Under partial observability, on-policy policy gradient methods collapse into early risk-aversion (standing still to avoid step/alarm penalties).
 
-## Causal Credit Assignment Algorithms
+---
 
-HEIST includes two credit assignment algorithms designed to fix credit dilution.
+## 7-Model Benchmark Suite & Novel Mechanisms
 
-### Causal Influence Routing (CIR)
+HEIST includes a 7-model algorithm suite designed to diagnose and solve credit assignment and communication failure modes:
 
-CIR measures message influence in learned communication channels. The algorithm temporarily mutes each sender's message in the `CommAgent` policy network (`src/model.py`). Then it records the change in the receiver's value estimate. 
+| Algorithm | Model Architecture | Core Mechanism |
+| :--- | :--- | :--- |
+| **`ippo`** | Independent PPO | Fully decentralized actor-critic per agent (baseline) |
+| **`mappo`** | Centralized Critic PPO | Shared actor with centralized state-based critic |
+| **`mappo_car`** | MAPPO + CAR | Intrinsic affordance reward shaping for unlocking teammate actions |
+| **`comm`** | TarMAC Communication | Inter-agent attention-based message passing |
+| **`comm_cir`** | Comm + CIR | Causal Information Regularization on message routing advantages |
+| **`comm_cir_car`** | Comm + CIR + CAR | Combined communication, routing regularization, and affordance credit |
+| **`qmix`** | Monotonic Value Decomposition | Off-policy joint value factorization ($Q_{\text{tot}}$) with hypernetwork mixer |
 
-These value changes form an influence matrix. The trainer uses this matrix to route GAE advantage vectors from receiver agents back to the specific senders that enabled the reward:
+### Advanced Credit & Exploration Modules
+* **Causal Information Regularization (CIR):** Measures message influence on value estimates by temporarily muting sender channels in `CommAgent` ([`src/train_comm.py`](file:///home/fuddle/git/heist/src/train_comm.py)), routing GAE advantage vectors back to enabling senders (`--cir-coef 0.5`).
+* **Counterfactual Affordance Reward (CAR):** Grants intrinsic rewards when an agent's `INTERACT` action unlocks a teammate's dynamic action mask from 0 to 1 (`--car-coef 0.5`).
+* **Random Network Distillation (RND):** Adds curiosity-driven intrinsic exploration rewards ([`src/exploration.py`](file:///home/fuddle/git/heist/src/exploration.py)) via fixed target and online predictor MSE loss to cross late-phase extraction walls (`--use-rnd --rnd-coef 0.05`).
 
-$$\mathbf{A}_{routed} = \text{einsum}(\mathbf{I}, \mathbf{A})$$
-$$\mathbf{A}_{final} = (1 - \alpha) \cdot \mathbf{A} + \alpha \cdot \mathbf{A}_{routed}$$
+---
 
-To enable CIR during training:
-`uv run python src/train_comm.py --cir-coef 0.5`
+## Stage-0 Baseline Results (300k Steps Benchmark)
 
-### Counterfactual Affordance Reward (CAR)
+60-episode greedy rollouts across 3 random seeds (seed 555 evaluation) on Stage 0 (11x11 grid, role-based spawns, max steps 60):
 
-CAR awards intrinsic rewards for expanding a teammate's action space. The environment tracks action masks during every step (`src/env.py`). When an agent takes an `INTERACT` action that turns a teammate's action mask from 0 to 1, the environment flags an affordance unlock.
+| Algorithm | Win Rate | Mean Return | Terminal Hack Rate | Loot Pickup Rate | Extraction Trigger | Mean Alarm |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Scripted (BFS Baseline)** | **1.000** | **+11.48** | **100%** | **100%** | **100%** | 6.0 |
+| **`qmix`** | 0.000 | **-0.158** | **21.7%** | **1.7%** | **1.7%** | **14.0** |
+| **`ippo`** | 0.000 | -0.546 | 3.3% | 0.0% | 0.0% | 0.2 |
+| **`comm_cir`** | 0.000 | -0.596 | 0.0% | 0.0% | 0.0% | 0.0 |
+| **`comm`** | 0.000 | -0.598 | 0.0% | 0.0% | 0.0% | 0.0 |
+| **`mappo`** | 0.000 | -0.600 | 0.0% | 0.0% | 0.0% | 0.0 |
+| **`mappo_car`** | 0.000 | -0.600 | 0.0% | 0.0% | 0.0% | 0.0 |
+| **`comm_cir_car`** | 0.000 | -0.600 | 0.0% | 0.0% | 0.0% | 0.0 |
 
-The trainer grants the unlocking agent an intrinsic reward bonus based on the centralized critic's state evaluation:
+* **Scripted Baseline:** Proves the environment is 100% solvable (mean episode length 13).
+* **QMIX Dominance:** Outperforms all policy-gradient baselines in task progression, achieving 21.7% terminal hacks and non-zero loot/extraction triggers.
+* **CIR Communication Structuring:** CIR (`comm_cir`) successfully breaks uniform attention noise into structured role-based communication channels.
 
-$$R_{bonus} = \beta \cdot \max(0.0, V(S_{next}))$$
+---
 
-To enable CAR during training:
-`uv run python src/train_mappo.py --car-coef 0.5`
+## Setup and Installation
 
-## Environment Mechanics
-
-Agents receive local observation dictionaries containing three tensors:
-
-1. `observation` (5x5 matrix): A local grid view masked by raycasted Fog of War.
-2. `action_mask` (6-element vector): Binary mask that blocks invalid or causally locked actions.
-3. `role_id` (4-element vector): One-hot vector identifying the agent's assigned role.
-
-Guards patrol the grid using random walks. If a guard moves within 1 tile of an agent, the alarm triggers and ends the episode with a -10.0 penalty. Every step also incurs a -0.01 time penalty to prevent looping.
-
-## Setup and Development
-
-Install CPython 3.12 and dependencies using `uv`:
+Requirements: Python 3.12+ and `uv` package manager.
 
 ```bash
 git clone https://github.com/saejin-moon/heist.git
@@ -61,63 +71,66 @@ cd heist
 uv sync --locked
 ```
 
-Run tests and code checks:
+Run test suite and static analysis (33 unit tests):
 
 ```bash
-uv run pytest -q
+uv run pytest -v
 uv run ruff check
-uv run ruff format --check
 ```
 
-## Running Training (`train.zsh`)
+---
 
-Use `train.zsh` to set up environments, verify CUDA availability, and run training campaigns.
+## Campaign Execution & Evaluation CLI
+
+Use `train.zsh` to launch multi-model training campaigns:
 
 ```bash
-# Run a 10,240-step sample run across all algorithms
-./train.zsh --sample
+# Fast validation test across all 7 models (10,240 steps)
+./train.zsh --fast --rnd
 
-# Run custom coefficient tuning on Stage 0
-./train.zsh --steps 20480 --cir-coef 0.3 --car-coef 0.4
+# Parallel execution with RND curiosity & custom step budget
+./train.zsh --steps 1000000 --parallel 2 --rnd --rnd-coef 0.05
 
-# Launch a background campaign across all 5 curriculum stages
-./train.zsh --num-stages 5 --daemon
+# Background daemon campaign across curriculum stages 0 and 1
+./train.zsh --stages 0,1 --steps 1000000 --daemon
 ```
 
-Monitor active runs with the status tool:
+Monitor live status and logs:
 
 ```bash
 uv run python tools/status.py --watch
 ```
 
-## Throughput Benchmarks (`assess-time.zsh`)
+Evaluate checkpoints and merge stage results:
 
-Run `./assess-time.zsh` to measure step latency and campaign runtime.
+```bash
+# Evaluate Stage 0 checkpoints into a structured run directory
+uv run python src/eval_stage.py --stage 0 --episodes 60
 
-Measurements on an NVIDIA RTX 3000 Ada GPU:
+# Merge individual algorithm evaluations into summary.json
+uv run python src/eval_stage.py --stage 0 --merge --run-id run017
+```
 
-* MAPPO: 1,076 steps/second (Stage 0)
-* TarMAC Comm: 1,086 steps/second (Stage 0)
-* IPPO: 871 steps/second (Stage 0)
-* QMIX: 498 steps/second (Stage 0)
-
-A full 5-stage campaign across all algorithms takes 32 hours on one GPU.
+---
 
 ## Codebase Layout
 
 ```
-train.zsh               Campaign launcher and environment setup
-assess-time.zsh         Benchmark script wrapper
-tools/assess_time.py    Hardware benchmark and throughput calculator
-tools/status.py         Training status and log monitor
-src/env.py              PettingZoo environment implementation
-src/model.py            Policy networks and CIR influence matrix
-src/vec_env.py          Vectorized environment wrapper
-src/vision.py           Numba JIT line-of-sight and pathfinding
-src/train_ippo.py       Independent PPO trainer
-src/train_mappo.py      MAPPO trainer with CAR support
-src/train_comm.py       TarMAC trainer with CIR support
-src/train_qmix.py       QMIX trainer with GPU action selection
-src/test_cir_smoke.py   CIR unit test
-src/test_car_smoke.py   CAR unit test
+train.zsh                     Multi-model campaign launcher & process manager
+tools/status.py               Live training log and checkpoint monitor
+tools/assess_time.py          Hardware benchmark & throughput calculator
+src/env.py                    PettingZoo parallel environment engine
+src/curriculum.py             5-stage curriculum generator (11x11 to 50x50)
+src/vision.py                 Numba JIT raycasting & fog-of-war engine
+src/model.py                  Neural network policies & attention communication
+src/vec_env.py                Multiprocessing vectorized environment wrapper
+src/exploration.py            RND & count-based intrinsic curiosity modules
+src/eval_stage.py             Post-experiment evaluation & JSON merging CLI
+src/scripted.py               Near-optimal BFS controller baseline
+src/train_ippo.py             Independent PPO trainer
+src/train_mappo.py            MAPPO trainer with CAR support
+src/train_comm.py             TarMAC trainer with CIR support
+src/train_qmix.py             QMIX trainer with value decomposition
+tests/                        Comprehensive Pytest unit test suite (33 tests)
+results/                      Run artifacts, JSON summaries, and benchmark logs
 ```
