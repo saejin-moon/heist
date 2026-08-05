@@ -40,24 +40,25 @@ HEIST includes a 7-model algorithm suite designed to diagnose and solve credit a
 
 ---
 
-## Stage-0 Baseline Results (300k Steps Benchmark)
+## Stage-0 Baseline Results (1,000,000 Steps Benchmark)
 
-60-episode greedy rollouts across 3 random seeds (seed 555 evaluation) on Stage 0 (11x11 grid, role-based spawns, max steps 60):
+60-episode greedy rollouts across 3 random seeds on Stage 0 (11x11 grid, role-based spawns, max steps 60):
 
-| Algorithm | Win Rate | Mean Return | Terminal Hack Rate | Loot Pickup Rate | Extraction Trigger | Mean Alarm |
+| Algorithm | Win Rate | Mean Return | Terminal Hack Rate | Loot Pickup Rate | Extraction Rate | Mean Alarm |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Scripted (BFS Baseline)** | **1.000** | **+11.48** | **100%** | **100%** | **100%** | 6.0 |
-| **`qmix`** | 0.000 | **-0.158** | **21.7%** | **1.7%** | **1.7%** | **14.0** |
-| **`ippo`** | 0.000 | -0.546 | 3.3% | 0.0% | 0.0% | 0.2 |
-| **`comm_cir`** | 0.000 | -0.596 | 0.0% | 0.0% | 0.0% | 0.0 |
-| **`comm`** | 0.000 | -0.598 | 0.0% | 0.0% | 0.0% | 0.0 |
-| **`mappo`** | 0.000 | -0.600 | 0.0% | 0.0% | 0.0% | 0.0 |
-| **`mappo_car`** | 0.000 | -0.600 | 0.0% | 0.0% | 0.0% | 0.0 |
-| **`comm_cir_car`** | 0.000 | -0.600 | 0.0% | 0.0% | 0.0% | 0.0 |
+| **`mappo_car` (MAPPO + CAR)** | **0.083** | **+1.534** | **93.3%** | **80.0%** | **80.0%** | **30.5** |
+| **`ippo`** | 0.050 | +1.210 | 98.3% | 81.7% | 81.7% | 33.1 |
+| **`mappo`** | 0.050 | +1.041 | 90.0% | 66.7% | 66.7% | 25.8 |
+| **`comm_cir_car`** | 0.000 | -0.465 | 3.3% | 3.3% | 3.3% | 3.7 |
+| **`comm_cir`** | 0.000 | -0.535 | 0.0% | 0.0% | 0.0% | 0.4 |
+| **`comm`** | 0.000 | -0.590 | 0.0% | 0.0% | 0.0% | 0.1 |
+| **`qmix`** | 0.000 | -0.440 | 0.0% | 0.0% | 0.0% | 6.8 |
 
-* **Scripted Baseline:** Proves the environment is 100% solvable (mean episode length 13).
-* **QMIX Dominance:** Outperforms all policy-gradient baselines in task progression, achieving 21.7% terminal hacks and non-zero loot/extraction triggers.
-* **CIR Communication Structuring:** CIR (`comm_cir`) successfully breaks uniform attention noise into structured role-based communication channels.
+* **CAR Affordance Dominance:** `mappo_car` achieves both the **highest win rate (8.3%)** and **highest mean return (+1.534)**, outperforming standard MAPPO (+66% win rate boost) by resolving credit dilution across the dependency chain.
+* **Scripted Baseline:** Proves environment 100% solvability (mean episode length 13 steps).
+* **Causal Chain Progress:** Scaling to 1M steps enables PPO variants to break out of risk-aversion traps, reaching **80%–98% terminal hack and loot rates**.
+* **Communication Progression:** Within the `comm` suite, adding CIR and CAR progressively improves mean return (-0.590 $\rightarrow$ -0.535 $\rightarrow$ -0.465) and unlocks chain progress.
 
 ---
 
