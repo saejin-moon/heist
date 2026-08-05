@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 import time
@@ -24,7 +23,6 @@ from pathlib import Path
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
-from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
@@ -161,16 +159,18 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
 
             lines = log_path.read_text(errors="replace").splitlines()
             if lines:
-                for l in reversed(lines):
+                for line_str in reversed(lines):
                     m_prog = re.search(
-                        r"step=(\d+)\s+sps=(\d+)\s+mean_reward=([-\d.]+)", l
+                        r"step=(\d+)\s+sps=(\d+)\s+mean_reward=([-\d.]+)", line_str
                     )
                     if m_prog:
                         step_str = m_prog.group(1)
                         sps_str = m_prog.group(2)
                         reward_str = f"{float(m_prog.group(3)):.3f}"
                         break
-                    m_done = re.search(r"training done in ([\d.]+s|[\d.]+ min)", l)
+                    m_done = re.search(
+                        r"training done in ([\d.]+s|[\d.]+ min)", line_str
+                    )
                     if m_done:
                         runtime_str = m_done.group(1)
                         break
@@ -179,7 +179,7 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
                 status = "COMPLETE"
             elif is_recent:
                 status = "RUNNING"
-            elif lines and any("training done" in l for l in lines[-5:]):
+            elif lines and any("training done" in line_str for line_str in lines[-5:]):
                 status = "COMPLETE"
             else:
                 status = "PAUSED"
@@ -280,8 +280,8 @@ def make_dashboard_panel() -> Panel:
             latest = log_files[0]
             log_feed.append(f"Log Stream: {latest.name}\n", style="bold gold1")
             lines = latest.read_text(errors="replace").splitlines()[-3:]
-            for l in lines:
-                log_feed.append(f"   > {l}\n", style="dim white")
+            for line_str in lines:
+                log_feed.append(f"   > {line_str}\n", style="dim white")
         else:
             log_feed.append(
                 "No active log file modifications in the last 60 seconds.",
