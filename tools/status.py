@@ -303,20 +303,16 @@ def check_models_status(
             else:
                 status = "PAUSED"
 
+        # Checkpoint cell formatting
         if ckpt_complete and status == "COMPLETE":
             checkpoint_cell = "[bold green]SAVED[/bold green]"
-        elif ckpt_exists:
-            is_ckpt_fresh = (
-                active_run_start == 0.0
-                or ckpt_mtime >= active_run_start - 60
-                or (is_log_fresh and abs(ckpt_mtime - log_mtime) < 300)
-            )
-            if is_ckpt_fresh and status == "RUNNING":
+        elif status == "RUNNING":
+            if is_ckpt_fresh:
                 checkpoint_cell = "[bold yellow]SAVING[/bold yellow]"
-            elif is_ckpt_fresh:
-                checkpoint_cell = "[green]EXISTS[/green]"
             else:
-                checkpoint_cell = "[dim yellow]STALE (OLD)[/dim yellow]"
+                checkpoint_cell = "[dim]PENDING[/dim]"
+        elif status == "COMPLETE":
+            checkpoint_cell = "[green]COMPLETE[/green]"
         else:
             checkpoint_cell = "[dim]PENDING[/dim]"
 
@@ -341,13 +337,15 @@ def check_models_status(
 def make_progress_bar(pct: float, width: int = 10) -> str:
     pct = max(0.0, min(100.0, pct))
     filled = int(round((pct / 100.0) * width))
-    bar = "█" * filled + "░" * (width - filled)
+    unfilled = width - filled
+    bar_filled = "█" * filled
+    bar_unfilled = "─" * unfilled
     if pct > 85:
-        return f"[bold red]{bar}[/bold red]"
+        return f"[bold red]{bar_filled}[/bold red][dim red]{bar_unfilled}[/dim red]"
     elif pct > 60:
-        return f"[yellow]{bar}[/yellow]"
+        return f"[yellow]{bar_filled}[/yellow][dim yellow]{bar_unfilled}[/dim yellow]"
     else:
-        return f"[green]{bar}[/green]"
+        return f"[green]{bar_filled}[/green][dim green]{bar_unfilled}[/dim green]"
 
 
 def get_system_metrics() -> dict:

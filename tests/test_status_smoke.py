@@ -120,4 +120,4 @@ def test_stale_checkpoints_and_logs_ignored_in_new_run(tmp_path):
         )
         coma_status = next(m for m in models if m["model"] == "coma")
         assert coma_status["status"] == "QUEUED"
-        assert coma_status["checkpoint"] == "[dim yellow]STALE (OLD)[/dim yellow]"
+        assert coma_status["checkpoint"] == "[dim]PENDING[/dim]"
