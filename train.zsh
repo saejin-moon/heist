@@ -53,6 +53,7 @@ Usage:
     ./train.zsh --parallel 4         # run up to 4 models concurrently to maximize GPU/CPU
     ./train.zsh --steps 20480        # custom step budget for tuning
     ./train.zsh --stages 0,1,2       # run selected stages (0, 1, 2)
+    ./train.zsh --stages 0,1 --resume # skip completed stage 0 and warm-start stage 1 from stage 0
     ./train.zsh --daemon             # background the campaign with nohup
     ./train.zsh -h, --help           # show this help message
 
@@ -63,6 +64,8 @@ Flags:
   --steps STEPS     total training timesteps per algorithm (default 299008)
   --stages STAGES   comma-separated curriculum stage indices (default 0)
   --num-stages N    run first N curriculum stages (0..N-1)
+  --resume, --use-ckpt  reuse completed model checkpoints and skip already trained stages
+  --from-stage N    initialize model weights from completed stage N checkpoints
   --cir-coef COEF   CIR coefficient for routing advantages (default 0.5)
   --car-coef COEF   CAR coefficient for intrinsic affordance rewards (default 0.5)
   --no-rnd          disable Random Network Distillation (RND is enabled by default)
@@ -83,6 +86,8 @@ USE_RND=1
 RND_COEF=0.05
 ENABLE_SIDE_TASKS=0
 CUSTOM_PREFIX=""
+USE_CKPT=0
+FROM_STAGE=""
 
 while (( $# )); do
     case "$1" in
@@ -94,6 +99,8 @@ while (( $# )); do
 
         --fast|--quick|--sample) FAST_MODE=1; CAMPAIGN_STEPS=10240; STAGES="0"; SKIP_SMOKE=1; shift ;;
         --parallel|-j) CONCURRENT_JOBS="$2"; shift 2 ;;
+        --resume|--use-ckpt|--reuse-checkpoints|--skip-completed) USE_CKPT=1; shift ;;
+        --from-stage|--init-stage) FROM_STAGE="$2"; shift 2 ;;
         --cir-coef)   CIR_COEF="$2"; shift 2 ;;
         --car-coef)   CAR_COEF="$2"; shift 2 ;;
         --rnd)        USE_RND=1; shift ;;
@@ -325,9 +332,32 @@ run_campaign() {
             local exp_name_tag="${name}${st_suffix}_s${s}"
             local log_name_tag="${name}${st_suffix}_s${s}.log"
 
+            # Skip completed models if --resume / --use-ckpt is active
+            if [ "$USE_CKPT" -eq 1 ] && [ -f "checkpoints/${exp_name_tag}/complete.json" ]; then
+                log "[SKIP] Model '${name}${st_suffix}' (stage $s) completed checkpoint found at checkpoints/${exp_name_tag}. Skipping training."
+                task_status[$next_t]="done"
+                task_start_times[$next_t]=$now
+                if [ "$RUN_EVAL" -eq 1 ]; then
+                    trigger_eval "$name" "$s" "$EVAL_RUN_ID" "$steps"
+                    task_eval_pids[$next_t]=$!
+                else
+                    task_eval_done[$next_t]=1
+                fi
+                continue
+            fi
+
             if [ "${stage_start_times[$s]}" -eq 0 ]; then
                 stage_start_times[$s]=$now
                 log "Starting training for stage $s at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            fi
+
+            local -a load_ckpt_flag=()
+            if [ -n "$FROM_STAGE" ]; then
+                local src_ckpt="checkpoints/${name}${st_suffix}_s${FROM_STAGE}"
+                if [ -d "$src_ckpt" ]; then
+                    load_ckpt_flag=("--load-checkpoint" "$src_ckpt")
+                    log "-> Warm-starting ${name}${st_suffix} (stage $s) from stage ${FROM_STAGE} checkpoint: ${src_ckpt}"
+                fi
             fi
 
             log "-> Launching ${name}${st_suffix} (stage $s, RND=${USE_RND}) ..."
@@ -336,34 +366,34 @@ run_campaign() {
 
             case "$name" in
                 ippo)
-                    nohup .venv/bin/python -u src/train_ippo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --no-cuda --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_ippo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --no-cuda --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     ;;
                 mappo)
-                    nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     ;;
                 mappo_car)
-                    nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     ;;
                 mappo_cir)
-                    nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     ;;
                 comm)
-                    nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     ;;
                 comm_cir)
-                    nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     ;;
                 comm_cir_car)
-                    nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     ;;
                 qmix)
-                    nohup .venv/bin/python -u src/train_qmix.py --total-steps "$steps" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_qmix.py --total-steps "$steps" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     ;;
                 coma)
-                    nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     ;;
                 coma_cir)
-                    nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     ;;
             esac
 
