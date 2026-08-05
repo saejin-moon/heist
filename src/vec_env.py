@@ -76,8 +76,8 @@ class VectorEnv:
     def __init__(self, num_envs, config=None, base_seed=0):
         self.num_envs = num_envs
         self.base_seed = base_seed
-        # Dummy env reference for inspectability/tests
-        self.envs = [HeistEnv(config) for _ in range(num_envs)]
+        # Prototype env for metadata/inspectability (workers spawn their own)
+        self.envs = [HeistEnv(config)]
 
         # Use multiprocessing context
         ctx = mp.get_context(

@@ -86,6 +86,18 @@ def parse_args():
         default=0.0,
         help="Counterfactual Affordance Reward (CAR) coefficient.",
     )
+    p.add_argument(
+        "--use-rnd", action="store_true", help="enable RND exploration bonus"
+    )
+    p.add_argument(
+        "--rnd-coef", type=float, default=0.05, help="RND reward coefficient"
+    )
+    p.add_argument(
+        "--load-checkpoint",
+        type=str,
+        default="",
+        help="custom checkpoint path for transfer",
+    )
     args = p.parse_args()
 
     if args.num_minibatches < 1:
@@ -196,6 +208,17 @@ if __name__ == "__main__":
     num_updates = args.total_steps // (args.num_steps * args.num_envs)
     print(f"num_updates: {num_updates}")
 
+    if args.load_checkpoint:
+        print(f"  [Transfer] Loading custom checkpoint from {args.load_checkpoint}")
+        load_matching_weights(policy, f"{args.load_checkpoint}/policy.pt", device)
+
+    rnd_module = None
+    if args.use_rnd:
+        from exploration import RNDModule
+
+        rnd_module = RNDModule(obs_dim=25, device=device)
+        print("  [Exploration] RND Module initialized.")
+
     start_time = time.time()
     global_step = 0
 
@@ -270,8 +293,17 @@ if __name__ == "__main__":
             ).float()
             last_infos = infos
 
+            r_int_tensor = None
+            if rnd_module is not None:
+                obs_stacked = torch.as_tensor(
+                    next_obs["_stacked"]["observation"], device=device
+                )
+                r_int_tensor = rnd_module.compute_reward(obs_stacked)
             for i, a in enumerate(AGENTS):
-                buf_rewards[step, :, i] = torch.as_tensor(rewards[a], device=device)
+                r_step = torch.as_tensor(rewards[a], device=device)
+                if r_int_tensor is not None:
+                    r_step = r_step + args.rnd_coef * r_int_tensor[i]
+                buf_rewards[step, :, i] = r_step
             buf_terminated[step] = torch.as_tensor(
                 terminations["scout"], device=device
             ).float()
@@ -449,6 +481,8 @@ if __name__ == "__main__":
                 loss.backward()
                 nn.utils.clip_grad_norm_(policy.parameters(), args.max_grad_norm)
                 optimizer.step()
+                if rnd_module is not None:
+                    rnd_module.update(flat_obs[mb])
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break

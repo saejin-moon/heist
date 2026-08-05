@@ -72,6 +72,9 @@ EOF
     exit 0
 }
 
+USE_RND=0
+RND_COEF=0.05
+
 while (( $# )); do
     case "$1" in
         --workdir)    WORKDIR="$2"; shift 2 ;;
@@ -82,6 +85,8 @@ while (( $# )); do
         --parallel|-j) CONCURRENT_JOBS="$2"; shift 2 ;;
         --cir-coef)   CIR_COEF="$2"; shift 2 ;;
         --car-coef)   CAR_COEF="$2"; shift 2 ;;
+        --rnd)        USE_RND=1; shift ;;
+        --rnd-coef)   USE_RND=1; RND_COEF="$2"; shift 2 ;;
         --num-stages)
             N="$2"; shift 2
             STAGES=$(python3 -c "print(','.join(str(i) for i in range($N)))")
@@ -237,28 +242,33 @@ run_stage() {
             fi
         done
 
+        local rnd_flags=""
+        if [ "$USE_RND" -eq 1 ]; then
+            rnd_flags="--use-rnd --rnd-coef $RND_COEF"
+        fi
+
         log "-> Launching $name ..."
         case "$name" in
             ippo)
-                .venv/bin/python -u src/train_ippo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --no-cuda --seed 0 --env-config "$cfg" --exp-name "ippo_s${s}" > "log/${name}_s${s}.log" 2>&1 &
+                .venv/bin/python -u src/train_ippo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --no-cuda --seed 0 --env-config "$cfg" --exp-name "ippo_s${s}" $rnd_flags > "log/${name}_s${s}.log" 2>&1 &
                 ;;
             mappo)
-                .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "mappo_s${s}" > "log/${name}_s${s}.log" 2>&1 &
+                .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "mappo_s${s}" $rnd_flags > "log/${name}_s${s}.log" 2>&1 &
                 ;;
             mappo_car)
-                .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --env-config "$cfg" --exp-name "mappo_car_s${s}" > "log/${name}_s${s}.log" 2>&1 &
+                .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --env-config "$cfg" --exp-name "mappo_car_s${s}" $rnd_flags > "log/${name}_s${s}.log" 2>&1 &
                 ;;
             comm)
-                .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "comm_s${s}" --save-model > "log/${name}_s${s}.log" 2>&1 &
+                .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "comm_s${s}" --save-model $rnd_flags > "log/${name}_s${s}.log" 2>&1 &
                 ;;
             comm_cir)
-                .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --env-config "$cfg" --exp-name "comm_cir_s${s}" --save-model > "log/${name}_s${s}.log" 2>&1 &
+                .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --env-config "$cfg" --exp-name "comm_cir_s${s}" --save-model $rnd_flags > "log/${name}_s${s}.log" 2>&1 &
                 ;;
             comm_cir_car)
-                .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --env-config "$cfg" --exp-name "comm_cir_car_s${s}" --save-model > "log/${name}_s${s}.log" 2>&1 &
+                .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --env-config "$cfg" --exp-name "comm_cir_car_s${s}" --save-model $rnd_flags > "log/${name}_s${s}.log" 2>&1 &
                 ;;
             qmix)
-                .venv/bin/python -u src/train_qmix.py --total-steps "$steps_for_stage" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "qmix_s${s}" > "log/${name}_s${s}.log" 2>&1 &
+                .venv/bin/python -u src/train_qmix.py --total-steps "$steps_for_stage" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "qmix_s${s}" $rnd_flags > "log/${name}_s${s}.log" 2>&1 &
                 ;;
         esac
         

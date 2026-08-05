@@ -82,6 +82,18 @@ def parse_args():
     p.add_argument("--eval-every", type=int, default=Args.eval_every)
     p.add_argument("--eval-episodes", type=int, default=Args.eval_episodes)
     p.add_argument("--env-config", type=str, default="")
+    p.add_argument(
+        "--use-rnd", action="store_true", help="enable RND exploration bonus"
+    )
+    p.add_argument(
+        "--rnd-coef", type=float, default=0.05, help="RND reward coefficient"
+    )
+    p.add_argument(
+        "--load-checkpoint",
+        type=str,
+        default="",
+        help="custom checkpoint path for transfer",
+    )
     args = p.parse_args()
     if args.train_freq < 1:
         p.error("--train-freq must be positive")
@@ -278,6 +290,19 @@ def train(args: Args):
                 )
                 target_nets[a].load_state_dict(q_nets[a].state_dict())
 
+    if args.load_checkpoint:
+        print(f"  [Transfer] Loading custom checkpoint from {args.load_checkpoint}")
+        for a in AGENTS:
+            load_matching_weights(q_nets[a], f"{args.load_checkpoint}/{a}_q.pt", device)
+            target_nets[a].load_state_dict(q_nets[a].state_dict())
+
+    rnd_module = None
+    if args.use_rnd:
+        from exploration import RNDModule
+
+        rnd_module = RNDModule(obs_dim=25, device=device)
+        print("  [Exploration] RND Module initialized.")
+
     params = list(mixing.parameters())
     for a in AGENTS:
         params += list(q_nets[a].parameters())
@@ -363,6 +388,15 @@ def train(args: Args):
             next_obs, rewards, terms, truncs, infos = env.step(actions)
             done = bool(any(terms.values()) or any(truncs.values()))
             next_states = env.state()
+
+            if rnd_module is not None:
+                obs_stacked = torch.stack(
+                    [torch.tensor(obs[a]["observation"], device=device) for a in AGENTS]
+                )
+                r_int = rnd_module.compute_reward(obs_stacked)
+                for idx_a, a in enumerate(AGENTS):
+                    rewards[a] = float(rewards[a] + args.rnd_coef * r_int[idx_a].item())
+                rnd_module.update(obs_stacked)
 
             replay.push(
                 obs,

@@ -104,6 +104,18 @@ def parse_args():
     p.add_argument("--eval-every", type=int, default=Args.eval_every)
     p.add_argument("--eval-episodes", type=int, default=Args.eval_episodes)
     p.add_argument("--env-config", type=str, default="")
+    p.add_argument(
+        "--use-rnd", action="store_true", help="enable RND exploration bonus"
+    )
+    p.add_argument(
+        "--rnd-coef", type=float, default=0.05, help="RND reward coefficient"
+    )
+    p.add_argument(
+        "--load-checkpoint",
+        type=str,
+        default="",
+        help="custom checkpoint path for transfer",
+    )
     return p.parse_args()
 
 
@@ -203,6 +215,25 @@ def train(args: Args):
                     load_matching_weights(
                         policies[a], f"checkpoints/{prev_run_name}/{a}.pt", device
                     )
+
+    if args.load_checkpoint:
+        print(f"  [Transfer] Loading custom checkpoint from {args.load_checkpoint}")
+        if args.shared:
+            load_matching_weights(
+                shared_policy, f"{args.load_checkpoint}/scout.pt", device
+            )
+        else:
+            for a in AGENTS:
+                load_matching_weights(
+                    policies[a], f"{args.load_checkpoint}/{a}.pt", device
+                )
+
+    rnd_module = None
+    if args.use_rnd:
+        from exploration import RNDModule
+
+        rnd_module = RNDModule(obs_dim=25, device=device)
+        print("  [Exploration] RND Module initialized.")
 
     vec_env = VectorEnv(args.num_envs, config=env_config, base_seed=args.seed)
     next_obs, next_state = vec_env.reset(seed=args.seed)
@@ -359,8 +390,14 @@ def train(args: Args):
                 truncations["scout"], device=device
             ).float()
             last_infos = infos
-            for a in AGENTS:
-                buffers[a]["rewards"][step] = torch.as_tensor(rewards[a], device=device)
+            r_int_tensor = None
+            if rnd_module is not None:
+                r_int_tensor = rnd_module.compute_reward(obs_all)
+            for idx_a, a in enumerate(AGENTS):
+                r_step = torch.as_tensor(rewards[a], device=device)
+                if r_int_tensor is not None:
+                    r_step = r_step + args.rnd_coef * r_int_tensor[idx_a]
+                buffers[a]["rewards"][step] = r_step
                 term_t = torch.as_tensor(terminations[a], device=device).float()
                 trunc_t = torch.as_tensor(truncations[a], device=device).float()
                 buffers[a]["terminated"][step] = term_t
@@ -516,6 +553,8 @@ def train(args: Args):
                         policies[agent_list[0]].parameters(), args.max_grad_norm
                     )
                     optimizers[group_name].step()
+                    if rnd_module is not None:
+                        rnd_module.update(b_obs[mb])
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
