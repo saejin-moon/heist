@@ -72,9 +72,7 @@ def _get_next_run_id(results_dir: Path, prefix: str = "run") -> str:
     existing = [
         d.name
         for d in results_dir.iterdir()
-        if d.is_dir()
-        and d.name.startswith(prefix)
-        and d.name[len(prefix) :].isdigit()
+        if d.is_dir() and d.name.startswith(prefix) and d.name[len(prefix) :].isdigit()
     ]
     nums = [int(name[len(prefix) :]) for name in existing if len(name) <= 6]
     next_num = max(nums) + 1 if nums else 1
@@ -172,7 +170,11 @@ def get_active_campaign_info() -> dict:
         if latest_log_file and active_training:
             info["side_tasks"] = "_st_" in latest_log_file.name
 
-        if LOG_DIR.is_dir() and latest_log_mtime > 0 and (active_training or latest_log_mtime > latest_results_mtime):
+        if (
+            LOG_DIR.is_dir()
+            and latest_log_mtime > 0
+            and (active_training or latest_log_mtime > latest_results_mtime)
+        ):
             for p in LOG_DIR.glob("*.log"):
                 mtime = p.stat().st_mtime
                 if (latest_log_mtime - mtime) < 300:
@@ -183,7 +185,9 @@ def get_active_campaign_info() -> dict:
         if active_training and latest_log_mtime > latest_results_mtime:
             prefix = "st" if info["side_tasks"] else "run"
             info["run_id"] = _get_next_run_id(RESULTS_DIR, prefix=prefix)
-            info["active_run_start"] = min(recent_log_mtimes) if recent_log_mtimes else latest_log_mtime
+            info["active_run_start"] = (
+                min(recent_log_mtimes) if recent_log_mtimes else latest_log_mtime
+            )
         else:
             if latest_results_run_id and latest_results_run_id.startswith("run"):
                 info["run_id"] = latest_results_run_id
@@ -223,13 +227,10 @@ def check_models_status(
                 log_mtime = candidate.stat().st_mtime
                 break
 
-        is_log_fresh = (
-            log_path is not None
-            and (
-                active_run_start == 0.0
-                or log_mtime >= active_run_start - 60
-                or (time.time() - log_mtime) < 300
-            )
+        is_log_fresh = log_path is not None and (
+            active_run_start == 0.0
+            or log_mtime >= active_run_start - 60
+            or (time.time() - log_mtime) < 300
         )
 
         possible_ckpt_names = [
@@ -237,26 +238,19 @@ def check_models_status(
             f"{name}_s{active_stage}",
         ]
         ckpt_complete = False
-        ckpt_exists = False
-        ckpt_mtime = 0.0
+        is_ckpt_fresh = False
         completed_steps = "-"
         for c_name in possible_ckpt_names:
             ckpt_dir = CKPT_DIR / c_name
             marker = ckpt_dir / "complete.json"
-            if ckpt_dir.is_dir():
-                ckpt_exists = True
-                ckpt_mtime = ckpt_dir.stat().st_mtime
             if marker.is_file():
-                ckpt_exists = True
                 marker_mtime = marker.stat().st_mtime
-                if marker_mtime > ckpt_mtime:
-                    ckpt_mtime = marker_mtime
-                is_marker_fresh = (
+                is_ckpt_fresh = (
                     active_run_start == 0.0
                     or marker_mtime >= active_run_start - 60
                     or (is_log_fresh and abs(marker_mtime - log_mtime) < 300)
                 )
-                if is_marker_fresh:
+                if is_ckpt_fresh:
                     ckpt_complete = True
                     try:
                         data = json.loads(marker.read_text())
@@ -370,8 +364,8 @@ def get_system_metrics() -> dict:
         with open("/proc/meminfo") as f:
             lines = f.readlines()
         mem = {}
-        for l in lines:
-            parts = l.split(":")
+        for line in lines:
+            parts = line.split(":")
             if len(parts) == 2:
                 mem[parts[0].strip()] = int(parts[1].split()[0])
         total_kb = mem.get("MemTotal", 0)
