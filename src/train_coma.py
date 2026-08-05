@@ -12,7 +12,6 @@ Counterfactual advantage:
 import argparse
 import json
 import os
-import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +33,7 @@ from env import AGENTS, parse_env_config
 from model import ComaAgent, ComaCritic
 from ppo_utils import (
     compute_counterfactual_advantage,
+    get_previous_stage_checkpoint,
     load_matching_weights,
     write_completion,
 )
@@ -191,19 +191,15 @@ def train(args: Args):  # noqa: C901
         load_matching_weights(policy, str(policy_pt), device)
         target_critic.load_state_dict(policy.critic.state_dict())
     else:
-        match = re.search(r"^(.*)_s(\d+)$", run_name)
-        if match:
-            base_name, stage_str = match.groups()
-            stage = int(stage_str)
-            if stage > 0:
-                prev_run_name = f"{base_name}_s{stage - 1}"
-                print(
-                    f"  [Transfer] Checking for previous stage checkpoint in checkpoints/{prev_run_name}"
-                )
-                load_matching_weights(
-                    policy, f"checkpoints/{prev_run_name}/policy.pt", device
-                )
-                target_critic.load_state_dict(policy.critic.state_dict())
+        prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
+        if prev_ckpt:
+            print(
+                f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}"
+            )
+            load_matching_weights(
+                policy, os.path.join(prev_ckpt, "policy.pt"), device
+            )
+            target_critic.load_state_dict(policy.critic.state_dict())
 
     if args.load_checkpoint:
         print(f"  [Transfer] Loading custom checkpoint from {args.load_checkpoint}")

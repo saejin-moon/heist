@@ -165,22 +165,17 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(policy.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # Stage-to-stage policy transfer
-    import re
+    from ppo_utils import get_previous_stage_checkpoint, load_matching_weights
 
-    from ppo_utils import load_matching_weights
-
-    match = re.search(r"^(.*)_s(\d+)$", run_name)
-    if match:
-        base_name, stage_str = match.groups()
-        stage = int(stage_str)
-        if stage > 0:
-            prev_run_name = f"{base_name}_s{stage - 1}"
-            print(
-                f"  [Transfer] Checking for previous stage checkpoint in checkpoints/{prev_run_name}"
-            )
-            load_matching_weights(
-                policy, f"checkpoints/{prev_run_name}/comm.pt", device
-            )
+    prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
+    if prev_ckpt:
+        print(
+            f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}"
+        )
+        ckpt_pt = os.path.join(prev_ckpt, "comm.pt")
+        if not os.path.isfile(ckpt_pt):
+            ckpt_pt = os.path.join(prev_ckpt, "policy.pt")
+        load_matching_weights(policy, ckpt_pt, device)
 
     obs_h, obs_w = OBSERVATION_SIZE
     n = len(AGENTS)
