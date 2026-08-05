@@ -266,7 +266,7 @@ run_stage() {
                         local elapsed=$(( now - start_times[$j] ))
                         local mins=$(( elapsed / 60 ))
                         local secs=$(( elapsed % 60 ))
-                        log "✓ Model '${model_names[$j]}${st_suffix}' completed in ${mins}m ${secs}s (${elapsed}s total)."
+                        log "[DONE] Model '${model_names[$j]}${st_suffix}' completed in ${mins}m ${secs}s (${elapsed}s total)."
                         trigger_eval "${model_names[$j]}" "$s" "$EVAL_RUN_ID" "$steps_for_stage"
                         eval_pids+=($!)
                     fi
@@ -355,7 +355,7 @@ run_stage() {
                     local elapsed=$(( now - start_times[$j] ))
                     local mins=$(( elapsed / 60 ))
                     local secs=$(( elapsed % 60 ))
-                    log "✓ Model '${model_names[$j]}${st_suffix}' completed in ${mins}m ${secs}s (${elapsed}s total)."
+                    log "[DONE] Model '${model_names[$j]}${st_suffix}' completed in ${mins}m ${secs}s (${elapsed}s total)."
                     status_str="${status_str} | ${name}: done"
                     trigger_eval "${model_names[$j]}" "$s" "$EVAL_RUN_ID" "$steps_for_stage"
                     eval_pids+=($!)

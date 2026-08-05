@@ -6,14 +6,14 @@ Four specialized agents—**Scout**, **Hacker**, **Muscle**, and **Extractor**�
 
 ```
   ┌─────────┐         ┌─────────┐         ┌───────────┐         ┌───────────┐
-  │  SCOUT  │ ──────► │ HACKER  │ ──────► │ EXTRACTOR │ ──────► │   TEAM    │
+  │  SCOUT  │ ──────> │ HACKER  │ ──────> │ EXTRACTOR │ ──────> │   TEAM    │
   └─────────┘         └─────────┘         └───────────┘         └───────────┘
  Tag Terminal         Crack Terminal       Secure Loot           Escape Exit
 ```
 
 ---
 
-## 🔬 The Research Challenge: Causal Credit Dilution
+## The Research Challenge: Causal Credit Dilution
 
 Standard multi-agent RL algorithms (e.g., standard MAPPO, QMIX, or COMA) rely on joint team rewards and assume simultaneous contribution. In a **Recursively Gated Dec-POMDP (RG-Dec-POMDP)**, this assumption fails due to **Causal Credit Dilution**:
 * If the Extractor fails at step 50 due to a late positioning error, global negative reward (-10.0) propagates backward.
@@ -22,7 +22,7 @@ Standard multi-agent RL algorithms (e.g., standard MAPPO, QMIX, or COMA) rely on
 
 ---
 
-## ⚡ Key Environment Features & Refinements
+## Key Environment Features & Refinements
 
 ### 1. Refined & Balanced Reward System
 * **Step Time Bleed:** `-0.01` per step to discourage loafing.
@@ -33,10 +33,10 @@ Standard multi-agent RL algorithms (e.g., standard MAPPO, QMIX, or COMA) rely on
 
 ### 2. Dynamic Side-Tasks Extension (`--side-tasks`)
 When launched with the `--side-tasks` CLI trigger, agents gain role-specific secondary capabilities during waiting phases:
-* 🕵️ **Scout (Decoy Noise Ping):** Emits a sound distraction in open space, drawing nearby guards within 6 tiles to search the Scout's location.
-* 💻 **Hacker (Door Lock Override):** Force-unlocks adjacent doors permanently (`DOOR` $\rightarrow$ `EMPTY`) to clear fast transit routes for the team.
-* Muscle (Shortcut Wall Breach):** Destroys internal walls (`WALL` $\rightarrow$ `EMPTY`) to create custom escape corridors.
-* 🎒 **Extractor (Beacon Pre-Calibration):** Calibrates the extraction beacon early, dropping the final extraction countdown from 10 steps down to **3 steps**.
+* **Scout (Decoy Noise Ping):** Emits a sound distraction in open space, drawing nearby guards within 6 tiles to search the Scout's location.
+* **Hacker (Door Lock Override):** Force-unlocks adjacent doors permanently (`DOOR` $\rightarrow$ `EMPTY`) to clear fast transit routes for the team.
+* **Muscle (Shortcut Wall Breach):** Destroys internal walls (`WALL` $\rightarrow$ `EMPTY`) to create custom escape corridors.
+* **Extractor (Beacon Pre-Calibration):** Calibrates the extraction beacon early, dropping the final extraction countdown from 10 steps down to **3 steps**.
 
 ### 3. Integrated Curiosity & Execution Infrastructure
 * **Random Network Distillation (RND):** Includes RND curiosity-driven exploration (`src/exploration.py`) by default (`USE_RND=1`) with fixed target and online predictor neural networks.
@@ -45,7 +45,7 @@ When launched with the `--side-tasks` CLI trigger, agents gain role-specific sec
 
 ---
 
-## 🧪 10-Model Benchmark Suite & Research Taxonomy
+## 10-Model Benchmark Suite & Research Taxonomy
 
 HEIST includes a 10-model algorithm suite covering the major MARL paradigms:
 
@@ -76,7 +76,7 @@ To rigorously isolate **communication message passing** from **causal advantage 
 
 ---
 
-## 📊 Benchmark Results (Stage 0, 1M Steps & Fast Validation)
+## Benchmark Results (Stage 0, 1M Steps & Fast Validation)
 
 ### 1,000,000-Step Campaign Benchmark (Stage 0)
 
@@ -95,7 +95,7 @@ To rigorously isolate **communication message passing** from **causal advantage 
 
 ---
 
-## 🛠️ Setup and Installation
+## Setup and Installation
 
 Requirements: Python 3.12+ and `uv` package manager.
 
@@ -114,7 +114,7 @@ uv run ruff check
 
 ---
 
-## 🚀 Campaign Execution CLI (`train.zsh`)
+## Campaign Execution CLI (`train.zsh`)
 
 Use `train.zsh` to provision, sync, and launch training campaigns:
 
@@ -150,7 +150,7 @@ Use `train.zsh` to provision, sync, and launch training campaigns:
 
 ---
 
-## 📁 Codebase Layout
+## Codebase Layout
 
 ```
 train.zsh                     Multi-model campaign launcher & orchestrator

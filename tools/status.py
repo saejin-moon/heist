@@ -24,6 +24,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
@@ -73,7 +74,6 @@ def get_active_campaign_info() -> dict:
         "fast_mode": False,
     }
 
-    # Find latest result run ID
     if RESULTS_DIR.is_dir():
         all_runs = sorted(
             [d.name for d in RESULTS_DIR.iterdir() if d.is_dir()],
@@ -100,7 +100,6 @@ def get_active_campaign_info() -> dict:
         except Exception:
             pass
 
-    # Inspect active log files to infer current stage
     if LOG_DIR.is_dir():
         for p in LOG_DIR.glob("*.log"):
             m_stage = re.search(r"_s(\d+)\.log$", p.name)
@@ -130,24 +129,22 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
                 log_path = candidate
                 break
 
-        # Check current stage checkpoint completion
         possible_ckpt_names = [
             f"{name}_st_s{active_stage}",
             f"{name}_s{active_stage}",
         ]
         ckpt_complete = False
-        completed_steps = "N/A"
+        completed_steps = "-"
         for c_name in possible_ckpt_names:
             marker = CKPT_DIR / c_name / "complete.json"
             if marker.is_file():
-                # Verify checkpoint modification time aligns with current active run
                 ckpt_mtime = marker.stat().st_mtime
                 log_mtime = log_path.stat().st_mtime if log_path else 0
                 if abs(ckpt_mtime - log_mtime) < 3600 or log_path is None:
                     ckpt_complete = True
                     try:
                         data = json.loads(marker.read_text())
-                        completed_steps = str(data.get("completed_steps", "N/A"))
+                        completed_steps = str(data.get("completed_steps", "-"))
                     except Exception:
                         pass
                     break
@@ -197,9 +194,9 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
                 "mean_reward": reward_str,
                 "runtime": runtime_str,
                 "checkpoint": (
-                    "COMPLETE ✅"
+                    "[bold green]SAVED[/bold green]"
                     if ckpt_complete
-                    else ("DONE 💾" if status == "COMPLETE" else "IN PROGRESS 🔄")
+                    else ("[green]COMPLETE[/green]" if status == "COMPLETE" else "[dim]PENDING[/dim]")
                 ),
             }
         )
@@ -222,10 +219,10 @@ def make_dashboard_panel() -> Panel:
     time_str = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
 
     title_text = (
-        f"[bold cyan]HEIST MARL DASHBOARD[/bold cyan]  │  "
-        f"Run ID: [bold gold1]{info['run_id']}[/bold gold1]  │  "
-        f"Active Stage: [bold magenta]{active_stage}[/bold magenta]  │  "
-        f"Side-Tasks: {st_text}  │  "
+        f"[bold cyan]HEIST MARL DASHBOARD[/bold cyan]  |  "
+        f"Run ID: [bold gold1]{info['run_id']}[/bold gold1]  |  "
+        f"Active Stage: [bold magenta]{active_stage}[/bold magenta]  |  "
+        f"Side-Tasks: {st_text}  |  "
         f"Fast Mode: {fast_text}"
     )
 
@@ -236,25 +233,25 @@ def make_dashboard_panel() -> Panel:
         header_style="bold magenta",
         padding=(0, 1),
     )
-    table.add_column("Model", style="bold cyan", no_wrap=True)
+    table.add_column("Algorithm Model", style="bold cyan", no_wrap=True)
     table.add_column("Stage", justify="center", no_wrap=True)
-    table.add_column("Status", justify="center", no_wrap=True)
-    table.add_column("Steps", justify="right", no_wrap=True)
+    table.add_column("Execution Status", justify="center", no_wrap=True)
+    table.add_column("Timesteps", justify="right", no_wrap=True)
     table.add_column("SPS", justify="right", no_wrap=True)
     table.add_column("Mean Reward", justify="right", no_wrap=True)
-    table.add_column("Runtime", justify="center", no_wrap=True)
+    table.add_column("Duration", justify="center", no_wrap=True)
     table.add_column("Checkpoint", justify="center", no_wrap=True)
 
     for m in models:
         st = m["status"]
         if st == "RUNNING":
-            status_cell = "[bold green]RUNNING 🟢[/bold green]"
+            status_cell = "[bold black on green] RUNNING [/bold black on green]"
         elif st == "COMPLETE":
-            status_cell = "[bold blue]DONE ✅[/bold blue]"
+            status_cell = "[bold white on blue] COMPLETE [/bold white on blue]"
         elif st == "QUEUED":
-            status_cell = "[dim]QUEUED ⏳[/dim]"
+            status_cell = "[dim white] QUEUED [/dim white]"
         else:
-            status_cell = f"[yellow]{st}[/yellow]"
+            status_cell = f"[bold black on yellow] {st} [/bold black on yellow]"
 
         table.add_row(
             m["model"],
@@ -281,10 +278,10 @@ def make_dashboard_panel() -> Panel:
         )
         if log_files:
             latest = log_files[0]
-            log_feed.append(f"📄 Active Log: {latest.name}\n", style="bold yellow")
+            log_feed.append(f"Log Stream: {latest.name}\n", style="bold gold1")
             lines = latest.read_text(errors="replace").splitlines()[-3:]
             for l in lines:
-                log_feed.append(f"   │ {l}\n", style="dim white")
+                log_feed.append(f"   > {l}\n", style="dim white")
         else:
             log_feed.append(
                 "No active log file modifications in the last 60 seconds.",
@@ -295,14 +292,14 @@ def make_dashboard_panel() -> Panel:
     grid.add_row(
         Panel(
             table,
-            title="[bold white]Model Campaign Execution Matrix[/bold white]",
+            title="[bold white]Model Execution Matrix[/bold white]",
             border_style="bright_blue",
         )
     )
     grid.add_row(
         Panel(
             log_feed,
-            title="[bold white]Live Diagnostic Log Feed[/bold white]",
+            title="[bold white]Diagnostic Log Stream[/bold white]",
             border_style="dim blue",
             height=6,
         )
@@ -311,7 +308,7 @@ def make_dashboard_panel() -> Panel:
     return Panel(
         grid,
         title=title_text,
-        subtitle=f"[dim]Updated: {time_str}  •  Press Ctrl+C to stop[/dim]",
+        subtitle=f"[dim]Updated: {time_str}  |  Press Ctrl+C to exit[/dim]",
         border_style="cyan",
     )
 

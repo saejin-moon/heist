@@ -4,7 +4,7 @@ This directory contains benchmark results, evaluation summaries, and empirical d
 
 ---
 
-## 📁 Artifact Directory Index
+## Artifact Directory Index
 
 * [`stage0_comparison.json`](file:///home/fuddle/git/heist/results/stage0_comparison.json): Consolidated comparison table across 10k, 300k, and 1,000,000 step budgets.
 * [`run018/summary.json`](file:///home/fuddle/git/heist/results/run018/summary.json): Full 1M-step evaluation output, CAI correlation matrices, and counterfactual importance rankings.
@@ -16,7 +16,7 @@ This directory contains benchmark results, evaluation summaries, and empirical d
 
 ---
 
-## 📊 Stage-0 Headline Benchmark Table (1,000,000 Steps)
+## Stage-0 Headline Benchmark Table (1,000,000 Steps)
 
 60-episode greedy rollouts across 3 random seeds on Stage 0 (11x11 grid, 1-2 rooms, max steps 60):
 
@@ -33,7 +33,7 @@ This directory contains benchmark results, evaluation summaries, and empirical d
 
 ---
 
-## ⚡ COMA & Non-Communicating CIR Benchmark (Fast 10k Validation)
+## COMA & Non-Communicating CIR Benchmark (Fast 10k Validation)
 
 Comparative metrics across COMA, COMA-CIR, and MAPPO-CIR on Stage 0 (10,240 timesteps / 5 updates):
 
@@ -46,7 +46,7 @@ Comparative metrics across COMA, COMA-CIR, and MAPPO-CIR on Stage 0 (10,240 time
 
 ---
 
-## 🎯 Credit Attribution Index (CAI Correlations)
+## Credit Attribution Index (CAI Correlations)
 
 Pearson correlation of per-agent shaped credit with terminal episode outcome:
 
@@ -60,7 +60,7 @@ Pearson correlation of per-agent shaped credit with terminal episode outcome:
 
 ---
 
-## 📈 Curriculum Solvability Benchmark (Scripted BFS Controller)
+## Curriculum Solvability Benchmark (Scripted BFS Controller)
 
 The near-optimal scripted controller ([`src/scripted.py`](file:///home/fuddle/git/heist/src/scripted.py)) validates that every curriculum stage is solvable:
 
@@ -74,7 +74,7 @@ The near-optimal scripted controller ([`src/scripted.py`](file:///home/fuddle/gi
 
 ---
 
-## 🔍 Key Findings & Takeaways
+## Key Findings & Takeaways
 
 1. **CAR Affordance Dominance:** `mappo_car` achieves both the **highest win rate (8.3%)** and **highest mean return (+1.534)** at 1M steps. Intrinsic affordance rewards grant credit when an action turns a teammate's dynamic action mask from 0 to 1, pulling centralized critics out of early risk-aversion traps.
 2. **COMA Counterfactual Precision:** `coma` and `coma_cir` achieve **18.3% terminal hack rates** within just 10k steps, rapidly isolating agent action contributions via counterfactual baselines.
