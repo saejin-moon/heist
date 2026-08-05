@@ -2,26 +2,52 @@
 
 HEIST is a PettingZoo multi-agent reinforcement learning (MARL) environment and research benchmark designed to evaluate **cooperative credit assignment under sequential causal dependencies and partial observability**.
 
-Four specialized agents—**Scout**, **Hacker**, **Muscle**, and **Extractor**—pull off a heist against rule-based security systems. Although agents act simultaneously each turn, their objectives follow a strict, recursively gated causal dependency chain:
+Four specialized agents—**Scout**, **Hacker**, **Muscle**, and **Extractor**—coordinate to pull off a heist against a dynamic, rule-based security system (guards, cameras, and an alarm meter). While agents act simultaneously each step, their actions follow a strict, recursively gated causal dependency chain:
 
 ```
-Scout (Tag Terminal) ──► Hacker (Crack Terminal) ──► Extractor (Secure Loot) ──► Team (Extract)
+  ┌─────────┐         ┌─────────┐         ┌───────────┐         ┌───────────┐
+  │  SCOUT  │ ──────► │ HACKER  │ ──────► │ EXTRACTOR │ ──────► │   TEAM    │
+  └─────────┘         └─────────┘         └───────────┘         └───────────┘
+ Tag Terminal         Crack Terminal       Secure Loot           Escape Exit
 ```
 
 ---
 
-## The Research Challenge: Causal Credit Dilution
+## 🔬 The Research Challenge: Causal Credit Dilution
 
-Standard multi-agent RL algorithms (e.g., standard MAPPO or QMIX) rely on joint team rewards and assume simultaneous contribution. In an **RG-Dec-POMDP (Recursively Gated Dec-POMDP)**, this assumption breaks down due to **Causal Credit Dilution**:
+Standard multi-agent RL algorithms (e.g., standard MAPPO, QMIX, or COMA) rely on joint team rewards and assume simultaneous contribution. In a **Recursively Gated Dec-POMDP (RG-Dec-POMDP)**, this assumption fails due to **Causal Credit Dilution**:
 * If the Extractor fails at step 50 due to a late positioning error, global negative reward (-10.0) propagates backward.
-* Standard value mixers and joint critics penalize the Scout's optimal actions taken at step 5.
-* Under partial observability, on-policy policy gradient methods collapse into early risk-aversion (standing still to avoid step/alarm penalties).
+* Standard value mixers and joint critics erroneously penalize the Scout's optimal actions taken at step 5.
+* Under partial observability, standard policy gradient methods collapse into early risk-aversion (standing still in spawn to avoid step and alarm penalties).
 
 ---
 
-## 10-Model Benchmark Suite & Novel Mechanisms
+## ⚡ Key Environment Features & Refinements
 
-HEIST includes a 10-model algorithm suite covering the major MARL paradigms (Independent, CTDE Value-Based, CTDE Policy-Based, CTDE Communication, and Causal Credit Routing):
+### 1. Refined & Balanced Reward System
+* **Step Time Bleed:** `-0.01` per step to discourage loafing.
+* **Dense Hack Progress:** Hacker receives `+0.5` on turn 1, `+0.5` on turn 2, and `+1.0` on turn 3 (`+2.0` total sum), drastically reducing gradient variance during multi-turn hacks.
+* **Deduplicated Task Milestones:** Muscle guard neutralizations and wall breaches are rewarded (`+2.0`) **once per unique guard/wall position** per episode to prevent reward farming.
+* **Incremental Alarm Step Penalty:** Applies `-0.01 * delta_alarm` to provide continuous negative feedback when agents step into camera line-of-sight or get spotted by guards.
+* **Shared Terminal Outcome:** `+10.0` for successful team extraction with loot; `-10.0` for alarm collapse (100.0) or getting caught.
+
+### 2. Dynamic Side-Tasks Extension (`--side-tasks`)
+When launched with the `--side-tasks` CLI trigger, agents gain role-specific secondary capabilities during waiting phases:
+* 🕵️ **Scout (Decoy Noise Ping):** Emits a sound distraction in open space, drawing nearby guards within 6 tiles to search the Scout's location.
+* 💻 **Hacker (Door Lock Override):** Force-unlocks adjacent doors permanently (`DOOR` $\rightarrow$ `EMPTY`) to clear fast transit routes for the team.
+* Muscle (Shortcut Wall Breach):** Destroys internal walls (`WALL` $\rightarrow$ `EMPTY`) to create custom escape corridors.
+* 🎒 **Extractor (Beacon Pre-Calibration):** Calibrates the extraction beacon early, dropping the final extraction countdown from 10 steps down to **3 steps**.
+
+### 3. Integrated Curiosity & Execution Infrastructure
+* **Random Network Distillation (RND):** Includes RND curiosity-driven exploration (`src/exploration.py`) by default (`USE_RND=1`) with fixed target and online predictor neural networks.
+* **Timestamp & Wall-Clock Logging:** All training logs display UTC start/end timestamps and elapsed execution duration per model and stage.
+* **Run Output Isolation:** Side-task runs use distinct experiment suffixes (`_st`) and result directories (`st001`, `st002`) to ensure 0 overwriting of baseline runs.
+
+---
+
+## 🧪 10-Model Benchmark Suite & Research Taxonomy
+
+HEIST includes a 10-model algorithm suite covering the major MARL paradigms:
 
 | Algorithm | Model Architecture | Core Mechanism |
 | :--- | :--- | :--- |
@@ -36,17 +62,21 @@ HEIST includes a 10-model algorithm suite covering the major MARL paradigms (Ind
 | **`coma`** | Counterfactual Policy Gradient | Centralized critic $Q_i(s, \mathbf{a}_{-i}, a_i)$ with counterfactual baseline |
 | **`coma_cir`** | COMA + Non-Comm CIR | Causal Influence Routing via counterfactual action ablation ($Q_i$ sensitivity) |
 
-### Advanced Credit & Exploration Modules
-* **Causal Information Regularization (CIR):** Measures sender influence on receiver value/Q estimates:
-  - **Communicating (`comm_cir`):** Evaluated via *Counterfactual Message Ablation* (zeroing message vectors).
-  - **Non-Communicating (`mappo_cir`, `coma_cir`):** Evaluated via *Counterfactual Feature/Action Ablation* (zeroing spatial features in $V(s)$ or joint action vectors in $Q_i$).
-  - **Advantage Routing:** Routes advantage vectors back to enabling senders: $\tilde{A}_i = (1 - \alpha) A_i + \alpha \sum_j M_{ij} A_j$ (`--cir-coef 0.5`).
-* **Counterfactual Affordance Reward (CAR):** Grants intrinsic rewards when an agent's `INTERACT` action unlocks a teammate's dynamic action mask from 0 to 1 (`--car-coef 0.5`).
-* **Random Network Distillation (RND):** Adds curiosity-driven intrinsic exploration rewards ([`src/exploration.py`](file:///home/fuddle/git/heist/src/exploration.py)) via fixed target and online predictor MSE loss (`--use-rnd --rnd-coef 0.05`).
+### 2x2 Factorial Design Matrix
+To rigorously isolate **communication message passing** from **causal advantage routing**:
+
+```
+                       Standard Credit Assignment      Causal Advantage Routing (CIR)
+                     ┌──────────────────────────────┬──────────────────────────────────┐
+  Communicating      │  comm                        │  comm_cir, comm_cir_car          │
+                     ├──────────────────────────────┼──────────────────────────────────┤
+  Non-Communicating  │  ippo, mappo, qmix, coma     │  mappo_cir, coma_cir             │
+                     └──────────────────────────────┴──────────────────────────────────┘
+```
 
 ---
 
-## Benchmark Results (Stage 0, 1M Steps & Fast Validation)
+## 📊 Benchmark Results (Stage 0, 1M Steps & Fast Validation)
 
 ### 1,000,000-Step Campaign Benchmark (Stage 0)
 
@@ -63,24 +93,9 @@ HEIST includes a 10-model algorithm suite covering the major MARL paradigms (Ind
 | **`comm`** | 0.000 | -0.590 | 0.0% | 0.0% | 0.0% | 0.1 |
 | **`qmix`** | 0.000 | -0.440 | 0.0% | 0.0% | 0.0% | 6.8 |
 
-### Fast 10k-Step Validation Benchmark (COMA & Non-Comm CIR)
-
-Evaluating early counterfactual credit attribution across COMA and CIR variants:
-
-| Model | Win Rate | Terminal Hack Rate | Mean Return | Mean Length | Mean Alarm |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **`coma`** | 0.000 | **0.183 (18.3%)** | -6.971 | 15.0 | 95.0 |
-| **`coma_cir`** | 0.000 | **0.183 (18.3%)** | -7.460 | 12.6 | 97.0 |
-| **`mappo_cir`** | 0.000 | 0.000 (0.0%) | -0.600 | 60.0 | 0.0 |
-| **`qmix`** | 0.000 | 0.217 (21.7%) | -0.158 | 60.0 | 14.0 |
-
-* **CAR Affordance Dominance:** `mappo_car` achieves the **highest win rate (8.3%)** and **highest mean return (+1.534)** at 1M steps by resolving credit dilution.
-* **COMA Counterfactual Precision:** `coma` and `coma_cir` achieve **18.3% terminal hack rates** within 10k steps, rapidly isolating agent action contributions via counterfactual baselines.
-* **Scripted Baseline:** Proves environment 100% solvability (mean episode length 13 steps).
-
 ---
 
-## Setup and Installation
+## 🛠️ Setup and Installation
 
 Requirements: Python 3.12+ and `uv` package manager.
 
@@ -90,7 +105,7 @@ cd heist
 uv sync --locked
 ```
 
-Run Pytest suite (38 unit tests):
+Run Pytest unit test suite (45 tests):
 
 ```bash
 uv run pytest -v
@@ -99,62 +114,62 @@ uv run ruff check
 
 ---
 
-## Campaign Execution & Model Filtering CLI
+## 🚀 Campaign Execution CLI (`train.zsh`)
 
-Use `train.zsh` to launch multi-model training campaigns:
+Use `train.zsh` to provision, sync, and launch training campaigns:
 
 ```bash
-# Fast validation test across all 10 models (10,240 steps)
-./train.zsh --fast
+# Standard Stage 0 campaign across all models (RND enabled by default)
+./train.zsh --stages 0 --steps 300000
 
-# Train specific model(s) (e.g. coma, coma_cir, mappo_cir)
-./train.zsh --models coma,coma_cir,mappo_cir --stages 0,1
+# Launch with Dynamic Side-Tasks enabled
+./train.zsh --side-tasks --stages 0,1
 
-# Parallel execution with custom step budget
-./train.zsh --steps 300000 --parallel 4 --models ippo,mappo,qmix,coma
+# Fast validation test across specific models (10k steps)
+./train.zsh --fast --models ippo,coma,mappo_car
+
+# Run without RND exploration (for baseline ablation)
+./train.zsh --no-rnd --models ippo,mappo
 
 # Background daemon campaign across curriculum stages 0 and 1
-./train.zsh --stages 0,1 --steps 300000 --daemon
+./train.zsh --stages 0,1 --parallel 4 --daemon
 ```
 
-Monitor live status and logs:
+### CLI Flag Reference
 
-```bash
-uv run python tools/status.py --watch
-```
-
-Evaluate checkpoints and merge stage results:
-
-```bash
-# Evaluate Stage 0 checkpoints into a structured run directory
-uv run python src/eval_stage.py --stage 0 --episodes 60
-
-# Merge individual algorithm evaluations into summary.json
-uv run python src/eval_stage.py --stage 0 --merge --run-id run021
-```
+| Flag | Description | Default |
+| :--- | :--- | :--- |
+| `--stages STAGES` | Comma-separated curriculum stage indices (e.g. `0,1,2`) | `0` |
+| `--models MODELS` | Comma-separated algorithm names to train | All 10 models |
+| `--side-tasks` | Enables dynamic side-tasks (decoy ping, door override, wall breach, beacon calibration) | Disabled |
+| `--no-rnd` | Disables Random Network Distillation curiosity exploration | RND Enabled |
+| `--fast`, `--quick` | Fast local validation test (10k steps) | Disabled |
+| `--parallel`, `-j N` | Max concurrent model training jobs | `2` |
+| `--steps STEPS` | Training timesteps per model | `299,008` |
+| `--daemon` | Backgrounds campaign execution with `nohup`; logs to `log/launch.out` | Foreground |
 
 ---
 
-## Codebase Layout
+## 📁 Codebase Layout
 
 ```
-train.zsh                     Multi-model campaign launcher with --models filtering
+train.zsh                     Multi-model campaign launcher & orchestrator
 tools/status.py               Live training log and checkpoint monitor
 tools/assess_time.py          Hardware benchmark & throughput calculator
-src/env.py                    PettingZoo parallel environment engine
+src/env.py                    PettingZoo parallel environment engine & reward logic
 src/curriculum.py             6-stage curriculum generator (11x11 to 50x50)
-src/vision.py                 Numba JIT raycasting & fog-of-war engine
-src/model.py                  Neural network policies, TarMAC, MAPPO, and COMA models
-src/ppo_utils.py              Counterfactual advantage math & checkpoint transfers
+src/vision.py                 Numba JIT raycasting & fog-of-war vision engine
+src/model.py                  Neural network architectures (TarMAC, MAPPO, COMA)
+src/ppo_utils.py              Counterfactual advantage math & checkpoint serialization
 src/vec_env.py                Multiprocessing vectorized environment wrapper
-src/exploration.py            RND intrinsic curiosity module
-src/eval_stage.py             Post-experiment evaluation & JSON merging CLI
+src/exploration.py            Random Network Distillation (RND) curiosity module
+src/eval_stage.py             Post-experiment evaluation & JSON summary merger
 src/scripted.py               Near-optimal BFS controller baseline
 src/train_ippo.py             Independent PPO trainer
 src/train_mappo.py            MAPPO trainer (with CAR and CIR support)
 src/train_coma.py             COMA trainer (with counterfactual & CIR support)
 src/train_comm.py             TarMAC trainer (with CIR and CAR support)
 src/train_qmix.py             QMIX trainer with value decomposition
-tests/                        Comprehensive Pytest unit test suite (38 tests)
+tests/                        Pytest unit test suite (45 tests)
 results/                      Run artifacts, JSON summaries, and benchmark logs
 ```
