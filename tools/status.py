@@ -72,31 +72,33 @@ def get_active_campaign_info() -> dict:
         "fast_mode": False,
     }
 
-    if RESULTS_DIR.is_dir():
-        all_runs = sorted(
-            [d.name for d in RESULTS_DIR.iterdir() if d.is_dir()],
-            key=lambda x: (RESULTS_DIR / x).stat().st_mtime,
-        )
-        if all_runs:
-            info["run_id"] = all_runs[-1]
-
+    prefix = "run"
     if launch_file.is_file():
         try:
             content = launch_file.read_text(errors="replace")
             if "[SIDE-TASKS ENABLED]" in content:
                 info["side_tasks"] = True
+                prefix = "st"
             if "[FAST MODE]" in content:
                 info["fast_mode"] = True
 
-            m_run = re.search(r"Campaign Evaluation Run ID:\s*(\w+)", content)
-            if m_run:
-                info["run_id"] = m_run.group(1)
+            runs = re.findall(r"Campaign Evaluation Run ID:\s*(\w+)", content)
+            if runs:
+                info["run_id"] = runs[-1]
 
             m_stages = re.findall(r"Starting training for stage (\d+)", content)
             if m_stages:
                 info["active_stages"] = {int(s) for s in m_stages}
         except Exception:
             pass
+
+    if info["run_id"] == "N/A" and RESULTS_DIR.is_dir():
+        all_runs = sorted(
+            [d.name for d in RESULTS_DIR.iterdir() if d.is_dir()],
+            key=lambda x: (RESULTS_DIR / x).stat().st_mtime,
+        )
+        if all_runs:
+            info["run_id"] = all_runs[-1]
 
     if LOG_DIR.is_dir():
         for p in LOG_DIR.glob("*.log"):
