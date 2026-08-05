@@ -82,6 +82,7 @@ RAW_ARGS=("$@")
 USE_RND=1
 RND_COEF=0.05
 ENABLE_SIDE_TASKS=0
+CUSTOM_PREFIX=""
 
 while (( $# )); do
     case "$1" in
@@ -99,6 +100,7 @@ while (( $# )); do
         --no-rnd)     USE_RND=0; shift ;;
         --rnd-coef)   USE_RND=1; RND_COEF="$2"; shift 2 ;;
         --side-tasks) ENABLE_SIDE_TASKS=1; shift ;;
+        --run-prefix|--prefix) CUSTOM_PREFIX="$2"; shift 2 ;;
         --num-stages)
             N="$2"; shift 2
             STAGES=$(python3 -c "print(','.join(str(i) for i in range($N)))")
@@ -391,6 +393,9 @@ IFS=',' read -A STAGE_LIST <<< "$STAGES"
 EVAL_PREFIX="run"
 if [ "$ENABLE_SIDE_TASKS" -eq 1 ]; then
     EVAL_PREFIX="st"
+fi
+if [ -n "$CUSTOM_PREFIX" ]; then
+    EVAL_PREFIX="$CUSTOM_PREFIX"
 fi
 EVAL_RUN_ID=$(.venv/bin/python -c "import sys; sys.path.insert(0, 'src'); from eval_stage import get_next_run_id; print(get_next_run_id(prefix='$EVAL_PREFIX'))")
 log "Campaign Evaluation Run ID: $EVAL_RUN_ID"

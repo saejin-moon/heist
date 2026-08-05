@@ -9,9 +9,9 @@ This directory contains benchmark results, evaluation summaries, and empirical d
 * [`stage0_comparison.json`](file:///home/fuddle/git/heist/results/stage0_comparison.json): Consolidated comparison table across 10k, 300k, and 1,000,000 step budgets.
 * [`run018/summary.json`](file:///home/fuddle/git/heist/results/run018/summary.json): Full 1M-step evaluation output, CAI correlation matrices, and counterfactual importance rankings.
 * [`run019/summary.json`](file:///home/fuddle/git/heist/results/run019/summary.json): Stage 1 1.5M-step campaign evaluation.
-* [`run020/summary.json`](file:///home/fuddle/git/heist/results/run020/summary.json): COMA baseline evaluation on Stage 0.
-* [`run021/summary.json`](file:///home/fuddle/git/heist/results/run021/summary.json): Non-communicating CIR evaluation (`mappo_cir` and `coma_cir`).
-* [`run022/summary.json`](file:///home/fuddle/git/heist/results/run022/summary.json): Fast validation check post reward-refinements.
+* [`local020/summary.json`](file:///home/fuddle/git/heist/results/local020/summary.json): COMA baseline evaluation on Stage 0.
+* [`local021/summary.json`](file:///home/fuddle/git/heist/results/local021/summary.json): Non-communicating CIR evaluation (`mappo_cir` and `coma_cir`).
+* [`local022/summary.json`](file:///home/fuddle/git/heist/results/local022/summary.json): Fast validation check post reward-refinements.
 * [`st001/summary.json`](file:///home/fuddle/git/heist/results/st001/summary.json): Dynamic Side-Tasks extension fast validation run (`--side-tasks`).
 
 ---
