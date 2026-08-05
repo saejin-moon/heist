@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-tools/status.py -- Check active training runs, log files, and checkpoints.
+tools/status.py -- HEIST Terminal Dashboard (using Rich).
+
+Provides a fullscreen, live-updating dashboard for training campaigns,
+log files, model concurrency, and checkpoint status.
 
 Usage:
     uv run python tools/status.py
-    uv run python tools/status.py --logdir log
-    uv run python tools/status.py --watch  # poll status every 5 seconds
+    uv run python tools/status.py --watch      # Poll status continuously
+    uv run python tools/status.py --interval 3  # Set poll interval
 """
 
 from __future__ import annotations
@@ -13,109 +16,331 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
 
+from rich.console import Console
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
+LOG_DIR = REPO_ROOT / "log"
+CKPT_DIR = REPO_ROOT / "checkpoints"
+RESULTS_DIR = REPO_ROOT / "results"
+
+MODEL_NAMES = [
+    "ippo",
+    "mappo",
+    "mappo_car",
+    "mappo_cir",
+    "comm",
+    "comm_cir",
+    "comm_cir_car",
+    "qmix",
+    "coma",
+    "coma_cir",
+]
 
 
-def check_checkpoints() -> list[dict]:
-    ckpt_dir = REPO_ROOT / "checkpoints"
-    if not ckpt_dir.is_dir():
-        return []
+def get_running_pids() -> set[int]:
+    """Find running python PIDs related to HEIST training/eval."""
+    pids = set()
+    try:
+        import subprocess
 
-    runs = []
-    for d in sorted(ckpt_dir.iterdir()):
-        if not d.is_dir():
-            continue
-        marker = d / "complete.json"
-        is_complete = marker.is_file()
-        info = {"run_name": d.name, "complete": is_complete}
-        if is_complete:
-            try:
-                data = json.loads(marker.read_text())
-                info.update(data)
-            except Exception:
-                pass
-        runs.append(info)
-    return runs
+        out = subprocess.check_output(["ps", "aux"], text=True)
+        for line in out.splitlines():
+            if "src/train_" in line or "src/eval_stage.py" in line or "train.zsh" in line:
+                parts = line.split()
+                if len(parts) > 1 and parts[1].isdigit():
+                    pids.add(int(parts[1]))
+    except Exception:
+        pass
+    return pids
 
 
-def check_logs() -> list[dict]:
-    log_dir = REPO_ROOT / "log"
-    if not log_dir.is_dir():
-        return []
+def get_active_campaign_info() -> dict:
+    """Detect current campaign configuration (Run ID, active stages, side-tasks mode)."""
+    launch_file = LOG_DIR / "launch.out"
+    info = {
+        "run_id": "N/A",
+        "active_stages": set(),
+        "side_tasks": False,
+        "fast_mode": False,
+    }
 
-    logs = []
-    log_files = sorted(set(list(log_dir.glob("*.log")) + list(log_dir.glob("*.out"))))
-    for p in log_files:
-        size = p.stat().st_size
-        mtime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(p.stat().st_mtime))
-        lines = p.read_text(errors="replace").splitlines()
-        tail = lines[-5:] if lines else []
-        logs.append(
+    # Find latest result run ID
+    if RESULTS_DIR.is_dir():
+        all_runs = sorted(
+            [d.name for d in RESULTS_DIR.iterdir() if d.is_dir()],
+            key=lambda x: (RESULTS_DIR / x).stat().st_mtime,
+        )
+        if all_runs:
+            info["run_id"] = all_runs[-1]
+
+    if launch_file.is_file():
+        try:
+            content = launch_file.read_text(errors="replace")
+            if "[SIDE-TASKS ENABLED]" in content:
+                info["side_tasks"] = True
+            if "[FAST MODE]" in content:
+                info["fast_mode"] = True
+
+            m_run = re.search(r"Campaign Evaluation Run ID:\s*(\w+)", content)
+            if m_run:
+                info["run_id"] = m_run.group(1)
+
+            m_stages = re.findall(r"Starting training for stage (\d+)", content)
+            if m_stages:
+                info["active_stages"] = {int(s) for s in m_stages}
+        except Exception:
+            pass
+
+    # Inspect active log files to infer current stage
+    if LOG_DIR.is_dir():
+        for p in LOG_DIR.glob("*.log"):
+            m_stage = re.search(r"_s(\d+)\.log$", p.name)
+            if m_stage and (time.time() - p.stat().st_mtime) < 30:
+                info["active_stages"].add(int(m_stage.group(1)))
+
+    if not info["active_stages"]:
+        info["active_stages"] = {0}
+
+    return info
+
+
+def check_models_status(active_stages: set[int], running_pids: set[int]) -> list[dict]:
+    """Gather status across all 10 models for the active stage, ignoring stale checkpoints."""
+    results = []
+    active_stage = max(active_stages) if active_stages else 0
+
+    for name in MODEL_NAMES:
+        possible_log_names = [
+            f"{name}_st_s{active_stage}.log",
+            f"{name}_s{active_stage}.log",
+        ]
+        log_path = None
+        for p_name in possible_log_names:
+            candidate = LOG_DIR / p_name
+            if candidate.is_file():
+                log_path = candidate
+                break
+
+        # Check current stage checkpoint completion
+        possible_ckpt_names = [
+            f"{name}_st_s{active_stage}",
+            f"{name}_s{active_stage}",
+        ]
+        ckpt_complete = False
+        completed_steps = "N/A"
+        for c_name in possible_ckpt_names:
+            marker = CKPT_DIR / c_name / "complete.json"
+            if marker.is_file():
+                # Verify checkpoint modification time aligns with current active run
+                ckpt_mtime = marker.stat().st_mtime
+                log_mtime = log_path.stat().st_mtime if log_path else 0
+                if abs(ckpt_mtime - log_mtime) < 3600 or log_path is None:
+                    ckpt_complete = True
+                    try:
+                        data = json.loads(marker.read_text())
+                        completed_steps = str(data.get("completed_steps", "N/A"))
+                    except Exception:
+                        pass
+                    break
+
+        step_str = "-"
+        sps_str = "-"
+        reward_str = "-"
+        runtime_str = "-"
+        status = "QUEUED"
+
+        if log_path and log_path.is_file():
+            mtime_diff = time.time() - log_path.stat().st_mtime
+            is_recent = mtime_diff < 30
+
+            lines = log_path.read_text(errors="replace").splitlines()
+            if lines:
+                for l in reversed(lines):
+                    m_prog = re.search(
+                        r"step=(\d+)\s+sps=(\d+)\s+mean_reward=([-\d.]+)", l
+                    )
+                    if m_prog:
+                        step_str = m_prog.group(1)
+                        sps_str = m_prog.group(2)
+                        reward_str = f"{float(m_prog.group(3)):.3f}"
+                        break
+                    m_done = re.search(r"training done in ([\d.]+s|[\d.]+ min)", l)
+                    if m_done:
+                        runtime_str = m_done.group(1)
+                        break
+
+            if ckpt_complete:
+                status = "COMPLETE"
+            elif is_recent:
+                status = "RUNNING"
+            elif lines and any("training done" in l for l in lines[-5:]):
+                status = "COMPLETE"
+            else:
+                status = "PAUSED"
+
+        results.append(
             {
-                "file": p.name,
-                "size_kb": round(size / 1024, 1),
-                "mtime": mtime,
-                "lines_count": len(lines),
-                "tail": tail,
+                "model": name,
+                "stage": active_stage,
+                "status": status,
+                "steps": step_str if status != "COMPLETE" else completed_steps,
+                "sps": sps_str if status == "RUNNING" else "-",
+                "mean_reward": reward_str,
+                "runtime": runtime_str,
+                "checkpoint": (
+                    "COMPLETE ✅"
+                    if ckpt_complete
+                    else ("DONE 💾" if status == "COMPLETE" else "IN PROGRESS 🔄")
+                ),
             }
         )
-    return logs
+
+    return results
 
 
-def print_status():
-    print("=" * 72)
-    print(f"HEIST Training Status -- {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 72)
+def make_dashboard_panel() -> Panel:
+    info = get_active_campaign_info()
+    pids = get_running_pids()
+    models = check_models_status(info["active_stages"], pids)
 
-    ckpts = check_checkpoints()
-    print("\n[1] Checkpoints")
-    if not ckpts:
-        print("    No checkpoints found.")
-    else:
-        print(f"    {'Run Name':<35} {'Status':<12} {'Completed Steps':<18}")
-        print("    " + "-" * 65)
-        for c in ckpts:
-            status = "COMPLETE ✅" if c["complete"] else "IN PROGRESS 🔄"
-            steps = str(c.get("completed_steps", "N/A"))
-            print(f"    {c['run_name']:<35} {status:<12} {steps:<18}")
+    active_stage = max(info["active_stages"]) if info["active_stages"] else 0
+    st_text = (
+        "[bold green]ENABLED[/bold green]"
+        if info["side_tasks"]
+        else "[dim]DISABLED[/dim]"
+    )
+    fast_text = "[bold yellow]ON[/bold yellow]" if info["fast_mode"] else "OFF"
+    time_str = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
 
-    logs = check_logs()
-    print("\n[2] Log Files")
-    if not logs:
-        print("    No log files found in log/")
-    else:
-        for log_file in logs:
-            print(
-                f"\n  📄 {log_file['file']} ({log_file['size_kb']} KB, last modified: {log_file['mtime']})"
+    title_text = (
+        f"[bold cyan]HEIST MARL DASHBOARD[/bold cyan]  │  "
+        f"Run ID: [bold gold1]{info['run_id']}[/bold gold1]  │  "
+        f"Active Stage: [bold magenta]{active_stage}[/bold magenta]  │  "
+        f"Side-Tasks: {st_text}  │  "
+        f"Fast Mode: {fast_text}"
+    )
+
+    # 1. Models Matrix Table
+    table = Table(
+        expand=True,
+        box=None,
+        header_style="bold magenta",
+        padding=(0, 1),
+    )
+    table.add_column("Model", style="bold cyan", no_wrap=True)
+    table.add_column("Stage", justify="center", no_wrap=True)
+    table.add_column("Status", justify="center", no_wrap=True)
+    table.add_column("Steps", justify="right", no_wrap=True)
+    table.add_column("SPS", justify="right", no_wrap=True)
+    table.add_column("Mean Reward", justify="right", no_wrap=True)
+    table.add_column("Runtime", justify="center", no_wrap=True)
+    table.add_column("Checkpoint", justify="center", no_wrap=True)
+
+    for m in models:
+        st = m["status"]
+        if st == "RUNNING":
+            status_cell = "[bold green]RUNNING 🟢[/bold green]"
+        elif st == "COMPLETE":
+            status_cell = "[bold blue]DONE ✅[/bold blue]"
+        elif st == "QUEUED":
+            status_cell = "[dim]QUEUED ⏳[/dim]"
+        else:
+            status_cell = f"[yellow]{st}[/yellow]"
+
+        table.add_row(
+            m["model"],
+            str(m["stage"]),
+            status_cell,
+            m["steps"],
+            m["sps"],
+            m["mean_reward"],
+            m["runtime"],
+            m["checkpoint"],
+        )
+
+    # 2. Live Log Feed
+    log_feed = Text()
+    if LOG_DIR.is_dir():
+        log_files = sorted(
+            [
+                p
+                for p in LOG_DIR.glob("*.log")
+                if (time.time() - p.stat().st_mtime) < 60
+            ],
+            key=lambda x: x.stat().st_mtime,
+            reverse=True,
+        )
+        if log_files:
+            latest = log_files[0]
+            log_feed.append(f"📄 Active Log: {latest.name}\n", style="bold yellow")
+            lines = latest.read_text(errors="replace").splitlines()[-3:]
+            for l in lines:
+                log_feed.append(f"   │ {l}\n", style="dim white")
+        else:
+            log_feed.append(
+                "No active log file modifications in the last 60 seconds.",
+                style="dim italic",
             )
-            print("     Tail output:")
-            for line in log_file["tail"]:
-                print(f"       | {line}")
 
-    print("\nDone.")
+    grid = Table.grid(expand=True)
+    grid.add_row(
+        Panel(
+            table,
+            title="[bold white]Model Campaign Execution Matrix[/bold white]",
+            border_style="bright_blue",
+        )
+    )
+    grid.add_row(
+        Panel(
+            log_feed,
+            title="[bold white]Live Diagnostic Log Feed[/bold white]",
+            border_style="dim blue",
+            height=6,
+        )
+    )
+
+    return Panel(
+        grid,
+        title=title_text,
+        subtitle=f"[dim]Updated: {time_str}  •  Press Ctrl+C to stop[/dim]",
+        border_style="cyan",
+    )
 
 
 def main():
-    ap = argparse.ArgumentParser(description="HEIST training log and status checker")
+    ap = argparse.ArgumentParser(description="HEIST Fullscreen Terminal Dashboard")
     ap.add_argument("--watch", action="store_true", help="continuously poll status")
-    ap.add_argument("--interval", type=int, default=5, help="watch interval in seconds")
+    ap.add_argument(
+        "--interval", type=int, default=3, help="watch interval in seconds"
+    )
     args = ap.parse_args()
+
+    console = Console()
 
     if args.watch:
         try:
-            while True:
-                os.system("clear" if os.name == "posix" else "cls")
-                print_status()
-                time.sleep(args.interval)
+            with Live(
+                make_dashboard_panel(),
+                console=console,
+                screen=True,
+                refresh_per_second=1,
+            ) as live:
+                while True:
+                    time.sleep(args.interval)
+                    live.update(make_dashboard_panel())
         except KeyboardInterrupt:
-            print("\nStopped.")
             return 0
     else:
-        print_status()
+        console.print(make_dashboard_panel())
         return 0
 
 

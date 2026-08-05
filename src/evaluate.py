@@ -37,13 +37,21 @@ from env import AGENTS
 
 # ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 def _select_action(policy, obs, role, mask, device, greedy=True):
-    obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-    role_t = torch.tensor(role, dtype=torch.float32, device=device).unsqueeze(0)
-    mask_t = torch.tensor(mask, dtype=torch.int64, device=device).unsqueeze(0)
+    if isinstance(obs, dict):
+        role = obs.get("role_id", role)
+        mask = obs.get("action_mask", mask)
+        obs = obs.get("observation", obs)
+    if hasattr(policy, "parameters"):
+        try:
+            device = next(policy.parameters()).device
+        except StopIteration:
+            pass
+    obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+    role_t = torch.as_tensor(role, dtype=torch.float32, device=device).unsqueeze(0)
+    mask_t = torch.as_tensor(mask, dtype=torch.int64, device=device).unsqueeze(0)
     with torch.no_grad():
-        if greedy:
+        if greedy or not hasattr(policy, "get_action_and_value"):
             logits = _actor_logits(policy, obs_t, role_t)
             masked = torch.where(mask_t == 1, logits, torch.full_like(logits, -1e9))
             return int(masked.argmax(dim=-1).item())
@@ -52,16 +60,22 @@ def _select_action(policy, obs, role, mask, device, greedy=True):
 
 
 def _actor_logits(policy, obs_t, role_t):
-    """Extract raw action logits from any of the Phase A model classes.
-
-    HeistAgent / MappoAgent expose `.actor`; QNetwork exposes `.net`.
-    REV-7 (REVISION_PLAN.md §6): global_state is no longer part of the
-    local input (obs + role one-hot only).
-    """
-    x = torch.cat((torch.flatten(obs_t, start_dim=1), role_t), dim=1)
-    if hasattr(policy, "actor"):
-        return policy.actor(x)
-    return policy.net(x)
+    """Extract raw action logits from any model class (HeistAgent, MappoAgent, ComaAgent, QNetwork)."""
+    if hasattr(policy, "get_action_and_value"):
+        x = torch.cat((torch.flatten(obs_t, start_dim=1), role_t), dim=1)
+        if hasattr(policy, "actor"):
+            return policy.actor(x)
+        elif hasattr(policy, "net"):
+            return policy.net(x)
+    try:
+        return policy(obs_t, role_t)
+    except Exception:
+        x = torch.cat((torch.flatten(obs_t, start_dim=1), role_t), dim=1)
+        if hasattr(policy, "net"):
+            return policy.net(x)
+        elif hasattr(policy, "actor"):
+            return policy.actor(x)
+        return policy(x)
 
 
 def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
