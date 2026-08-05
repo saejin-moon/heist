@@ -66,6 +66,21 @@ def get_running_pids() -> set[int]:
     return pids
 
 
+def _get_next_run_id(results_dir: Path, prefix: str = "run") -> str:
+    if not results_dir.is_dir():
+        return f"{prefix}001"[:6]
+    existing = [
+        d.name
+        for d in results_dir.iterdir()
+        if d.is_dir()
+        and d.name.startswith(prefix)
+        and d.name[len(prefix) :].isdigit()
+    ]
+    nums = [int(name[len(prefix) :]) for name in existing if len(name) <= 6]
+    next_num = max(nums) + 1 if nums else 1
+    return f"{prefix}{next_num:03d}"[:6]
+
+
 def get_active_campaign_info() -> dict:
     """Detect current campaign configuration (Run ID, active stages, side-tasks mode)."""
     launch_file = LOG_DIR / "launch.out"
@@ -75,6 +90,9 @@ def get_active_campaign_info() -> dict:
         "side_tasks": False,
         "fast_mode": False,
     }
+
+    launch_mtime = launch_file.stat().st_mtime if launch_file.is_file() else 0
+    launch_run_id = None
 
     if launch_file.is_file():
         try:
@@ -86,7 +104,7 @@ def get_active_campaign_info() -> dict:
 
             runs = re.findall(r"Campaign Evaluation Run ID:\s*(\w+)", content)
             if runs:
-                info["run_id"] = runs[-1]
+                launch_run_id = runs[-1]
 
             m_stages = re.findall(r"Starting training for stage (\d+)", content)
             if m_stages:
@@ -94,19 +112,61 @@ def get_active_campaign_info() -> dict:
         except Exception:
             pass
 
-    if info["run_id"] == "N/A" and RESULTS_DIR.is_dir():
-        all_runs = sorted(
-            [d.name for d in RESULTS_DIR.iterdir() if d.is_dir()],
-            key=lambda x: (RESULTS_DIR / x).stat().st_mtime,
-        )
-        if all_runs:
-            info["run_id"] = all_runs[-1]
-
+    latest_log_mtime = 0
     if LOG_DIR.is_dir():
         for p in LOG_DIR.glob("*.log"):
+            mtime = p.stat().st_mtime
+            if mtime > latest_log_mtime:
+                latest_log_mtime = mtime
             m_stage = re.search(r"_s(\d+)\.log$", p.name)
-            if m_stage and (time.time() - p.stat().st_mtime) < 30:
+            if m_stage and (time.time() - mtime) < 30:
                 info["active_stages"].add(int(m_stage.group(1)))
+            if "_st_" in p.name and (time.time() - mtime) < 300:
+                info["side_tasks"] = True
+
+    pids = get_running_pids()
+    active_training = len(pids) > 0 or (
+        latest_log_mtime > 0 and (time.time() - latest_log_mtime) < 120
+    )
+
+    latest_results_mtime = 0
+    latest_results_run_id = None
+    if RESULTS_DIR.is_dir():
+        all_runs = sorted(
+            [
+                d
+                for d in RESULTS_DIR.iterdir()
+                if d.is_dir() and not d.name.startswith(".")
+            ],
+            key=lambda x: (x.stat().st_mtime, x.name),
+        )
+        if all_runs:
+            latest_results_dir = all_runs[-1]
+            latest_results_mtime = latest_results_dir.stat().st_mtime
+            latest_results_run_id = latest_results_dir.name
+
+    # Determine whether launch.out is fresh or stale
+    is_launch_fresh = (
+        launch_run_id is not None
+        and launch_mtime >= latest_results_mtime - 5
+        and (
+            not active_training
+            or abs(launch_mtime - latest_log_mtime) <= 300
+            or launch_mtime >= latest_log_mtime
+        )
+    )
+
+    if is_launch_fresh:
+        info["run_id"] = launch_run_id
+    elif active_training and latest_log_mtime > latest_results_mtime:
+        prefix = "st" if info["side_tasks"] else "run"
+        if latest_results_run_id:
+            m_pref = re.match(r"^([a-zA-Z]+)", latest_results_run_id)
+            if m_pref:
+                prefix = m_pref.group(1)
+        info["run_id"] = _get_next_run_id(RESULTS_DIR, prefix=prefix)
+    else:
+        info["run_id"] = latest_results_run_id or launch_run_id or "N/A"
 
     if not info["active_stages"]:
         info["active_stages"] = {0}
