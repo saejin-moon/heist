@@ -285,6 +285,7 @@ run_stage() {
         fi
 
         log "-> Launching ${name}${st_suffix} (RND=${USE_RND}) ..."
+        rm -f "checkpoints/${exp_name_tag}/complete.json"
         start_times[$i]=$(date +%s)
         local exp_name_tag="${name}${st_suffix}_s${s}"
         local log_name_tag="${name}${st_suffix}_s${s}.log"

@@ -175,11 +175,10 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
                         runtime_str = m_done.group(1)
                         break
 
-            if ckpt_complete:
-                status = "COMPLETE"
-            elif is_recent:
+            has_finished = lines and any("training done" in line_str for line_str in lines[-5:])
+            if is_recent and not has_finished:
                 status = "RUNNING"
-            elif lines and any("training done" in line_str for line_str in lines[-5:]):
+            elif ckpt_complete or has_finished:
                 status = "COMPLETE"
             else:
                 status = "PAUSED"
@@ -189,13 +188,13 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
                 "model": name,
                 "stage": active_stage,
                 "status": status,
-                "steps": step_str if status != "COMPLETE" else completed_steps,
+                "steps": step_str if status == "RUNNING" or completed_steps == "N/A" else completed_steps,
                 "sps": sps_str if status == "RUNNING" else "-",
                 "mean_reward": reward_str,
                 "runtime": runtime_str,
                 "checkpoint": (
                     "[bold green]SAVED[/bold green]"
-                    if ckpt_complete
+                    if (ckpt_complete and status == "COMPLETE")
                     else ("[green]COMPLETE[/green]" if status == "COMPLETE" else "[dim]PENDING[/dim]")
                 ),
             }
