@@ -21,6 +21,7 @@ Example:
 import argparse
 import os
 import random
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -371,6 +372,11 @@ def train(args: Args):
                 )
 
     # ------------------------------------------------------------------
+    start_time = time.time()
+    start_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(start_time))
+    print(
+        f"[{start_utc}] Training started: run_name={run_name}, total_steps={args.total_steps}"
+    )
     global_step = 0
     episode = 0
     total_reward = 0.0
@@ -514,7 +520,9 @@ def train(args: Args):
     eval_policies(global_step)
     write_completion(run_name, "qmix", args.total_steps, global_step)
     writer.close()
-    print("training done.")
+    elapsed = time.time() - start_time
+    end_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    print(f"[{end_utc}] training done in {elapsed:.1f}s ({elapsed / 60:.1f} min).")
 
 
 if __name__ == "__main__":

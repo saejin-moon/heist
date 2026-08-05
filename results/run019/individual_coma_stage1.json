@@ -1,0 +1,30 @@
+[
+  {
+    "seed": 0,
+    "metrics": {
+      "win_rate": 0.0,
+      "mean_return": -9.900833333333333,
+      "mean_length": 7.733333333333333,
+      "mean_alarm": 98.33333333333333,
+      "terminal_rate": 0.0,
+      "loot_rate": 0.0,
+      "extraction_rate": 0.0,
+      "mean_hack_progress": 0.0
+    },
+    "cai": {
+      "scout": -0.9914392141818713,
+      "hacker": -0.9914392141818713,
+      "muscle": -0.9914392141818713,
+      "extractor": -0.9914392141818713
+    },
+    "counterfactual": {
+      "baseline_win_rate": 0.0,
+      "importance": {
+        "scout": 0.0,
+        "hacker": 0.0,
+        "muscle": 0.0,
+        "extractor": 0.0
+      }
+    }
+  }
+]

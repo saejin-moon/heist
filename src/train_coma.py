@@ -302,6 +302,10 @@ def train(args: Args):  # noqa: C901
                 )
 
     start_time = time.time()
+    start_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(start_time))
+    print(
+        f"[{start_utc}] Training started: run_name={run_name}, total_timesteps={args.total_timesteps}"
+    )
     global_step = 0
 
     for update in range(1, num_updates + 1):
@@ -587,7 +591,9 @@ def train(args: Args):  # noqa: C901
             args.total_timesteps,
             num_updates * args.num_steps * args.num_envs,
         )
-    print("training done.")
+    elapsed = time.time() - start_time
+    end_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    print(f"[{end_utc}] training done in {elapsed:.1f}s ({elapsed / 60:.1f} min).")
 
 
 if __name__ == "__main__":

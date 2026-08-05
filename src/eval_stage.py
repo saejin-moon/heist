@@ -230,6 +230,13 @@ def main():
 
     # Normal or algorithm-specific evaluation
     import multiprocessing as mp
+    import time
+
+    t0_eval = time.time()
+    start_str = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(t0_eval))
+    print(
+        f"[{start_str}] Starting evaluation for stage(s) {stages} (algo='{args.algo or 'all'}')..."
+    )
 
     ctx = mp.get_context("spawn")
 
@@ -312,6 +319,12 @@ def main():
                         f"{algo:<14} {seed_label:>4}  {wr:>5.3f} {tr:>5.3f} {lr:>5.3f} {er:>5.3f} {ret:>7.3f}"
                     )
             print(f"\n  Saved full evaluation results to {out_path} (subdir: {run_id})")
+
+    eval_dur = time.time() - t0_eval
+    end_str = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    print(
+        f"[{end_str}] Evaluation completed in {eval_dur:.1f}s ({eval_dur / 60:.1f} min)."
+    )
 
 
 if __name__ == "__main__":

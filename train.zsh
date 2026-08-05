@@ -65,6 +65,8 @@ Flags:
   --num-stages N    run first N curriculum stages (0..N-1)
   --cir-coef COEF   CIR coefficient for routing advantages (default 0.5)
   --car-coef COEF   CAR coefficient for intrinsic affordance rewards (default 0.5)
+  --no-rnd          disable Random Network Distillation (RND is enabled by default)
+  --side-tasks      enable dynamic side-tasks (decoy ping, door override, wall breach, beacon calibration)
   --workdir DIR     repo directory (default $HOME/heist)
   --repo-url URL    clone URL (default the HEIST GitHub repo)
   --daemon          background the campaign with nohup; logs to log/launch.out
@@ -77,8 +79,9 @@ EOF
 }
 
 RAW_ARGS=("$@")
-USE_RND=0
+USE_RND=1
 RND_COEF=0.05
+ENABLE_SIDE_TASKS=0
 
 while (( $# )); do
     case "$1" in
@@ -93,7 +96,9 @@ while (( $# )); do
         --cir-coef)   CIR_COEF="$2"; shift 2 ;;
         --car-coef)   CAR_COEF="$2"; shift 2 ;;
         --rnd)        USE_RND=1; shift ;;
+        --no-rnd)     USE_RND=0; shift ;;
         --rnd-coef)   USE_RND=1; RND_COEF="$2"; shift 2 ;;
+        --side-tasks) ENABLE_SIDE_TASKS=1; shift ;;
         --num-stages)
             N="$2"; shift 2
             STAGES=$(python3 -c "print(','.join(str(i) for i in range($N)))")
@@ -191,15 +196,27 @@ trigger_eval() {
     local s="$2"
     local run_id="$3"
     local steps="$4"
-    log "-> Launching background evaluation for $name (stage $s) ..."
-    .venv/bin/python -u src/eval_stage.py --stage "$s" --algo "$name" --run-id "$run_id" --steps "$steps" > "log/eval_${name}_s${s}.log" 2>&1 &
+    local st_suffix=""
+    if [ "$ENABLE_SIDE_TASKS" -eq 1 ]; then
+        st_suffix="_st"
+    fi
+    log "-> Launching background evaluation for ${name}${st_suffix} (stage $s) ..."
+    .venv/bin/python -u src/eval_stage.py --stage "$s" --algo "$name" --run-id "$run_id" --steps "$steps" > "log/eval_${name}${st_suffix}_s${s}.log" 2>&1 &
 }
 
 run_stage() {
     local s="$1"
-    log "Starting training for stage $s"
+    local stage_start_time=$(date +%s)
+    local st_py="False"
+    local st_suffix=""
+    if [ "$ENABLE_SIDE_TASKS" -eq 1 ]; then
+        st_py="True"
+        st_suffix="_st"
+        log "[SIDE-TASKS ENABLED] Running with dynamic side-task environment features!"
+    fi
+    log "Starting training for stage $s at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
     local cfg
-    cfg=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from curriculum import CURRICULUM, env_config_str; print(env_config_str(CURRICULUM[$s]))")
+    cfg=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from curriculum import CURRICULUM, env_config_str; c = dict(CURRICULUM[$s]); c['enable_side_tasks'] = $st_py; print(env_config_str(c))")
     
     local -a model_names=()
     if [ -n "$MODELS" ]; then
@@ -209,12 +226,13 @@ run_stage() {
     fi
     local -a pids=()
     local -a status_map=()
+    local -a start_times=()
     local -a eval_pids=()
-
 
     for ((i=1; i<=${#model_names[@]}; i++)); do
         pids[$i]=0
         status_map[$i]="queued"
+        start_times[$i]=0
     done
 
     local steps_for_stage=$CAMPAIGN_STEPS
@@ -244,7 +262,11 @@ run_stage() {
                         ((++active_count))
                     else
                         status_map[$j]="done"
-                        log "✓ Model '${model_names[$j]}' completed."
+                        local now=$(date +%s)
+                        local elapsed=$(( now - start_times[$j] ))
+                        local mins=$(( elapsed / 60 ))
+                        local secs=$(( elapsed % 60 ))
+                        log "✓ Model '${model_names[$j]}${st_suffix}' completed in ${mins}m ${secs}s (${elapsed}s total)."
                         trigger_eval "${model_names[$j]}" "$s" "$EVAL_RUN_ID" "$steps_for_stage"
                         eval_pids+=($!)
                     fi
@@ -260,45 +282,46 @@ run_stage() {
             rnd_flags=("--use-rnd" "--rnd-coef" "$RND_COEF")
         fi
 
-        log "-> Launching $name ..."
+        log "-> Launching ${name}${st_suffix} (RND=${USE_RND}) ..."
+        start_times[$i]=$(date +%s)
+        local exp_name_tag="${name}${st_suffix}_s${s}"
+        local log_name_tag="${name}${st_suffix}_s${s}.log"
         case "$name" in
             ippo)
-                nohup .venv/bin/python -u src/train_ippo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --no-cuda --seed 0 --env-config "$cfg" --exp-name "ippo_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                nohup .venv/bin/python -u src/train_ippo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --no-cuda --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
                 ;;
             mappo)
-                nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "mappo_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
                 ;;
             mappo_car)
-                nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --env-config "$cfg" --exp-name "mappo_car_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
                 ;;
             mappo_cir)
-                nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "mappo_cir_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
                 ;;
             comm)
-                nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "comm_s${s}" --save-model "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
                 ;;
             comm_cir)
-                nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --env-config "$cfg" --exp-name "comm_cir_s${s}" --save-model "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
                 ;;
             comm_cir_car)
-                nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --env-config "$cfg" --exp-name "comm_cir_car_s${s}" --save-model "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
                 ;;
             qmix)
-                nohup .venv/bin/python -u src/train_qmix.py --total-steps "$steps_for_stage" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "qmix_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                nohup .venv/bin/python -u src/train_qmix.py --total-steps "$steps_for_stage" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
                 ;;
             coma)
-                nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "coma_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
                 ;;
             coma_cir)
-                nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "coma_cir_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
                 ;;
         esac
 
-
-        
         local last_pid=$!
         pids[$i]=$last_pid
-        log "-> Launched $name with PID: ${pids[$i]}"
+        log "-> Launched ${name}${st_suffix} with PID: ${pids[$i]}"
         status_map[$i]="running"
     done
 
@@ -316,7 +339,7 @@ run_stage() {
                 if kill -0 "$pid" 2>/dev/null; then
                     running=1
                     # Read latest progress from log
-                    local log_file="log/${name}_s${s}.log"
+                    local log_file="log/${name}${st_suffix}_s${s}.log"
                     local prog="starting"
                     if [ -f "$log_file" ]; then
                         local last_line
@@ -328,9 +351,13 @@ run_stage() {
                     status_str="${status_str} | ${name}: ${prog}"
                 else
                     status_map[$j]="done"
-                    log "✓ Model '$name' completed."
+                    local now=$(date +%s)
+                    local elapsed=$(( now - start_times[$j] ))
+                    local mins=$(( elapsed / 60 ))
+                    local secs=$(( elapsed % 60 ))
+                    log "✓ Model '${model_names[$j]}${st_suffix}' completed in ${mins}m ${secs}s (${elapsed}s total)."
                     status_str="${status_str} | ${name}: done"
-                    trigger_eval "$name" "$s" "$EVAL_RUN_ID" "$steps_for_stage"
+                    trigger_eval "${model_names[$j]}" "$s" "$EVAL_RUN_ID" "$steps_for_stage"
                     eval_pids+=($!)
                 fi
             else
@@ -354,11 +381,18 @@ run_stage() {
 
     log "Merging evaluation results..."
     .venv/bin/python src/eval_stage.py --stage "$s" --merge --run-id "$EVAL_RUN_ID" --steps "$steps_for_stage"
+    local stage_end_time=$(date +%s)
+    local stage_elapsed=$(( stage_end_time - stage_start_time ))
+    log "Stage $s completed in $(( stage_elapsed / 60 ))m $(( stage_elapsed % 60 ))s (${stage_elapsed}s total)."
 }
 
 
 IFS=',' read -A STAGE_LIST <<< "$STAGES"
-EVAL_RUN_ID=$(.venv/bin/python -c "import sys; sys.path.insert(0, 'src'); from eval_stage import get_next_run_id; print(get_next_run_id())")
+EVAL_PREFIX="run"
+if [ "$ENABLE_SIDE_TASKS" -eq 1 ]; then
+    EVAL_PREFIX="st"
+fi
+EVAL_RUN_ID=$(.venv/bin/python -c "import sys; sys.path.insert(0, 'src'); from eval_stage import get_next_run_id; print(get_next_run_id(prefix='$EVAL_PREFIX'))")
 log "Campaign Evaluation Run ID: $EVAL_RUN_ID"
 
 if [ "$DAEMON" -eq 1 ]; then

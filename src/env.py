@@ -116,6 +116,8 @@ DEFAULT_CONFIG = {
     "guard_los_range": GUARD_LOS_RANGE,
     "search_radius": SEARCH_RADIUS,
     "search_turns": SEARCH_TURNS,
+    # Side-tasks option (disabled by default)
+    "enable_side_tasks": False,
 }
 
 
@@ -179,6 +181,10 @@ class HeistEnv(ParallelEnv):
         self.hack_progress = 0
         self.tagged_pois = set()
         self._prev_extract_dist = {}
+        self.beacon_calibrated = False
+
+        self._rewarded_neutralized_guards = set()
+        self._rewarded_breached_walls = set()
 
         # REV-5: breach coordinate (set when Muscle breaks a wall)
         self.breach_pos = None
@@ -210,6 +216,9 @@ class HeistEnv(ParallelEnv):
         self.hack_progress = 0
         self.tagged_pois = set()
         self._prev_extract_dist = {}
+        self.beacon_calibrated = False
+        self._rewarded_neutralized_guards = set()
+        self._rewarded_breached_walls = set()
         self.agents = self.possible_agents[:]
         self.explored_map = np.zeros((self.map_h, self.map_w), dtype=bool)
         # REV-5/6/9/8: clear milestone state on every reset
@@ -271,7 +280,7 @@ class HeistEnv(ParallelEnv):
         interact_actors = [a for a in self.agents if actions.get(a) == INTERACT]
 
         # REV-9: fire any delayed alarms (neutralization notices) due this turn
-        self._process_pending_events()
+        self._process_pending_events(rewards)
 
         # ------------------ agent actions ------------------
         for agent in list(self.agents):
@@ -290,7 +299,7 @@ class HeistEnv(ParallelEnv):
             and manhattan(self.agent_positions["hacker"], self.terminal_pos) > 1
         ):
             self.hack_progress = 0
-            self._add_alarm(self.config["alarm_hack_turn"])
+            self._add_alarm(self.config["alarm_hack_turn"], rewards)
 
         # ------------------ guards ------------------
         self._move_guards()
@@ -306,12 +315,12 @@ class HeistEnv(ParallelEnv):
                 self.config["camera_range"],
             )
             n_visible = int(exposure.sum())
-            self._add_alarm(self.config["alarm_camera"] * n_visible)
+            self._add_alarm(self.config["alarm_camera"] * n_visible, rewards)
 
         # ------------------ catch check ------------------
         caught = self._check_caught()
         if caught:
-            self._add_alarm(self.config["alarm_guard_spot"])
+            self._add_alarm(self.config["alarm_guard_spot"], rewards)
 
         # ------------------ extraction countdown ------------------
         if self.extraction_triggered:
@@ -319,7 +328,7 @@ class HeistEnv(ParallelEnv):
             # timeout fires exactly once: it is a penalty for a slow gather,
             # not an automatic loss
             if self.extraction_countdown == 0:
-                self._add_alarm(self.config["alarm_extraction_timeout"])
+                self._add_alarm(self.config["alarm_extraction_timeout"], rewards)
 
         # ------------------ extraction-phase shaping (PBRS) ------------------
         # Once the loot is secured, steer every agent toward the extract tile.
@@ -574,13 +583,7 @@ class HeistEnv(ParallelEnv):
             self._extractor_act(pos, rewards)
 
     def _scout_tag(self, pos, rewards):
-        """Scout broadcasts intel on a nearby point of interest.
-
-        Each point of interest can only be tagged once per episode.  Without
-        this guard the scout can stand next to a single POI and farm +0.5 per
-        step, which collapses the policy into reward-hacking instead of
-        executing the causal chain.
-        """
+        """Scout broadcasts intel on a nearby point of interest or performs a Decoy Noise Ping."""
         pois = (
             [self.terminal_pos, self.loot_pos, self.extract_pos]
             + self.camera_positions
@@ -590,29 +593,37 @@ class HeistEnv(ParallelEnv):
             if p not in self.tagged_pois and manhattan(pos, p) <= 1:
                 self.tagged_pois.add(p)
                 rewards["scout"] += self.config["reward_tag"]
+                return
+
+        # Side-task: Decoy Noise Ping
+        if self.config.get("enable_side_tasks", False):
+            ping_triggered = False
+            for gi, gpos in enumerate(self.guard_positions):
+                if self.neutralized[gi] == 0 and manhattan(pos, gpos) <= 6:
+                    self.guard_states[gi] = "search"
+                    self._guard_search_target[gi] = pos
+                    self._guard_search_turns[gi] = self.config["search_turns"]
+                    ping_triggered = True
+            if ping_triggered:
+                rewards["scout"] += 0.2
 
     def _hacker_hack(self, pos, rewards):
-        """Multi-turn terminal hack; interruption resets progress.
-
-        The terminal must first be tagged by the scout (causal gate), so
-        the scout's action is a strict prerequisite for the whole chain.
-        """
+        """Multi-turn terminal hack; interruption resets progress."""
         if (
             not self.terminal_disabled
             and self.terminal_pos in self.tagged_pois
             and manhattan(pos, self.terminal_pos) <= 1
         ):
             self.hack_progress += 1
-            self._add_alarm(self.config["alarm_hack_turn"])
+            self._add_alarm(self.config["alarm_hack_turn"], rewards)
             if self.hack_progress >= self.config["hack_turns"]:
                 self.terminal_disabled = True
                 self.hack_progress = 0
-                rewards["hacker"] += self.config["reward_task"]
+                rewards["hacker"] += 1.0
+            else:
+                rewards["hacker"] += 0.5
             return
         # fallback: force-bypass an adjacent locked door
-        # REV-5 (REVISION_PLAN.md §4): door bypass stays for DOOR tiles; WALL
-        # destruction moves to a Muscle BREACH action (+ALARM_BREACH instant,
-        # guards within breach_radius repath).
         for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             nr, nc = pos[0] + dr, pos[1] + dc
             if (
@@ -621,19 +632,12 @@ class HeistEnv(ParallelEnv):
                 and self.grid[nr, nc] == DOOR
             ):
                 self.grid[nr, nc] = EMPTY
-                self._add_alarm(self.config["alarm_bypass"])
+                self._add_alarm(self.config["alarm_bypass"], rewards)
+                rewards["hacker"] += 0.2
                 return
 
     def _muscle_neutralize(self, pos, rewards):
-        """REV-5/REV-9: neutralize a nearby guard or breach an adjacent wall.
-
-        Neutralizing a guard removes it for neutral_turns but schedules the
-        alarm via the delayed event queue (REV-9): command only notices
-        ALARM_NEUTRALIZE_DELAY turns later, and the fired event sends nearby
-        guards to Search the guard's last position.  Breaching a wall (REV-5)
-        costs ALARM_BREACH instantly, opens a shortcut, and makes guards within
-        breach_radius repath to the breach coordinate.
-        """
+        """REV-5/REV-9: neutralize a nearby guard or breach an adjacent wall."""
         # --- neutralize an adjacent guard (within 2 tiles) ---
         best, best_d = None, 1e9
         for gi, gpos in enumerate(self.guard_positions):
@@ -645,7 +649,6 @@ class HeistEnv(ParallelEnv):
         if best is not None and best_d <= 2:
             self.neutralized[best] = self.config["neutral_turns"]
             self._neutralized_pos[best] = self.guard_positions[best]
-            # REV-9: delayed, not instant
             self._pending_events.append(
                 (
                     self.current_step + self.config["alarm_neut_delay"],
@@ -653,7 +656,9 @@ class HeistEnv(ParallelEnv):
                     ("neutralize", best),
                 )
             )
-            rewards["muscle"] += self.config["reward_task"]
+            if best not in self._rewarded_neutralized_guards:
+                self._rewarded_neutralized_guards.add(best)
+                rewards["muscle"] += self.config["reward_task"]
             return
 
         # --- REV-5: breach an adjacent wall ---
@@ -664,8 +669,10 @@ class HeistEnv(ParallelEnv):
             if self.grid[nr, nc] == WALL:
                 self.grid[nr, nc] = EMPTY
                 self.breach_pos = (nr, nc)
-                self._add_alarm(self.config["alarm_breach"])
-                rewards["muscle"] += self.config["reward_task"]
+                self._add_alarm(self.config["alarm_breach"], rewards)
+                if (nr, nc) not in self._rewarded_breached_walls:
+                    self._rewarded_breached_walls.add((nr, nc))
+                    rewards["muscle"] += self.config["reward_task"]
                 if self.config["breach_search_trigger"]:
                     self._trigger_breach_search(nr, nc)
                 return
@@ -681,7 +688,7 @@ class HeistEnv(ParallelEnv):
                 self._guard_search_target[gi] = (br, bc)
                 self._guard_search_turns[gi] = self.config["search_turns"]
 
-    def _process_pending_events(self):
+    def _process_pending_events(self, rewards=None):
         """REV-9: fire delayed alarm events whose trigger step has arrived."""
         due = [e for e in self._pending_events if e[0] <= self.current_step]
         if not due:
@@ -690,8 +697,7 @@ class HeistEnv(ParallelEnv):
             e for e in self._pending_events if e[0] > self.current_step
         ]
         for _, amount, source in due:
-            self._add_alarm(amount)
-            # command noticed a missing guard: nearby guards go Search its last spot
+            self._add_alarm(amount, rewards)
             if source is not None and source[0] == "neutralize":
                 gi = source[1]
                 last = self._neutralized_pos.get(gi)
@@ -707,20 +713,32 @@ class HeistEnv(ParallelEnv):
                             self._guard_search_turns[j] = self.config["search_turns"]
 
     def _extractor_act(self, pos, rewards):
-        """Secure loot (needs disabled terminal), then call extraction."""
+        """Secure loot (needs disabled terminal), call extraction, or pre-calibrate beacon."""
         if (
             not self.loot_acquired
             and self.terminal_disabled
             and manhattan(pos, self.loot_pos) <= 1
         ):
             self.loot_acquired = True
-            self._burden_start_step = self.current_step  # REV-6 slow-turn clock
+            self._burden_start_step = self.current_step
             rewards["extractor"] += self.config["reward_task"]
             return
         if self.loot_acquired and not self.extraction_triggered:
             self.extraction_triggered = True
-            self.extraction_countdown = self.config["extraction_countdown"]
+            if self.beacon_calibrated:
+                self.extraction_countdown = min(3, self.config["extraction_countdown"])
+            else:
+                self.extraction_countdown = self.config["extraction_countdown"]
             rewards["extractor"] += 0.5
+            return
+        # Side-task: Extraction Beacon Pre-Calibration
+        if (
+            self.config.get("enable_side_tasks", False)
+            and not self.beacon_calibrated
+            and manhattan(pos, self.extract_pos) <= 1
+        ):
+            self.beacon_calibrated = True
+            rewards["extractor"] += 0.2
 
     # ------------------------------------------------------------------
     # Internals: guards and alarm
@@ -853,8 +871,14 @@ class HeistEnv(ParallelEnv):
                     return True
         return False
 
-    def _add_alarm(self, amount):
+    def _add_alarm(self, amount, rewards=None):
+        prev_alarm = self.alarm
         self.alarm = min(self.alarm + amount, self.config["alarm_max"])
+        delta = self.alarm - prev_alarm
+        if delta > 0 and rewards is not None:
+            penalty = 0.01 * delta
+            for a in self.agents:
+                rewards[a] -= penalty
 
     def _win_condition(self):
         return (
@@ -893,13 +917,14 @@ class HeistEnv(ParallelEnv):
                 mask[a] = 0
 
         # causal gate: only allow INTERACT when it is actually possible
+        enable_st = self.config.get("enable_side_tasks", False)
         if agent == "scout":
             pois = (
                 [self.terminal_pos, self.loot_pos, self.extract_pos]
                 + self.camera_positions
                 + self.door_positions
             )
-            if any(manhattan(pos, p) <= 1 for p in pois):
+            if any(manhattan(pos, p) <= 1 for p in pois) or enable_st:
                 mask[INTERACT] = 1
         elif agent == "hacker":
             # causal gate: the terminal must have been tagged by the scout
@@ -938,7 +963,12 @@ class HeistEnv(ParallelEnv):
                 and manhattan(pos, self.loot_pos) <= 1
             )
             can_call = self.loot_acquired and not self.extraction_triggered
-            if near_loot or can_call:
+            near_extract_pre = (
+                enable_st
+                and not self.beacon_calibrated
+                and manhattan(pos, self.extract_pos) <= 1
+            )
+            if near_loot or can_call or near_extract_pre:
                 mask[INTERACT] = 1
             # REV-6: on a slow turn the extractor cannot move at all.  The mask
             # is evaluated before step() increments current_step, so look one

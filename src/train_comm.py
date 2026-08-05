@@ -220,6 +220,10 @@ if __name__ == "__main__":
         print("  [Exploration] RND Module initialized.")
 
     start_time = time.time()
+    start_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(start_time))
+    print(
+        f"[{start_utc}] Training started: run_name={run_name}, total_steps={args.total_steps}"
+    )
     global_step = 0
 
     for update in range(1, num_updates + 1):
@@ -573,4 +577,6 @@ if __name__ == "__main__":
             args.total_steps,
             num_updates * args.num_steps * args.num_envs,
         )
-    print("training done.")
+    elapsed = time.time() - start_time
+    end_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    print(f"[{end_utc}] training done in {elapsed:.1f}s ({elapsed / 60:.1f} min).")
