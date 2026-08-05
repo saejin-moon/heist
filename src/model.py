@@ -138,6 +138,40 @@ class MappoAgent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), self.critic(state)
 
+    def get_influence_matrix(self, state):
+        """Calculates Non-Communicating Causal Influence Routing (CIR) matrix via Counterfactual Feature Ablation for MAPPO."""
+        B, state_dim = state.shape
+        v_base = self.critic(state).squeeze(-1)  # [B]
+
+        # Calculate map grid length: state_dim = 6 + H*W + 2*N_AGENTS + 2*guard_count + guard_count
+        n_rem = state_dim - 6 - 8
+        grid_len = 121
+        for sq in (2500, 961, 441, 225, 121):
+            if sq <= n_rem:
+                grid_len = sq
+                break
+
+        agent_pos_start = 6 + grid_len
+        influence_matrix = torch.zeros((B, N_AGENTS, N_AGENTS), device=state.device)
+
+        for j in range(N_AGENTS):
+            state_alt = state.clone()
+            pos_col = agent_pos_start + 2 * j
+            state_alt[:, pos_col : pos_col + 2] = 0.0
+
+            v_alt = self.critic(state_alt).squeeze(-1)  # [B]
+            diff_j = torch.abs(v_base - v_alt)  # [B]
+
+            for i in range(N_AGENTS):
+                if i != j:
+                    influence_matrix[:, i, j] = diff_j
+
+        mask = torch.eye(N_AGENTS, device=state.device).bool()
+        influence_matrix.masked_fill_(mask, 0.0)
+
+        row_sums = influence_matrix.sum(dim=-1, keepdim=True) + 1e-8
+        return influence_matrix / row_sums
+
 
 class QNetwork(nn.Module):
     """Per-agent deep Q network (DQN-style).  Used by QMIX.
@@ -443,3 +477,133 @@ class CommAgent(nn.Module):
             values = self.critic(flat_input).view(B, n)
 
         return actions, log_probs, entropy, values
+
+
+def construct_other_actions_onehot(actions_tensor, focal_agent_idx):
+    """
+    Args:
+        actions_tensor: [N_AGENTS, B] integer actions
+        focal_agent_idx: int index of focal agent i
+    Returns:
+        [B, (N_AGENTS - 1) * ACTION_DIM] float one-hot encoding of other agents' actions
+    """
+    other_list = []
+    for k in range(N_AGENTS):
+        if k != focal_agent_idx:
+            oh = torch.nn.functional.one_hot(
+                actions_tensor[k], num_classes=ACTION_DIM
+            ).float()
+            other_list.append(oh)
+    return torch.cat(other_list, dim=-1)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# COMA (Counterfactual Multi-Agent Policy Gradients)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class ComaCritic(nn.Module):
+    """COMA Centralized Critic.
+
+    Inputs:
+        state: Global state vector [B, state_dim]
+        other_actions_onehot: One-hot joint actions of all OTHER agents [B, (N_AGENTS-1) * ACTION_DIM]
+    Returns:
+        Q-values for ALL possible actions of the focal agent [B, ACTION_DIM]
+    """
+
+    def __init__(
+        self, state_dim, n_agents=N_AGENTS, action_dim=ACTION_DIM, hidden_dim=HIDDEN_DIM
+    ):
+        super().__init__()
+        other_actions_dim = (n_agents - 1) * action_dim
+        in_dim = state_dim + other_actions_dim
+
+        self.net = nn.Sequential(
+            layer_init(nn.Linear(in_dim, hidden_dim)),
+            nn.ReLU(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.ReLU(),
+            layer_init(nn.Linear(hidden_dim, action_dim), std=1.0),
+        )
+
+    def forward(self, state, other_actions_onehot):
+        x = torch.cat([state, other_actions_onehot], dim=-1)
+        return self.net(x)
+
+
+class ComaAgent(nn.Module):
+    """COMA Agent: decentralized actor (local obs + role) + centralized critic (state + other actions)."""
+
+    def __init__(
+        self, state_dim, action_dim=ACTION_DIM, hidden_dim=HIDDEN_DIM, n_agents=N_AGENTS
+    ):
+        super().__init__()
+        self.state_dim = state_dim
+        self.n_agents = n_agents
+        self.action_dim = action_dim
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(LOCAL_INPUT_DIM, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, action_dim), std=0.01),
+        )
+        self.critic = ComaCritic(
+            state_dim=state_dim,
+            n_agents=n_agents,
+            action_dim=action_dim,
+            hidden_dim=hidden_dim,
+        )
+
+    def get_action_and_probs(self, obs, role_id, action_mask, action=None):
+        x = torch.cat((torch.flatten(obs, start_dim=1).float(), role_id.float()), dim=1)
+        logits = self.actor(x)
+        masked_logits = logits.masked_fill(action_mask != 1, -1e9)
+        probs = Categorical(logits=masked_logits)
+        if action is None:
+            action = probs.sample()
+        return action, probs.log_prob(action), probs.probs, probs.entropy()
+
+    def get_value(self, state, other_actions_onehot):
+        return self.critic(state, other_actions_onehot)
+
+    def get_action_and_value(
+        self, obs, role_id, action_mask, state, other_actions_onehot, action=None
+    ):
+        act, log_prob, probs, entropy = self.get_action_and_probs(
+            obs, role_id, action_mask, action=action
+        )
+        q_vals = self.get_value(state, other_actions_onehot)
+        return act, log_prob, entropy, q_vals
+
+    def get_influence_matrix(self, state, actions_tensor):
+        """Calculates Non-Communicating Causal Influence Routing (CIR) matrix via Counterfactual Action Ablation for COMA."""
+        B = state.shape[0]
+        influence_matrix = torch.zeros((B, N_AGENTS, N_AGENTS), device=state.device)
+
+        for i in range(N_AGENTS):
+            other_oh_base = construct_other_actions_onehot(actions_tensor, i)
+            q_base_all = self.critic(state, other_oh_base)
+            q_base = q_base_all.gather(1, actions_tensor[i].unsqueeze(1)).squeeze(1)
+
+            for j in range(N_AGENTS):
+                if j == i:
+                    continue
+                sender_idx = j if j < i else j - 1
+                start_col = sender_idx * ACTION_DIM
+                end_col = start_col + ACTION_DIM
+
+                other_oh_alt = other_oh_base.clone()
+                other_oh_alt[:, start_col:end_col] = 0.0
+
+                q_alt_all = self.critic(state, other_oh_alt)
+                q_alt = q_alt_all.gather(1, actions_tensor[i].unsqueeze(1)).squeeze(1)
+
+                influence_matrix[:, i, j] = torch.abs(q_base - q_alt)
+
+        mask = torch.eye(N_AGENTS, device=state.device).bool()
+        influence_matrix.masked_fill_(mask, 0.0)
+
+        row_sums = influence_matrix.sum(dim=-1, keepdim=True) + 1e-8
+        return influence_matrix / row_sums

@@ -13,6 +13,7 @@
 #     ./train.zsh -h, --help           # show this help message
 #
 # Flags:
+#   --models MODELS   comma-separated model names to train (e.g. coma or ippo,mappo)
 #   --stages STAGES   comma-separated curriculum stage indices (default 0)
 #   --num-stages N    run first N curriculum stages (0..N-1)
 #   --workdir DIR     repo directory (default $HOME/heist)
@@ -31,6 +32,7 @@ CAMPAIGN_STEPS=299008
 CIR_COEF=0.5
 CAR_COEF=0.5
 STAGES="0"
+MODELS=""
 SKIP_SMOKE=0
 DO_PULL=0
 DAEMON=0
@@ -46,6 +48,7 @@ INTENDED FOR TRAINING RUNS (e.g. on target machine or local GPU).
 
 Usage:
     ./train.zsh                      # default stage 0 campaign (300k steps, all models)
+    ./train.zsh --models coma        # train only specific model(s) (e.g. coma, ippo, mappo)
     ./train.zsh --fast               # super fast local test (10k steps across all models)
     ./train.zsh --parallel 4         # run up to 4 models concurrently to maximize GPU/CPU
     ./train.zsh --steps 20480        # custom step budget for tuning
@@ -54,6 +57,7 @@ Usage:
     ./train.zsh -h, --help           # show this help message
 
 Flags:
+  --models, --model MODELS  comma-separated model names to train (e.g. coma or ippo,mappo)
   --fast, --quick   fast local validation test (10k steps, skips smoke test)
   --parallel, -j N  number of concurrent model training jobs (default 2)
   --steps STEPS     total training timesteps per algorithm (default 299008)
@@ -80,8 +84,10 @@ while (( $# )); do
     case "$1" in
         --workdir)    WORKDIR="$2"; shift 2 ;;
         --repo-url)   REPO_URL="$2"; shift 2 ;;
+        --models|--model) MODELS="$2"; shift 2 ;;
         --stages)     STAGES="$2"; shift 2 ;;
         --steps)      CAMPAIGN_STEPS="$2"; shift 2 ;;
+
         --fast|--quick|--sample) FAST_MODE=1; CAMPAIGN_STEPS=10240; STAGES="0"; SKIP_SMOKE=1; shift ;;
         --parallel|-j) CONCURRENT_JOBS="$2"; shift 2 ;;
         --cir-coef)   CIR_COEF="$2"; shift 2 ;;
@@ -195,10 +201,16 @@ run_stage() {
     local cfg
     cfg=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from curriculum import CURRICULUM, env_config_str; print(env_config_str(CURRICULUM[$s]))")
     
-    local -a model_names=("ippo" "mappo" "mappo_car" "comm" "comm_cir" "comm_cir_car" "qmix")
+    local -a model_names=()
+    if [ -n "$MODELS" ]; then
+        IFS=',' read -A model_names <<< "$MODELS"
+    else
+        model_names=("ippo" "mappo" "mappo_car" "mappo_cir" "comm" "comm_cir" "comm_cir_car" "qmix" "coma" "coma_cir")
+    fi
     local -a pids=()
     local -a status_map=()
     local -a eval_pids=()
+
 
     for ((i=1; i<=${#model_names[@]}; i++)); do
         pids[$i]=0
@@ -259,6 +271,9 @@ run_stage() {
             mappo_car)
                 nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --env-config "$cfg" --exp-name "mappo_car_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
                 ;;
+            mappo_cir)
+                nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "mappo_cir_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                ;;
             comm)
                 nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "comm_s${s}" --save-model "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
                 ;;
@@ -271,7 +286,15 @@ run_stage() {
             qmix)
                 nohup .venv/bin/python -u src/train_qmix.py --total-steps "$steps_for_stage" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "qmix_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
                 ;;
+            coma)
+                nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "coma_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                ;;
+            coma_cir)
+                nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "coma_cir_s${s}" "${rnd_flags[@]}" > "log/${name}_s${s}.log" 2>&1 &
+                ;;
         esac
+
+
         
         local last_pid=$!
         pids[$i]=$last_pid

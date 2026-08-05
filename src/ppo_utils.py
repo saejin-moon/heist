@@ -90,3 +90,34 @@ def load_matching_weights(model, filepath, device):
     except Exception as e:
         print(f"  [Transfer] Warning: could not load checkpoint from {filepath}: {e}")
         return False
+
+
+def compute_counterfactual_advantage(
+    policy_probs, q_values_all, taken_actions, action_mask
+):
+    """Computes COMA counterfactual advantage for a agent batch.
+
+    Args:
+        policy_probs:  [B, ACTION_DIM] Action probabilities pi_i(a_i' | o_i) from actor
+        q_values_all:  [B, ACTION_DIM] Q-values for all actions Q_i(s, a_{-i}, .) from critic
+        taken_actions: [B] Action indices actually taken by agent i
+        action_mask:   [B, ACTION_DIM] Binary mask (1=legal, 0=illegal)
+
+    Returns:
+        advantage: [B] Counterfactual advantage A_i(s, a)
+        q_taken:   [B] Q-value of the executed joint action Q_i(s, a_{-i}, a_i)
+    """
+    # 1. Mask illegal Q-values to avoid zero-probability/negative-infinity issues
+    masked_q = torch.where(
+        action_mask == 1, q_values_all, torch.zeros_like(q_values_all)
+    )
+
+    # 2. Extract Q-value of taken action
+    q_taken = q_values_all.gather(1, taken_actions.unsqueeze(1)).squeeze(1)
+
+    # 3. Compute Counterfactual Baseline: \sum_{a_i'} pi_i(a_i' | o_i) * Q_i(s, a_{-i}, a_i')
+    baseline = torch.sum(policy_probs * masked_q, dim=-1)
+
+    # 4. Counterfactual Advantage
+    advantage = q_taken - baseline
+    return advantage, q_taken

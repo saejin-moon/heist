@@ -37,11 +37,16 @@ DEFAULT_ALGOS = {
     "ippo": {"exp_name": "ippo", "class": "ippo"},
     "mappo": {"exp_name": "mappo", "class": "mappo"},
     "mappo_car": {"exp_name": "mappo_car", "class": "mappo"},
+    "mappo_cir": {"exp_name": "mappo_cir", "class": "mappo"},
     "comm": {"exp_name": "comm", "class": "comm"},
     "comm_cir": {"exp_name": "comm_cir", "class": "comm"},
     "comm_cir_car": {"exp_name": "comm_cir_car", "class": "comm"},
     "qmix": {"exp_name": "qmix", "class": "qmix"},
+    "coma": {"exp_name": "coma", "class": "coma"},
+    "coma_cir": {"exp_name": "coma_cir", "class": "coma"},
 }
+
+
 SEEDS = [0, 1, 2]
 
 

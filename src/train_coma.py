@@ -1,25 +1,26 @@
 """
-MAPPO (Multi-Agent PPO) trainer for HEIST.
+COMA (Counterfactual Multi-Agent Policy Gradients) trainer for HEIST.
 
-PLAN.md Baseline 2: all agents share ONE policy network, but the critic is
-centralized and consumes the full `env.state()` vector (grid + positions +
-phase flags).  The actor still only sees the local, fog-masked observation,
-so partial observability is removed only for value estimation.  This is the
-standard MAPPO cooperative baseline that QMIX should outperform on
-credit-assignment-heavy tasks.
+Implements the COMA algorithm (Foerster et al., AAAI 2018).
+Centralized critic evaluates Q(s, a_{-i}, a_i) for all possible actions of
+agent i given global state s and joint actions of all other agents a_{-i}.
 
-Example:
-    uv run python src/train_mappo.py --total-timesteps 2_000_000
+Counterfactual advantage:
+    A_i(s, a) = Q_i(s, a_{-i}, a_i) - sum_{a_i'} pi_i(a_i' | o_i) Q_i(s, a_{-i}, a_i')
 """
 
 import argparse
+import json
 import os
+import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 from constants import (
@@ -30,27 +31,29 @@ from constants import (
     OBSERVATION_SIZE,
 )
 from env import AGENTS, parse_env_config
-from model import MappoAgent
-from ppo_utils import compute_gae, write_completion
+from model import ComaAgent, ComaCritic
+from ppo_utils import (
+    compute_counterfactual_advantage,
+    load_matching_weights,
+    write_completion,
+)
 from vec_env import VectorEnv
 
 
 @dataclass
 class Args:
-    exp_name: str = "mappo"
+    exp_name: str = "coma"
     seed: int = 0
     torch_deterministic: bool = True
     cuda: bool = True
-    total_timesteps: int = 2_000_000
+    total_timesteps: int = 300_000
     learning_rate: float = 2.5e-4
     num_envs: int = 8
     num_steps: int = 256
     anneal_lr: bool = True
     gamma: float = 0.99
-    gae_lambda: float = 0.95
     num_minibatches: int = 4
     update_epochs: int = 4
-    clip_coef: float = 0.2
     ent_coef: float = 0.01
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
@@ -69,19 +72,17 @@ def parse_args():
     p.add_argument("--save-model", action="store_true", default=True)
     p.add_argument("--no-save-model", action="store_true", help="disable checkpointing")
     p.add_argument("--total-timesteps", type=int, default=Args.total_timesteps)
+    p.add_argument("--total-steps", type=int, dest="total_timesteps")
     p.add_argument("--learning-rate", type=float, default=Args.learning_rate)
     p.add_argument("--num-envs", type=int, default=Args.num_envs)
     p.add_argument("--num-steps", type=int, default=Args.num_steps)
     p.add_argument("--anneal-lr", action="store_true", default=True)
     p.add_argument("--gamma", type=float, default=Args.gamma)
-    p.add_argument("--gae-lambda", type=float, default=Args.gae_lambda)
     p.add_argument("--num-minibatches", type=int, default=Args.num_minibatches)
     p.add_argument("--update-epochs", type=int, default=Args.update_epochs)
-    p.add_argument("--clip-coef", type=float, default=Args.clip_coef)
     p.add_argument("--ent-coef", type=float, default=Args.ent_coef)
     p.add_argument("--vf-coef", type=float, default=Args.vf_coef)
     p.add_argument("--max-grad-norm", type=float, default=Args.max_grad_norm)
-    p.add_argument("--target-kl", type=float, default=None)
     p.add_argument(
         "--car-coef", type=float, default=0.0, help="CAR intrinsic reward coefficient."
     )
@@ -110,7 +111,25 @@ def parse_args():
     return p.parse_args()
 
 
-def train(args: Args):
+def construct_other_actions_onehot(actions_tensor, focal_agent_idx):
+    """
+    Args:
+        actions_tensor: [N_AGENTS, B] integer actions
+        focal_agent_idx: int index of focal agent i
+    Returns:
+        [B, (N_AGENTS - 1) * ACTION_DIM] float one-hot encoding of other agents' actions
+    """
+    other_list = []
+
+    for k in range(N_AGENTS):
+        if k != focal_agent_idx:
+            oh = F.one_hot(actions_tensor[k], num_classes=ACTION_DIM).float()  # [B, 6]
+            other_list.append(oh)
+    return torch.cat(other_list, dim=-1)  # [B, 18]
+
+
+def train(args: Args):  # noqa: C901
+
     run_name = (
         args.exp_name
         if (
@@ -119,6 +138,18 @@ def train(args: Args):
         )
         else f"{args.exp_name}_s{args.seed}"
     )
+
+    ckpt_dir = Path("checkpoints") / run_name
+    marker = ckpt_dir / "complete.json"
+    if marker.is_file():
+        try:
+            data = json.loads(marker.read_text())
+            if data.get("completed_steps", 0) >= args.total_timesteps:
+                print(f"[COMA] Run '{run_name}' already complete. Skipping.")
+                return
+        except Exception:
+            pass
+
     os.makedirs(f"runs/{run_name}", exist_ok=True)
     writer = SummaryWriter(f"runs/{run_name}")
 
@@ -145,39 +176,39 @@ def train(args: Args):
     vec_env = VectorEnv(args.num_envs, config=env_config, base_seed=args.seed)
     next_obs, next_state = vec_env.reset(seed=args.seed)
     state_dim = vec_env.state_dim
-    # REV-3: termination vs truncation tracked separately; the boundary of the
-    # rollout bootstraps truncated envs from the true terminal state.
-    next_terminations = torch.zeros(args.num_envs, device=device)
-    next_truncations = torch.zeros(args.num_envs, device=device)
-    last_infos = [{} for _ in range(args.num_envs)]
 
-    # shared policy: one actor + centralized critic
-    # REV-2 (REVISION_PLAN.md §2): this single network controls all four roles;
-    # it needs the env-issued role one-hot (REV-1) to avoid aliasing.
-    policy = MappoAgent(state_dim).to(device)
+    policy = ComaAgent(state_dim).to(device)
+
+    target_critic = ComaCritic(state_dim).to(device)
+    target_critic.load_state_dict(policy.critic.state_dict())
+
     optimizer = torch.optim.Adam(policy.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    # Stage-to-stage policy transfer
-    import re
-
-    from ppo_utils import load_matching_weights
-
-    match = re.search(r"^(.*)_s(\d+)$", run_name)
-    if match:
-        base_name, stage_str = match.groups()
-        stage = int(stage_str)
-        if stage > 0:
-            prev_run_name = f"{base_name}_s{stage - 1}"
-            print(
-                f"  [Transfer] Checking for previous stage checkpoint in checkpoints/{prev_run_name}"
-            )
-            load_matching_weights(
-                policy, f"checkpoints/{prev_run_name}/policy.pt", device
-            )
+    # Checkpoint loading / stage transfer / resuming
+    policy_pt = ckpt_dir / "policy.pt"
+    if policy_pt.is_file() and args.save_model:
+        print(f"  [Resume] Loading existing checkpoint from {policy_pt}")
+        load_matching_weights(policy, str(policy_pt), device)
+        target_critic.load_state_dict(policy.critic.state_dict())
+    else:
+        match = re.search(r"^(.*)_s(\d+)$", run_name)
+        if match:
+            base_name, stage_str = match.groups()
+            stage = int(stage_str)
+            if stage > 0:
+                prev_run_name = f"{base_name}_s{stage - 1}"
+                print(
+                    f"  [Transfer] Checking for previous stage checkpoint in checkpoints/{prev_run_name}"
+                )
+                load_matching_weights(
+                    policy, f"checkpoints/{prev_run_name}/policy.pt", device
+                )
+                target_critic.load_state_dict(policy.critic.state_dict())
 
     if args.load_checkpoint:
         print(f"  [Transfer] Loading custom checkpoint from {args.load_checkpoint}")
         load_matching_weights(policy, f"{args.load_checkpoint}/policy.pt", device)
+        target_critic.load_state_dict(policy.critic.state_dict())
 
     rnd_module = None
     if args.use_rnd:
@@ -196,9 +227,6 @@ def train(args: Args):
             "action_mask": torch.zeros(
                 (args.num_steps, args.num_envs, ACTION_DIM), device=device
             ),
-            # REV-7 (REVISION_PLAN.md §6): no global_state buffer; the MAPPO
-            # actor sees local view + role only, the centralized critic sees
-            # env.state() from the shared state_buffer.
             "role_id": torch.zeros(
                 (args.num_steps, args.num_envs, N_AGENTS), device=device
             ),
@@ -209,10 +237,7 @@ def train(args: Args):
             "rewards": torch.zeros((args.num_steps, args.num_envs), device=device),
             "terminated": torch.zeros((args.num_steps, args.num_envs), device=device),
             "truncated": torch.zeros((args.num_steps, args.num_envs), device=device),
-            # REV-3: bootstrap value for envs done this step (V(terminal state)
-            # for truncations, 0 for terminations)
             "bootstrap": torch.zeros((args.num_steps, args.num_envs), device=device),
-            "values": torch.zeros((args.num_steps, args.num_envs), device=device),
         }
     state_buffer = torch.zeros(
         (args.num_steps, args.num_envs, state_dim), device=device
@@ -229,7 +254,7 @@ def train(args: Args):
             vec_env.envs[0],
             episodes=args.eval_episodes,
             seed=args.seed + 1_000_000,
-            algo="mappo",
+            algo="coma",
             device=device,
         )
         for k, v in metrics.items():
@@ -239,7 +264,6 @@ def train(args: Args):
             f"return={metrics['mean_return']:.3f} len={metrics['mean_length']:.1f}"
         )
 
-        # Periodic CAI and Counterfactual evaluation to track credit metrics during training (every 50k steps or final step)
         if step > 0 and (
             (step % 50000 < (args.num_steps * args.num_envs))
             or (step >= args.total_timesteps - (args.num_steps * args.num_envs))
@@ -264,8 +288,14 @@ def train(args: Args):
                     seed=args.seed + 1_000_000,
                     device=device,
                 )
-                for agent_name, val in imp.items():
+                writer.add_scalar(
+                    "eval/importance/baseline_win_rate",
+                    imp["baseline_win_rate"],
+                    step,
+                )
+                for agent_name, val in imp["importance"].items():
                     writer.add_scalar(f"eval/importance/{agent_name}", val, step)
+
             except Exception as e:
                 print(
                     f"  [Diagnostics] Warning: failed to calculate CAI/importance metrics: {e}"
@@ -289,23 +319,23 @@ def train(args: Args):
             global_step += 1
             state_t = torch.as_tensor(next_state, device=device)
             state_buffer[step] = state_t
-            if getattr(args, "cir_coef", 0.0) > 0.0:
-                with torch.no_grad():
-                    buf_influence[step] = policy.get_influence_matrix(state_t)
             stacked = next_obs["_stacked"]
             obs_all = torch.as_tensor(stacked["observation"], device=device)
             role_all = torch.as_tensor(stacked["role_id"], device=device)
             mask_all = torch.as_tensor(stacked["action_mask"], device=device)
+
             with torch.no_grad():
-                action, logprob, _, value = policy.get_action_and_value(
+                action, logprob, _, _ = policy.get_action_and_probs(
                     obs_all.flatten(0, 1),
                     role_all.flatten(0, 1),
                     mask_all.flatten(0, 1),
-                    state_t.repeat(len(AGENTS), 1),
                 )
             actions = action.view(len(AGENTS), args.num_envs)
             logprobs = logprob.view(len(AGENTS), args.num_envs)
-            values = value.view(len(AGENTS), args.num_envs)
+            if getattr(args, "cir_coef", 0.0) > 0.0:
+                with torch.no_grad():
+                    buf_influence[step] = policy.get_influence_matrix(state_t, actions)
+
             actions_dict = {}
             for i, a in enumerate(AGENTS):
                 buffers[a]["obs"][step] = obs_all[i]
@@ -313,17 +343,22 @@ def train(args: Args):
                 buffers[a]["action_mask"][step] = mask_all[i]
                 buffers[a]["actions"][step] = actions[i]
                 buffers[a]["logprobs"][step] = logprobs[i]
-                buffers[a]["values"][step] = values[i]
                 actions_dict[a] = actions[i].cpu().numpy()
 
             next_obs, rewards, terminations, truncations, infos = vec_env.step(
                 actions_dict
             )
-            # --- CAR: Counterfactual Affordance Reward ---
+
+            # CAR intrinsic reward bonus
             if getattr(args, "car_coef", 0.0) > 0.0:
                 with torch.no_grad():
                     next_state_t = torch.as_tensor(vec_env.state, device=device)
-                    v_s_next = policy.get_value(next_state_t).squeeze(-1)
+                    v_s_next = target_critic(
+                        next_state_t,
+                        torch.zeros(
+                            args.num_envs, (N_AGENTS - 1) * ACTION_DIM, device=device
+                        ),
+                    ).max(dim=-1)[0]
                 for env_idx in range(args.num_envs):
                     for a in AGENTS:
                         if infos[env_idx].get(a, {}).get("car_unlocked", False):
@@ -332,17 +367,10 @@ def train(args: Args):
                             )
                             rewards[a][env_idx] += bonus
 
-            next_terminations = torch.as_tensor(
-                terminations["scout"], device=device
-            ).float()
-
-            next_truncations = torch.as_tensor(
-                truncations["scout"], device=device
-            ).float()
-            last_infos = infos
             r_int_tensor = None
             if rnd_module is not None:
                 r_int_tensor = rnd_module.compute_reward(obs_all)
+
             for idx_a, a in enumerate(AGENTS):
                 r_step = torch.as_tensor(rewards[a], device=device)
                 if r_int_tensor is not None:
@@ -352,7 +380,8 @@ def train(args: Args):
                 trunc_t = torch.as_tensor(truncations[a], device=device).float()
                 buffers[a]["terminated"][step] = term_t
                 buffers[a]["truncated"][step] = trunc_t
-                # REV-3: store critic(terminal_state) for envs truncated here.
+
+                # Bootstrap value for envs truncated here
                 with torch.no_grad():
                     t_idx = trunc_t.bool().nonzero(as_tuple=False).flatten()
                     if t_idx.numel():
@@ -364,108 +393,171 @@ def train(args: Args):
                                 for i in t_idx
                             ]
                         )
-                        val = policy.get_value(t_states).flatten()
+                        # Average max Q across illegal-masked target critic
+                        zero_oh = torch.zeros(
+                            t_states.shape[0],
+                            (N_AGENTS - 1) * ACTION_DIM,
+                            device=device,
+                        )
+                        val = target_critic(t_states, zero_oh).max(dim=-1)[0]
                         buffers[a]["bootstrap"][step][t_idx] = val
             next_state = vec_env.state
 
-        # ---------------- GAE + returns (centralized critic) ----------------
+        # ---------------- TD Targets for Critic ----------------
+        # Compute Q-targets per agent for all timesteps
+        targets = {
+            a: torch.zeros((args.num_steps, args.num_envs), device=device)
+            for a in AGENTS
+        }
+
         with torch.no_grad():
-            next_value = policy.get_value(
-                torch.as_tensor(next_state, device=device)
-            ).flatten()
-            # REV-3: truncated envs bootstrap to critic(terminal_state), not 0.
-            t_idx = next_truncations.bool().nonzero(as_tuple=False).flatten()
-            if t_idx.numel():
-                t_states = torch.stack(
-                    [
-                        torch.tensor(
-                            last_infos[int(i)]["terminal_state"], device=device
-                        )
-                        for i in t_idx
-                    ]
-                )
-                next_value[t_idx] = policy.get_value(t_states).flatten()
-            # terminated envs bootstrap to 0
-            next_value = next_value * (1.0 - next_terminations)
-        stacked_advantages, stacked_returns = compute_gae(
-            torch.stack([buffers[a]["rewards"] for a in AGENTS]),
-            torch.stack([buffers[a]["values"] for a in AGENTS]),
-            torch.stack([buffers[a]["terminated"] for a in AGENTS]),
-            torch.stack([buffers[a]["truncated"] for a in AGENTS]),
-            torch.stack([buffers[a]["bootstrap"] for a in AGENTS]),
-            next_value.unsqueeze(0).expand(len(AGENTS), -1),
-            next_terminations.unsqueeze(0),
-            args.gamma,
-            args.gae_lambda,
-        )
-
-        # --- CIR: Causal Influence Routing ---
-        if getattr(args, "cir_coef", 0.0) > 0.0:
-            adv_t = stacked_advantages.permute(
-                1, 2, 0
-            )  # [num_steps, num_envs, N_AGENTS]
-            routed_adv = torch.einsum("sten,ste->stn", buf_influence, adv_t)
-            adv_t_new = (1.0 - args.cir_coef) * adv_t + (args.cir_coef * routed_adv)
-            stacked_advantages = adv_t_new.permute(2, 0, 1)
-            stacked_returns = stacked_advantages + torch.stack(
-                [buffers[a]["values"] for a in AGENTS]
+            next_state_t = torch.as_tensor(next_state, device=device)
+            stacked_next = next_obs["_stacked"]
+            next_obs_all = torch.as_tensor(stacked_next["observation"], device=device)
+            next_role_all = torch.as_tensor(stacked_next["role_id"], device=device)
+            next_mask_all = torch.as_tensor(stacked_next["action_mask"], device=device)
+            next_act, _, _, _ = policy.get_action_and_probs(
+                next_obs_all.flatten(0, 1),
+                next_role_all.flatten(0, 1),
+                next_mask_all.flatten(0, 1),
             )
+            next_actions_all = next_act.view(N_AGENTS, args.num_envs)
 
-        advantages = {a: stacked_advantages[i] for i, a in enumerate(AGENTS)}
-        returns = {a: stacked_returns[i] for i, a in enumerate(AGENTS)}
+            for step in range(args.num_steps):
+                if step < args.num_steps - 1:
+                    s_next = state_buffer[step + 1]
+                    step_actions_next = torch.stack(
+                        [buffers[a]["actions"][step + 1] for a in AGENTS]
+                    )
+                else:
+                    s_next = next_state_t
+                    step_actions_next = next_actions_all
 
-        # ---------------- policy update (concatenated across agents) ---------
-        b_obs = torch.cat([buffers[a]["obs"].reshape(-1, obs_h, obs_w) for a in AGENTS])
-        b_mask = torch.cat(
-            [buffers[a]["action_mask"].reshape(-1, ACTION_DIM) for a in AGENTS]
-        )
-        b_role = torch.cat(
-            [buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in AGENTS]
-        )
-        b_actions = torch.cat([buffers[a]["actions"].reshape(-1) for a in AGENTS])
-        b_logprobs = torch.cat([buffers[a]["logprobs"].reshape(-1) for a in AGENTS])
-        b_advantages = torch.cat([advantages[a].reshape(-1) for a in AGENTS])
-        b_returns = torch.cat([returns[a].reshape(-1) for a in AGENTS])
-        # centralized critic sees the shared state, replicated per agent block
-        # (each agent's flattened block shares the same (step, env) states)
-        b_states = torch.cat([state_buffer.reshape(-1, state_dim) for _ in AGENTS])
+                for idx_a, a in enumerate(AGENTS):
+                    other_oh_next = construct_other_actions_onehot(
+                        step_actions_next, idx_a
+                    )
+                    q_next_all = target_critic(s_next, other_oh_next)
+                    a_next = step_actions_next[idx_a]
+                    q_next_taken = q_next_all.gather(1, a_next.unsqueeze(1)).squeeze(1)
+
+                    r = buffers[a]["rewards"][step]
+                    term = buffers[a]["terminated"][step]
+                    trunc = buffers[a]["truncated"][step]
+                    boot = buffers[a]["bootstrap"][step]
+
+                    y = r + args.gamma * (1.0 - term) * (
+                        (1.0 - trunc) * q_next_taken + trunc * boot
+                    )
+                    targets[a][step] = y
+
+        # ---------------- COMA Policy & Critic Update ----------------
+        b_states = state_buffer.reshape(-1, state_dim)  # [B, state_dim]
+        B = b_states.shape[0]
+
+        # Assemble per-agent flattened rollout tensors
+        b_obs = {a: buffers[a]["obs"].reshape(-1, obs_h, obs_w) for a in AGENTS}
+        b_role = {a: buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in AGENTS}
+        b_mask = {a: buffers[a]["action_mask"].reshape(-1, ACTION_DIM) for a in AGENTS}
+        b_actions = {a: buffers[a]["actions"].reshape(-1) for a in AGENTS}
+        b_targets = {a: targets[a].reshape(-1) for a in AGENTS}
+
+        # Reshape actions for each agent step into tensor [N, B] to easily make one-hot
+        all_b_actions = torch.stack([b_actions[a] for a in AGENTS])  # [N, B]
+
+        b_other_oh = {}
+        for idx_a, a in enumerate(AGENTS):
+            b_other_oh[a] = construct_other_actions_onehot(all_b_actions, idx_a)
+
+        # Precompute counterfactual advantages across batch
+        b_adv = {}
+        with torch.no_grad():
+            for _idx_a, a in enumerate(AGENTS):
+                q_vals_full = policy.get_value(b_states, b_other_oh[a])
+                _, _, probs_full, _ = policy.get_action_and_probs(
+                    b_obs[a], b_role[a], b_mask[a], action=b_actions[a]
+                )
+                adv_full, _ = compute_counterfactual_advantage(
+                    probs_full, q_vals_full, b_actions[a], b_mask[a]
+                )
+                b_adv[a] = adv_full
+
+            if getattr(args, "cir_coef", 0.0) > 0.0:
+                adv_tensor = torch.stack(
+                    [b_adv[a].view(args.num_steps, args.num_envs) for a in AGENTS],
+                    dim=-1,
+                )
+                routed_adv = torch.einsum("sten,ste->stn", buf_influence, adv_tensor)
+                adv_tensor_new = (
+                    1.0 - args.cir_coef
+                ) * adv_tensor + args.cir_coef * routed_adv
+                for idx_a, a in enumerate(AGENTS):
+                    b_adv[a] = adv_tensor_new[:, :, idx_a].reshape(-1)
 
         for _ in range(args.update_epochs):
-            b_inds = torch.randperm(b_obs.shape[0], device=device)
-            minibatch_size = b_obs.shape[0] // args.num_minibatches
+            b_inds = torch.randperm(B, device=device)
+            minibatch_size = B // args.num_minibatches
 
-            for start in range(0, b_obs.shape[0], minibatch_size):
+            for start in range(0, B, minibatch_size):
                 end = start + minibatch_size
                 mb = b_inds[start:end]
-                _, newlogprob, entropy, newvalue = policy.get_action_and_value(
-                    b_obs[mb], b_role[mb], b_mask[mb], b_states[mb], b_actions[mb]
-                )
 
-                logratio = newlogprob - b_logprobs[mb]
-                ratio = logratio.exp()
-                with torch.no_grad():
-                    approx_kl = ((ratio - 1.0) - logratio).mean()
+                tot_actor_loss = 0.0
+                tot_critic_loss = 0.0
+                tot_entropy_loss = 0.0
 
-                adv = b_advantages[mb]
-                adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-                pg_loss1 = -adv * ratio
-                pg_loss2 = -adv * torch.clamp(
-                    ratio, 1 - args.clip_coef, 1 + args.clip_coef
+                for _idx_a, a in enumerate(AGENTS):
+                    obs_mb = b_obs[a][mb]
+                    role_mb = b_role[a][mb]
+                    mask_mb = b_mask[a][mb]
+                    act_mb = b_actions[a][mb]
+                    other_oh_mb = b_other_oh[a][mb]
+                    state_mb = b_states[mb]
+                    target_mb = b_targets[a][mb]
+
+                    _, log_prob, probs, entropy = policy.get_action_and_probs(
+                        obs_mb, role_mb, mask_mb, action=act_mb
+                    )
+                    q_vals_all = policy.get_value(state_mb, other_oh_mb)
+
+                    adv_unrouted, q_taken = compute_counterfactual_advantage(
+                        probs, q_vals_all, act_mb, mask_mb
+                    )
+                    adv = (
+                        b_adv[a][mb]
+                        if getattr(args, "cir_coef", 0.0) > 0.0
+                        else adv_unrouted
+                    )
+
+                    actor_loss = -(log_prob * adv.detach()).mean()
+                    critic_loss = F.mse_loss(q_taken, target_mb)
+
+                    tot_actor_loss = tot_actor_loss + actor_loss
+                    tot_critic_loss = tot_critic_loss + critic_loss
+                    tot_entropy_loss = tot_entropy_loss + entropy.mean()
+
+                total_loss = (
+                    (tot_actor_loss / N_AGENTS)
+                    + args.vf_coef * (tot_critic_loss / N_AGENTS)
+                    - args.ent_coef * (tot_entropy_loss / N_AGENTS)
                 )
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-                v_loss = ((newvalue.flatten() - b_returns[mb]) ** 2).mean()
-                entropy_loss = entropy.mean()
-                loss = pg_loss - args.ent_coef * entropy_loss + args.vf_coef * v_loss
 
                 optimizer.zero_grad()
-                loss.backward()
+                total_loss.backward()
                 nn.utils.clip_grad_norm_(policy.parameters(), args.max_grad_norm)
                 optimizer.step()
-                if rnd_module is not None:
-                    rnd_module.update(b_obs[mb])
 
-            if args.target_kl is not None and approx_kl > args.target_kl:
-                break
+                # Soft update target critic
+                with torch.no_grad():
+                    for p, tp in zip(
+                        policy.critic.parameters(),
+                        target_critic.parameters(),
+                        strict=False,
+                    ):
+                        tp.data.copy_(0.01 * p.data + 0.99 * tp.data)
+
+                if rnd_module is not None:
+                    rnd_module.update(torch.cat([b_obs[a][mb] for a in AGENTS], dim=0))
 
         # ---------------- logging ----------------
         sps = int(global_step / (time.time() - start_time))
@@ -491,7 +583,7 @@ def train(args: Args):
         torch.save(policy.state_dict(), f"checkpoints/{run_name}/policy.pt")
         write_completion(
             run_name,
-            "mappo",
+            "coma",
             args.total_timesteps,
             num_updates * args.num_steps * args.num_envs,
         )

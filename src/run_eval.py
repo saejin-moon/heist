@@ -18,6 +18,8 @@ import os
 
 import torch
 
+from constants import ACTION_SPACE_SIZE as ACTION_DIM
+from constants import N_AGENTS
 from env import AGENTS, HeistEnv
 from evaluate import (
     counterfactual_importance,
@@ -26,7 +28,7 @@ from evaluate import (
     evaluate_policies,
     message_outcome_correlation,
 )
-from model import CommAgent, HeistAgent, MappoAgent, QNetwork
+from model import ComaAgent, CommAgent, HeistAgent, MappoAgent, QNetwork
 
 
 def load_policies(algo, run_dir, state_dim, device):
@@ -49,6 +51,20 @@ def load_policies(algo, run_dir, state_dim, device):
             sd["critic.0.weight"].shape[1] if "critic.0.weight" in sd else state_dim
         )
         p = MappoAgent(state_dim=ckpt_state_dim)
+        p.load_state_dict(sd)
+        p.to(device).eval()
+        return {a: p for a in AGENTS}
+    if algo == "coma":
+        # Shared-actor COMA saves policy.pt; all agents use the same weights.
+        sd = torch.load(
+            os.path.join(run_dir, "policy.pt"), map_location=device, weights_only=True
+        )
+        ckpt_state_dim = (
+            sd["critic.net.0.weight"].shape[1] - (N_AGENTS - 1) * ACTION_DIM
+            if "critic.net.0.weight" in sd
+            else state_dim
+        )
+        p = ComaAgent(state_dim=ckpt_state_dim)
         p.load_state_dict(sd)
         p.to(device).eval()
         return {a: p for a in AGENTS}
@@ -80,7 +96,12 @@ def load_policies(algo, run_dir, state_dim, device):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", required=True)
-    ap.add_argument("--algo", default="ippo", choices=["ippo", "mappo", "qmix", "comm"])
+    ap.add_argument(
+        "--algo",
+        default="ippo",
+        choices=["ippo", "mappo", "qmix", "comm", "coma"],
+    )
+
     ap.add_argument("--env-config", type=str, default="{}")
     ap.add_argument("--episodes", type=int, default=50)
     ap.add_argument("--seed", type=int, default=777)

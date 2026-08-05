@@ -84,6 +84,12 @@ ALGOS = {
         "step_flag": "--total-steps",
         "vec": True,
     },
+    "coma": {
+        "script": "src/train_coma.py",
+        "flags": ["--num-envs", "8", "--num-steps", "256", "--no-save-model"],
+        "step_flag": "--total-timesteps",
+        "vec": True,
+    },
 }
 
 

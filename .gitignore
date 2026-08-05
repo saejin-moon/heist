@@ -17,3 +17,4 @@ src/runs/
 # regenerable training artifacts (checkpoints invalidated by obs-dim changes)
 checkpoints/
 runs/
+log/
