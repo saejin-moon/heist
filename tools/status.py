@@ -53,7 +53,11 @@ def get_running_pids() -> set[int]:
 
         out = subprocess.check_output(["ps", "aux"], text=True)
         for line in out.splitlines():
-            if "src/train_" in line or "src/eval_stage.py" in line or "train.zsh" in line:
+            if (
+                "src/train_" in line
+                or "src/eval_stage.py" in line
+                or "train.zsh" in line
+            ):
                 parts = line.split()
                 if len(parts) > 1 and parts[1].isdigit():
                     pids.add(int(parts[1]))
@@ -72,13 +76,11 @@ def get_active_campaign_info() -> dict:
         "fast_mode": False,
     }
 
-    prefix = "run"
     if launch_file.is_file():
         try:
             content = launch_file.read_text(errors="replace")
             if "[SIDE-TASKS ENABLED]" in content:
                 info["side_tasks"] = True
-                prefix = "st"
             if "[FAST MODE]" in content:
                 info["fast_mode"] = True
 
@@ -177,7 +179,9 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
                         runtime_str = m_done.group(1)
                         break
 
-            has_finished = lines and any("training done" in line_str for line_str in lines[-5:])
+            has_finished = lines and any(
+                "training done" in line_str for line_str in lines[-5:]
+            )
             if is_recent and not has_finished:
                 status = "RUNNING"
             elif ckpt_complete or has_finished:
@@ -190,14 +194,20 @@ def check_models_status(active_stages: set[int], running_pids: set[int]) -> list
                 "model": name,
                 "stage": active_stage,
                 "status": status,
-                "steps": step_str if status == "RUNNING" or completed_steps == "N/A" else completed_steps,
+                "steps": step_str
+                if status == "RUNNING" or completed_steps == "N/A"
+                else completed_steps,
                 "sps": sps_str if status == "RUNNING" else "-",
                 "mean_reward": reward_str,
                 "runtime": runtime_str,
                 "checkpoint": (
                     "[bold green]SAVED[/bold green]"
                     if (ckpt_complete and status == "COMPLETE")
-                    else ("[green]COMPLETE[/green]" if status == "COMPLETE" else "[dim]PENDING[/dim]")
+                    else (
+                        "[green]COMPLETE[/green]"
+                        if status == "COMPLETE"
+                        else "[dim]PENDING[/dim]"
+                    )
                 ),
             }
         )
@@ -317,9 +327,7 @@ def make_dashboard_panel() -> Panel:
 def main():
     ap = argparse.ArgumentParser(description="HEIST Fullscreen Terminal Dashboard")
     ap.add_argument("--watch", action="store_true", help="continuously poll status")
-    ap.add_argument(
-        "--interval", type=int, default=3, help="watch interval in seconds"
-    )
+    ap.add_argument("--interval", type=int, default=3, help="watch interval in seconds")
     args = ap.parse_args()
 
     console = Console()
