@@ -113,10 +113,19 @@ def _stack_obs(next_obs, agent_list=AGENTS):
 
 if __name__ == "__main__":
     args = parse_args()
-    run_name = f"{args.exp_name}_s{args.seed}"
+    run_name = (
+        args.exp_name
+        if (
+            f"_s{args.seed}" in args.exp_name
+            or args.exp_name.endswith(f"_s{args.seed}")
+        )
+        else f"{args.exp_name}_s{args.seed}"
+    )
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
+    if device.type == "cpu":
+        torch.set_num_threads(max(1, (os.cpu_count() or 4) // 2))
     os.makedirs(f"runs/{run_name}", exist_ok=True)
     writer = SummaryWriter(f"runs/{run_name}")
 
@@ -142,6 +151,24 @@ if __name__ == "__main__":
     state_dim = vec_env.state_dim
     policy = CommAgent(state_dim=state_dim, centralized=args.centralized).to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=args.learning_rate, eps=1e-5)
+
+    # Stage-to-stage policy transfer
+    import re
+
+    from ppo_utils import load_matching_weights
+
+    match = re.search(r"^(.*)_s(\d+)$", run_name)
+    if match:
+        base_name, stage_str = match.groups()
+        stage = int(stage_str)
+        if stage > 0:
+            prev_run_name = f"{base_name}_s{stage - 1}"
+            print(
+                f"  [Transfer] Checking for previous stage checkpoint in checkpoints/{prev_run_name}"
+            )
+            load_matching_weights(
+                policy, f"checkpoints/{prev_run_name}/comm.pt", device
+            )
 
     obs_h, obs_w = OBSERVATION_SIZE
     n = len(AGENTS)

@@ -16,7 +16,7 @@ dependencies = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
-src = ["src"]
+src = ["src", "tests"]
 
 [tool.ruff.format]
 exclude = ["*.md"]
@@ -30,7 +30,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/env.py" = ["F403", "F405"]  # constants imported via star for readability
-"src/test_*.py" = ["SIM"]        # smoke tests favor explicit asserts
+"tests/test_*.py" = ["SIM"]      # smoke tests favor explicit asserts
 
 [dependency-groups]
 dev = [
@@ -39,7 +39,8 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["src"]
+testpaths = ["tests"]
+pythonpath = ["src"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

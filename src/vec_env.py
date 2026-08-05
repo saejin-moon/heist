@@ -15,17 +15,93 @@ terminations and truncations separately so the trainer can bootstrap value
 estimates correctly on truncation (REV-3, REVISION_PLAN.md §3b).
 """
 
+import multiprocessing as mp
+
 import numpy as np
 
 from env import AGENTS, HeistEnv
+
+
+def _worker(remote, parent_remote, config):
+    parent_remote.close()
+    env = HeistEnv(config)
+    try:
+        while True:
+            cmd, data = remote.recv()
+            if cmd == "step":
+                if not env.agents:
+                    env.reset()
+                o, r, t, tr, inf = env.step(data)
+                done = bool(any(t.values()) or any(tr.values()))
+                term_obs = None
+                term_state = None
+                if done:
+                    # pack terminal observation
+                    n_agents = len(AGENTS)
+                    obs_shape = o["scout"]["observation"].shape
+                    mask_shape = o["scout"]["action_mask"].shape
+                    role_shape = o["scout"]["role_id"].shape
+                    obs_arr = np.empty((n_agents, 1) + obs_shape, dtype=np.int32)
+                    mask_arr = np.empty((n_agents, 1) + mask_shape, dtype=np.int8)
+                    role_arr = np.empty((n_agents, 1) + role_shape, dtype=np.int8)
+                    for i, a in enumerate(AGENTS):
+                        obs_arr[i, 0] = o[a]["observation"]
+                        mask_arr[i, 0] = o[a]["action_mask"]
+                        role_arr[i, 0] = o[a]["role_id"]
+                    term_obs = {}
+                    for i, a in enumerate(AGENTS):
+                        term_obs[a] = {
+                            "observation": obs_arr[i],
+                            "action_mask": mask_arr[i],
+                            "role_id": role_arr[i],
+                        }
+                    term_state = env.state()
+                    o, _ = env.reset()
+                remote.send((o, r, t, tr, inf, done, term_obs, term_state, env.state()))
+            elif cmd == "reset":
+                o, _ = env.reset(seed=data)
+                remote.send((o, env.state()))
+            elif cmd == "close":
+                remote.close()
+                break
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        remote.send(e)
+    finally:
+        env.close()
 
 
 class VectorEnv:
     def __init__(self, num_envs, config=None, base_seed=0):
         self.num_envs = num_envs
         self.base_seed = base_seed
+        # Dummy env reference for inspectability/tests
         self.envs = [HeistEnv(config) for _ in range(num_envs)]
-        self.state_dim = self.envs[0].state().shape[0]
+
+        # Use multiprocessing context
+        ctx = mp.get_context(
+            "fork"
+            if hasattr(mp, "get_context") and "fork" in mp.get_all_start_methods()
+            else "spawn"
+        )
+        self.remotes, self.work_remotes = zip(
+            *[ctx.Pipe() for _ in range(num_envs)], strict=True
+        )
+        self.ps = [
+            ctx.Process(target=_worker, args=(work_remote, remote, config))
+            for work_remote, remote in zip(self.work_remotes, self.remotes, strict=True)
+        ]
+        for p in self.ps:
+            p.daemon = True
+            p.start()
+        for remote in self.work_remotes:
+            remote.close()
+
+        # inspect initial state_dim
+        self.remotes[0].send(("reset", base_seed))
+        initial_obs, initial_state = self.remotes[0].recv()
+        self.state_dim = initial_state.shape[0]
         self.obs = None
         self.state = None
 
@@ -62,31 +138,28 @@ class VectorEnv:
         return packed
 
     def reset(self, seed=None):
+        base = seed if seed is not None else self.base_seed
+        for i, remote in enumerate(self.remotes):
+            remote.send(("reset", base + i))
+
         obs_list, states = [], []
-        for i, env in enumerate(self.envs):
-            o, _ = env.reset(seed=(seed if seed is not None else self.base_seed) + i)
+        for remote in self.remotes:
+            o, s = remote.recv()
+            if isinstance(o, Exception):
+                raise o
             obs_list.append(o)
-            states.append(env.state())
+            states.append(s)
+
         self.obs = self._pack(obs_list)
         self.state = np.stack(states).astype(np.float32)
-        # state_dim may change after reset (guards are spawned during reset),
-        # so recompute from the actual state vector.
         self.state_dim = self.state.shape[1]
         return self.obs, self.state
 
     def step(self, actions):
-        """actions: dict[agent] -> np.ndarray[num_envs] of action ids.
+        for i, remote in enumerate(self.remotes):
+            acts = {a: int(actions[a][i]) for a in AGENTS}
+            remote.send(("step", acts))
 
-        Returns (obs, rewards, terminations, truncations, infos):
-          * obs          : packed post-step observation (for done envs this is
-                           the POST-RESET observation so the next rollout step
-                           always selects actions on a valid state).
-          * terminations : dict[agent] -> np.ndarray[num_envs] of bools.
-          * truncations  : dict[agent] -> np.ndarray[num_envs] of bools.
-          * infos        : per-env dicts; done envs carry
-                           "terminal_observation" (packed) and "terminal_state"
-                           so REV-3 bootstrapping sees the true terminal state.
-        """
         rewards = {a: np.zeros(self.num_envs, dtype=np.float32) for a in AGENTS}
         terminations = {a: np.zeros(self.num_envs, dtype=bool) for a in AGENTS}
         truncations = {a: np.zeros(self.num_envs, dtype=bool) for a in AGENTS}
@@ -94,35 +167,31 @@ class VectorEnv:
         next_states = np.zeros((self.num_envs, self.state_dim), dtype=np.float32)
         infos = [{} for _ in range(self.num_envs)]
 
-        for i, env in enumerate(self.envs):
-            # If the env was left in a terminated state (e.g. an evaluation
-            # routine reset it and ran it to completion, or a previous caller
-            # ended the episode), reset it before stepping. PettingZoo envs
-            # clear `agents` once the episode is over.
-            if not env.agents:
-                env.reset()
-            acts = {a: int(actions[a][i]) for a in AGENTS}
-            o, r, t, tr, inf = env.step(acts)
+        for i, remote in enumerate(self.remotes):
+            res = remote.recv()
+            if isinstance(res, Exception):
+                raise res
+            o, r, t, tr, inf, done, term_obs, term_state, st = res
             infos[i] = inf
-            done = bool(any(t.values()) or any(tr.values()))
             for a in AGENTS:
                 rewards[a][i] = r[a]
                 terminations[a][i] = bool(t[a])
                 truncations[a][i] = bool(tr[a])
             if done:
-                # REV-4: stash the true terminal observation/state BEFORE reset.
-                infos[i]["terminal_observation"] = self._pack([o])
-                infos[i]["terminal_state"] = env.state()
-                o, _ = env.reset()
-
+                infos[i]["terminal_observation"] = term_obs
+                infos[i]["terminal_state"] = term_state
             next_obs_list.append(o)
-            next_states[i] = env.state()
+            next_states[i] = st
 
         self.obs = self._pack(next_obs_list)
         self.state = next_states
         return self.obs, rewards, terminations, truncations, infos
 
     def close(self):
-        for env in self.envs:
-            if hasattr(env, "close"):
-                env.close()
+        for remote in self.remotes:
+            try:
+                remote.send(("close", None))
+            except Exception:
+                pass
+        for p in self.ps:
+            p.join(timeout=1.0)

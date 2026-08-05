@@ -46,9 +46,7 @@ def load_policies(algo, run_dir, state_dim, device):
             os.path.join(run_dir, "policy.pt"), map_location=device, weights_only=True
         )
         ckpt_state_dim = (
-            sd["critic.0.weight"].shape[1]
-            if "critic.0.weight" in sd
-            else state_dim
+            sd["critic.0.weight"].shape[1] if "critic.0.weight" in sd else state_dim
         )
         p = MappoAgent(state_dim=ckpt_state_dim)
         p.load_state_dict(sd)

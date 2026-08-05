@@ -216,7 +216,14 @@ def select_actions(env, obs, q_nets, epsilon, device):
 
 
 def train(args: Args):
-    run_name = f"{args.exp_name}_s{args.seed}"
+    run_name = (
+        args.exp_name
+        if (
+            f"_s{args.seed}" in args.exp_name
+            or args.exp_name.endswith(f"_s{args.seed}")
+        )
+        else f"{args.exp_name}_s{args.seed}"
+    )
     os.makedirs(f"runs/{run_name}", exist_ok=True)
     writer = SummaryWriter(f"runs/{run_name}")
 
@@ -228,6 +235,8 @@ def train(args: Args):
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
+    if device.type == "cpu":
+        torch.set_num_threads(max(1, (os.cpu_count() or 4) // 2))
     print(f"device: {device}")
 
     torch.manual_seed(args.seed)
@@ -248,6 +257,26 @@ def train(args: Args):
     mixing = QMixMixing(n_agents=len(AGENTS), state_dim=state_dim).to(device)
     target_mixing = QMixMixing(n_agents=len(AGENTS), state_dim=state_dim).to(device)
     target_mixing.load_state_dict(mixing.state_dict())
+
+    # Stage-to-stage policy transfer
+    import re
+
+    from ppo_utils import load_matching_weights
+
+    match = re.search(r"^(.*)_s(\d+)$", run_name)
+    if match:
+        base_name, stage_str = match.groups()
+        stage = int(stage_str)
+        if stage > 0:
+            prev_run_name = f"{base_name}_s{stage - 1}"
+            print(
+                f"  [Transfer] Checking for previous stage checkpoint in checkpoints/{prev_run_name}"
+            )
+            for a in AGENTS:
+                load_matching_weights(
+                    q_nets[a], f"checkpoints/{prev_run_name}/{a}_q.pt", device
+                )
+                target_nets[a].load_state_dict(q_nets[a].state_dict())
 
     params = list(mixing.parameters())
     for a in AGENTS:
@@ -278,6 +307,43 @@ def train(args: Args):
             f"  eval@{step}: win_rate={metrics['win_rate']:.3f} "
             f"return={metrics['mean_return']:.3f} len={metrics['mean_length']:.1f}"
         )
+
+        # Periodic CAI and Counterfactual evaluation to track credit metrics during training (every 50k steps or final step)
+        if (
+            step > 0
+            and (
+                (
+                    step % 50000 < 50
+                )  # QMIX step updates are env steps (single env), so check if within a small window
+                or (step >= args.total_steps - 50)
+            )
+        ):
+            try:
+                from evaluate import counterfactual_importance, credit_attribution_index
+
+                cai = credit_attribution_index(
+                    {a: q_nets[a] for a in AGENTS},
+                    env,
+                    episodes=args.eval_episodes,
+                    seed=args.seed + 1_000_000,
+                    device=device,
+                )
+                for agent_name, val in cai.items():
+                    writer.add_scalar(f"eval/cai/{agent_name}", val, step)
+
+                imp = counterfactual_importance(
+                    {a: q_nets[a] for a in AGENTS},
+                    env,
+                    episodes=args.eval_episodes,
+                    seed=args.seed + 1_000_000,
+                    device=device,
+                )
+                for agent_name, val in imp.items():
+                    writer.add_scalar(f"eval/importance/{agent_name}", val, step)
+            except Exception as e:
+                print(
+                    f"  [Diagnostics] Warning: failed to calculate CAI/importance metrics: {e}"
+                )
 
     # ------------------------------------------------------------------
     global_step = 0
@@ -411,6 +477,7 @@ def train(args: Args):
     for a in AGENTS:
         torch.save(q_nets[a].state_dict(), f"checkpoints/{run_name}/{a}_q.pt")
     torch.save(mixing.state_dict(), f"checkpoints/{run_name}/mixing.pt")
+    eval_policies(global_step)
     write_completion(run_name, "qmix", args.total_steps, global_step)
     writer.close()
     print("training done.")

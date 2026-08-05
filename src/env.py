@@ -328,7 +328,7 @@ class HeistEnv(ParallelEnv):
         # giving the final convergence phase a dense gradient that the sparse
         # shared terminal reward cannot provide.  It is gated on loot_acquired
         # so it cannot be farmed before the heist's final phase.
-        if self.loot_acquired:
+        if self.loot_acquired or self.extraction_triggered:
             for a in self.agents:
                 d_cur = manhattan(self.agent_positions[a], self.extract_pos)
                 d_prev = self._prev_extract_dist.get(a, d_cur)

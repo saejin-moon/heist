@@ -63,3 +63,30 @@ def write_completion(run_name, algorithm, requested_steps, completed_steps):
         + "\n"
     )
     temporary.replace(marker)
+
+
+def load_matching_weights(model, filepath, device):
+    """Loads weights from filepath into model, filtering out dimension mismatches (e.g. centralized critic shape changes)."""
+    import os
+
+    if not filepath or not os.path.isfile(filepath):
+        return False
+    try:
+        sd = torch.load(filepath, map_location=device)
+        model_sd = model.state_dict()
+        filtered_sd = {}
+        for k, v in sd.items():
+            if k in model_sd:
+                if v.shape == model_sd[k].shape:
+                    filtered_sd[k] = v
+                else:
+                    print(
+                        f"  [Transfer] Shape mismatch for {k}: checkpoint {v.shape} vs model {model_sd[k].shape}. Reinitializing."
+                    )
+        model_sd.update(filtered_sd)
+        model.load_state_dict(model_sd)
+        print(f"  [Transfer] Loaded {len(filtered_sd)} matching layers from {filepath}")
+        return True
+    except Exception as e:
+        print(f"  [Transfer] Warning: could not load checkpoint from {filepath}: {e}")
+        return False

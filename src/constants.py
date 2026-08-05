@@ -106,7 +106,7 @@ REWARD_LOSE = -10.0  # shared terminal reward: caught / alarm / timeout
 REWARD_TASK = 2.0  # key task completions (hack, loot, extract call)
 REWARD_TAG = 0.5  # scout revealing a point of interest
 REWARD_TIME_BLEED = -0.01  # baseline penalty per step
-CONVERGE_BONUS = 0.2  # per-step proximity bonus to the extract tile
+CONVERGE_BONUS = 0.5  # per-step proximity bonus to the extract tile
 # once extraction is called (shapes the final phase)
 CONVERGE_RADIUS = 4  # manhattan distance that counts as "converging"
 WIN_CONVERGE_RADIUS = 2  # all agents within this radius of extract to win

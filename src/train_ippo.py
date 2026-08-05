@@ -113,7 +113,14 @@ def log_summary(writer, global_step, metrics):
 
 
 def train(args: Args):
-    run_name = f"{args.exp_name}_s{args.seed}"
+    run_name = (
+        args.exp_name
+        if (
+            f"_s{args.seed}" in args.exp_name
+            or args.exp_name.endswith(f"_s{args.seed}")
+        )
+        else f"{args.exp_name}_s{args.seed}"
+    )
     if args.track:
         import wandb
 
@@ -138,6 +145,8 @@ def train(args: Args):
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
+    if device.type == "cpu":
+        torch.set_num_threads(max(1, (os.cpu_count() or 4) // 2))
     print(f"device: {device}")
 
     args.save_model = not getattr(args, "no_save_model", False)
@@ -170,6 +179,30 @@ def train(args: Args):
             a: torch.optim.Adam(p.parameters(), lr=args.learning_rate, eps=1e-5)
             for a, p in policies.items()
         }
+
+    # Stage-to-stage policy transfer
+    import re
+
+    from ppo_utils import load_matching_weights
+
+    match = re.search(r"^(.*)_s(\d+)$", run_name)
+    if match:
+        base_name, stage_str = match.groups()
+        stage = int(stage_str)
+        if stage > 0:
+            prev_run_name = f"{base_name}_s{stage - 1}"
+            print(
+                f"  [Transfer] Checking for previous stage checkpoint in checkpoints/{prev_run_name}"
+            )
+            if args.shared:
+                load_matching_weights(
+                    shared_policy, f"checkpoints/{prev_run_name}/scout.pt", device
+                )
+            else:
+                for a in AGENTS:
+                    load_matching_weights(
+                        policies[a], f"checkpoints/{prev_run_name}/{a}.pt", device
+                    )
 
     vec_env = VectorEnv(args.num_envs, config=env_config, base_seed=args.seed)
     next_obs, next_state = vec_env.reset(seed=args.seed)
@@ -231,6 +264,38 @@ def train(args: Args):
             f"  eval@{step}: win_rate={metrics['win_rate']:.3f} "
             f"return={metrics['mean_return']:.3f} len={metrics['mean_length']:.1f}"
         )
+
+        # Periodic CAI and Counterfactual evaluation to track credit metrics during training (every 50k steps or final step)
+        if step > 0 and (
+            (step % 50000 < (args.num_steps * args.num_envs))
+            or (step >= args.total_timesteps - (args.num_steps * args.num_envs))
+        ):
+            try:
+                from evaluate import counterfactual_importance, credit_attribution_index
+
+                cai = credit_attribution_index(
+                    {a: policies[a] for a in AGENTS},
+                    vec_env.envs[0],
+                    episodes=args.eval_episodes,
+                    seed=args.seed + 1_000_000,
+                    device=device,
+                )
+                for agent_name, val in cai.items():
+                    writer.add_scalar(f"eval/cai/{agent_name}", val, step)
+
+                imp = counterfactual_importance(
+                    {a: policies[a] for a in AGENTS},
+                    vec_env.envs[0],
+                    episodes=args.eval_episodes,
+                    seed=args.seed + 1_000_000,
+                    device=device,
+                )
+                for agent_name, val in imp.items():
+                    writer.add_scalar(f"eval/importance/{agent_name}", val, step)
+            except Exception as e:
+                print(
+                    f"  [Diagnostics] Warning: failed to calculate CAI/importance metrics: {e}"
+                )
 
     start_time = time.time()
     global_step = 0
@@ -471,7 +536,7 @@ def train(args: Args):
                 f"update={update} step={global_step} sps={sps} mean_reward={avg_reward:.4f}"
             )
 
-        if args.save_model and update % args.eval_every == 0:
+        if args.save_model and (update % args.eval_every == 0 or update == num_updates):
             os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
             for a, p in policies.items():
                 torch.save(p.state_dict(), f"checkpoints/{run_name}/{a}.pt")
