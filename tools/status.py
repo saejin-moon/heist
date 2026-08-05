@@ -418,44 +418,6 @@ def get_system_metrics() -> dict:
     return metrics
 
 
-def get_active_processes_info() -> list[dict]:
-    """Gather detailed process info for running HEIST processes."""
-    processes = []
-    try:
-        import subprocess
-
-        out = subprocess.check_output(["ps", "aux"], text=True)
-        for line in out.splitlines():
-            if (
-                "src/train_" in line
-                or "src/eval_stage.py" in line
-                or "train.zsh" in line
-            ) and "grep" not in line and "tools/status.py" not in line:
-                parts = line.split()
-                if len(parts) >= 11:
-                    pid = parts[1]
-                    cpu = parts[2]
-                    mem = parts[3]
-                    cmd_full = " ".join(parts[10:])
-                    script = "python"
-                    for token in parts[10:]:
-                        if "train_" in token or "eval_stage" in token or "train.zsh" in token:
-                            script = Path(token).name
-                            break
-                    processes.append(
-                        {
-                            "pid": pid,
-                            "script": script,
-                            "cpu": cpu,
-                            "mem": mem,
-                            "cmd": cmd_full,
-                        }
-                    )
-    except Exception:
-        pass
-    return processes
-
-
 def make_dashboard_panel() -> Panel:
     info = get_active_campaign_info()
     pids = get_running_pids()
@@ -465,7 +427,6 @@ def make_dashboard_panel() -> Panel:
         active_run_start=info.get("active_run_start", 0.0),
     )
     metrics = get_system_metrics()
-    active_procs = get_active_processes_info()
 
     active_stage = max(info["active_stages"]) if info["active_stages"] else 0
     st_text = (
@@ -560,33 +521,7 @@ def make_dashboard_panel() -> Panel:
             m["checkpoint"],
         )
 
-    # 3. Active Processes Table
-    proc_table = Table(expand=True, box=None, padding=(0, 1))
-    proc_table.add_column("PID", style="bold cyan", justify="right", no_wrap=True)
-    proc_table.add_column("Script / Target", style="bold green", no_wrap=True)
-    proc_table.add_column("CPU %", justify="right", no_wrap=True)
-    proc_table.add_column("RAM %", justify="right", no_wrap=True)
-    proc_table.add_column("Command Line", justify="left", no_wrap=True)
-
-    if active_procs:
-        for p in active_procs:
-            proc_table.add_row(
-                p["pid"],
-                p["script"],
-                f"{p['cpu']}%",
-                f"{p['mem']}%",
-                p["cmd"],
-            )
-    else:
-        proc_table.add_row(
-            "[dim]-[/dim]",
-            "[dim italic]No active HEIST training or evaluation processes running.[/dim italic]",
-            "-",
-            "-",
-            "-",
-        )
-
-    # 4. Live Log Feed
+    # 3. Live Log Feed
     log_feed = Text()
     if LOG_DIR.is_dir():
         log_files = sorted(
@@ -623,13 +558,6 @@ def make_dashboard_panel() -> Panel:
             table,
             title="[bold white]Model Execution Matrix[/bold white]",
             border_style="bright_blue",
-        )
-    )
-    grid.add_row(
-        Panel(
-            proc_table,
-            title=f"[bold white]Active HEIST Processes ({len(active_procs)} PIDs)[/bold white]",
-            border_style="magenta",
         )
     )
     grid.add_row(
