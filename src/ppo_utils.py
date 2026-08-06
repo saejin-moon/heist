@@ -93,7 +93,7 @@ def load_matching_weights(model, filepath, device):
 
 
 def get_previous_stage_checkpoint(run_name, exp_name=""):
-    """Parse experiment/run name to find candidate checkpoint paths from the previous stage."""
+    """Parse experiment/run name to find candidate checkpoint paths from the previous stage or normal environment."""
     import os
     import re
 
@@ -106,10 +106,18 @@ def get_previous_stage_checkpoint(run_name, exp_name=""):
             stage = int(stage_str)
             if stage > 0:
                 prev_stage = stage - 1
-                base = f"{prefix}{st}"
                 candidates = [
-                    os.path.join("checkpoints", f"{base}_s{prev_stage}"),
-                    os.path.join("checkpoints", f"{base}_s{prev_stage}_s0"),
+                    os.path.join("checkpoints", f"{prefix}{st}_s{prev_stage}"),
+                    os.path.join("checkpoints", f"{prefix}_s{prev_stage}"),
+                ]
+                for c in candidates:
+                    if os.path.isdir(c) and os.listdir(c):
+                        return c
+            elif st == "_st":
+                # For Stage 0 side-tasks, check if a completed normal Stage 4 or Stage 0 checkpoint exists
+                candidates = [
+                    os.path.join("checkpoints", f"{prefix}_s4"),
+                    os.path.join("checkpoints", f"{prefix}_s0"),
                 ]
                 for c in candidates:
                     if os.path.isdir(c) and os.listdir(c):
