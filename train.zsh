@@ -209,8 +209,9 @@ trigger_eval() {
     if [ "$ENABLE_SIDE_TASKS" -eq 1 ]; then
         st_suffix="_st"
     fi
+    mkdir -p "log/${run_id}"
     log "-> Launching background evaluation for ${name}${st_suffix} (stage $s) ..."
-    .venv/bin/python -u src/eval_stage.py --stage "$s" --algo "$name" --run-id "$run_id" --steps "$steps" > "log/eval_${name}${st_suffix}_s${s}.log" 2>&1 &
+    .venv/bin/python -u src/eval_stage.py --stage "$s" --algo "$name" --run-id "$run_id" --steps "$steps" > "log/${run_id}/eval_${name}${st_suffix}_s${s}.log" 2>&1 &
 }
 
 run_campaign() {
@@ -330,7 +331,8 @@ run_campaign() {
             local steps="${task_steps[$next_t]}"
             local cfg="${task_cfgs[$next_t]}"
             local exp_name_tag="${name}${st_suffix}_s${s}"
-            local log_name_tag="${name}${st_suffix}_s${s}.log"
+            local log_name_tag="${EVAL_RUN_ID}/${name}${st_suffix}_s${s}.log"
+            mkdir -p "log/${EVAL_RUN_ID}"
 
             # Skip completed models if --resume / --use-ckpt is active
             if [ "$USE_CKPT" -eq 1 ] && [ -f "checkpoints/${exp_name_tag}/complete.json" ]; then
@@ -460,7 +462,7 @@ run_campaign() {
                 if [ "${task_status[$t]}" = "running" ]; then
                     local s="${task_stages[$t]}"
                     local name="${task_models[$t]}"
-                    local log_file="log/${name}${st_suffix}_s${s}.log"
+                    local log_file="log/${EVAL_RUN_ID}/${name}${st_suffix}_s${s}.log"
                     local prog="starting"
                     if [ -f "$log_file" ]; then
                         local last_line
@@ -498,15 +500,17 @@ EVAL_RUN_ID=$(.venv/bin/python -c "import sys; sys.path.insert(0, 'src'); from e
 log "Campaign Evaluation Run ID: $EVAL_RUN_ID"
 
 if [ "$DAEMON" -eq 1 ]; then
-    log "Launching campaign as background daemon..."
+    log "Launching campaign as background daemon (Run ID: $EVAL_RUN_ID)..."
+    mkdir -p "log/${EVAL_RUN_ID}"
     local -a pass_args=()
     for arg in "${RAW_ARGS[@]}"; do
         if [ "$arg" != "--daemon" ]; then
             pass_args+=("$arg")
         fi
     done
-    nohup zsh "$0" "${pass_args[@]}" > log/launch.out 2>&1 &
-    print "Campaign launched as daemon (PID $!). Check log status with: uv run python tools/status.py"
+    nohup zsh "$0" "${pass_args[@]}" > "log/${EVAL_RUN_ID}/launch.out" 2>&1 &
+    ln -sf "${EVAL_RUN_ID}/launch.out" log/launch.out 2>/dev/null || true
+    print "Campaign launched as daemon (PID $!, Run ID: $EVAL_RUN_ID). Check log status with: uv run python tools/status.py"
 else
     run_campaign
     log "All selected stages finished successfully!"

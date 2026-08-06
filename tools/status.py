@@ -117,14 +117,14 @@ def get_active_campaign_info() -> dict:
     recent_log_mtimes = []
 
     if LOG_DIR.is_dir():
-        for p in LOG_DIR.glob("*.log"):
+        for p in LOG_DIR.rglob("*.log"):
             mtime = p.stat().st_mtime
             if mtime > latest_log_mtime:
                 latest_log_mtime = mtime
                 latest_log_file = p
 
     if LOG_DIR.is_dir() and latest_log_mtime > 0:
-        for p in LOG_DIR.glob("*.log"):
+        for p in LOG_DIR.rglob("*.log"):
             mtime = p.stat().st_mtime
             if (latest_log_mtime - mtime) < 600:
                 recent_log_mtimes.append(mtime)
@@ -208,20 +208,26 @@ def check_models_status(
     active_stages: set[int],
     running_pids: set[int],
     active_run_start: float = 0.0,
+    run_id: str = "N/A",
 ) -> list[dict]:
     """Gather status across all 10 models for the active stage, ignoring stale checkpoints."""
     results = []
     active_stage = max(active_stages) if active_stages else 0
 
     for name in MODEL_NAMES:
-        possible_log_names = [
-            f"{name}_st_s{active_stage}.log",
-            f"{name}_s{active_stage}.log",
-        ]
+        possible_candidates = []
+        if run_id and run_id != "N/A":
+            possible_candidates.extend([
+                LOG_DIR / run_id / f"{name}_st_s{active_stage}.log",
+                LOG_DIR / run_id / f"{name}_s{active_stage}.log",
+            ])
+        possible_candidates.extend([
+            LOG_DIR / f"{name}_st_s{active_stage}.log",
+            LOG_DIR / f"{name}_s{active_stage}.log",
+        ])
         log_path = None
         log_mtime = 0.0
-        for p_name in possible_log_names:
-            candidate = LOG_DIR / p_name
+        for candidate in possible_candidates:
             if candidate.is_file():
                 log_path = candidate
                 log_mtime = candidate.stat().st_mtime
@@ -420,6 +426,7 @@ def make_dashboard_panel() -> Panel:
         info["active_stages"],
         pids,
         active_run_start=info.get("active_run_start", 0.0),
+        run_id=info.get("run_id", "N/A"),
     )
     metrics = get_system_metrics()
 
