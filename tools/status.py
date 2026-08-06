@@ -161,26 +161,35 @@ def get_active_campaign_info() -> dict:
         )
     )
 
+    # Determine active_stages based on the most recently modified non-eval training log
+    active_train_stage = None
+    latest_train_mtime = 0
+    if LOG_DIR.is_dir():
+        for p in LOG_DIR.rglob("*.log"):
+            if p.name.startswith("eval_") or p.name == "launch.out":
+                continue
+            m_stage = re.search(r"_s(\d+)\.log$", p.name)
+            if m_stage:
+                mtime = p.stat().st_mtime
+                if mtime > latest_train_mtime:
+                    latest_train_mtime = mtime
+                    active_train_stage = int(m_stage.group(1))
+
     if is_launch_fresh:
         info["run_id"] = launch_run_id
-        info["active_stages"] = launch_stages or {0}
+        info["active_stages"] = (
+            {active_train_stage}
+            if active_train_stage is not None
+            else (launch_stages or {0})
+        )
         info["active_run_start"] = launch_mtime
     else:
         # If launch.out is stale, determine side_tasks and active_stages from recent logs
         if latest_log_file and active_training:
             info["side_tasks"] = "_st_" in latest_log_file.name
 
-        if (
-            LOG_DIR.is_dir()
-            and latest_log_mtime > 0
-            and (active_training or latest_log_mtime > latest_results_mtime)
-        ):
-            for p in LOG_DIR.rglob("*.log"):
-                mtime = p.stat().st_mtime
-                if (latest_log_mtime - mtime) < 300:
-                    m_stage = re.search(r"_s(\d+)\.log$", p.name)
-                    if m_stage:
-                        info["active_stages"].add(int(m_stage.group(1)))
+        if active_train_stage is not None:
+            info["active_stages"] = {active_train_stage}
 
         if active_training and latest_log_mtime > latest_results_mtime:
             prefix = "st" if info["side_tasks"] else "run"
