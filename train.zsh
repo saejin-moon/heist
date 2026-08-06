@@ -210,7 +210,6 @@ trigger_eval() {
         st_suffix="_st"
     fi
     mkdir -p "log/${run_id}"
-    log "-> Launching background evaluation for ${name}${st_suffix} (stage $s) ..."
     .venv/bin/python -u src/eval_stage.py --stage "$s" --algo "$name" --run-id "$run_id" --steps "$steps" > "log/${run_id}/eval_${name}${st_suffix}_s${s}.log" 2>&1 &
 }
 
@@ -244,6 +243,7 @@ run_campaign() {
     local -a task_status=()
     local -a task_start_times=()
     local -a task_eval_pids=()
+    local -a task_eval_queued=()
     local -a task_eval_done=()
 
     # Per-stage metrics tracking
@@ -273,6 +273,7 @@ run_campaign() {
             task_status+=("queued")
             task_start_times+=(0)
             task_eval_pids+=(0)
+            task_eval_queued+=(0)
             task_eval_done+=(0)
         done
     done
@@ -299,12 +300,10 @@ run_campaign() {
                     local secs=$(( elapsed % 60 ))
                     local s="${task_stages[$t]}"
                     local name="${task_models[$t]}"
-                    local steps="${task_steps[$t]}"
                     log "[DONE] Model '${name}${st_suffix}' (stage $s) completed in ${mins}m ${secs}s (${elapsed}s total)."
 
                     if [ "$RUN_EVAL" -eq 1 ]; then
-                        trigger_eval "$name" "$s" "$EVAL_RUN_ID" "$steps"
-                        task_eval_pids[$t]=$!
+                        task_eval_queued[$t]=1
                     else
                         task_eval_done[$t]=1
                     fi
@@ -312,13 +311,30 @@ run_campaign() {
             fi
         done
 
-        # 2. Fill available concurrency slots from queued tasks
+        # 2. Fill available concurrency slots from queued tasks (enforcing Stage Gating)
         while [ "$active_count" -lt "$CONCURRENT_JOBS" ]; do
             local next_t=0
             for ((t=1; t<=total_tasks; t++)); do
                 if [ "${task_status[$t]}" = "queued" ]; then
-                    next_t=$t
-                    break
+                    local s="${task_stages[$t]}"
+                    local can_launch=1
+                    local stage_idx=0
+                    for ((idx=1; idx<=${#STAGE_LIST[@]}; idx++)); do
+                        if [ "${STAGE_LIST[$idx]}" = "$s" ]; then
+                            stage_idx=$idx
+                            break
+                        fi
+                    done
+                    if [ "$stage_idx" -gt 1 ]; then
+                        local prev_stg="${STAGE_LIST[$((stage_idx - 1))]}"
+                        if [ "${stage_merged[$prev_stg]}" -ne 1 ]; then
+                            can_launch=0
+                        fi
+                    fi
+                    if [ "$can_launch" -eq 1 ]; then
+                        next_t=$t
+                        break
+                    fi
                 fi
             done
 
@@ -340,8 +356,7 @@ run_campaign() {
                 task_status[$next_t]="done"
                 task_start_times[$next_t]=$now
                 if [ "$RUN_EVAL" -eq 1 ]; then
-                    trigger_eval "$name" "$s" "$EVAL_RUN_ID" "$steps"
-                    task_eval_pids[$next_t]=$!
+                    task_eval_queued[$next_t]=1
                 else
                     task_eval_done[$next_t]=1
                 fi
@@ -413,14 +428,41 @@ run_campaign() {
             ((++active_count))
         done
 
-        # 3. Check background evaluation status
+        # 3. Check and launch background evaluation tasks (max 2 concurrent)
+        local MAX_EVAL_JOBS=2
+        local active_eval_count=0
+
         for ((t=1; t<=total_tasks; t++)); do
             if [ "${task_eval_pids[$t]}" -gt 0 ] && [ "${task_eval_done[$t]}" -eq 0 ]; then
-                if ! kill -0 "${task_eval_pids[$t]}" 2>/dev/null; then
+                if kill -0 "${task_eval_pids[$t]}" 2>/dev/null; then
+                    ((++active_eval_count))
+                else
                     task_eval_done[$t]=1
                     log "Background evaluation for ${task_models[$t]}${st_suffix} (stage ${task_stages[$t]}) completed."
                 fi
             fi
+        done
+
+        while [ "$active_eval_count" -lt "$MAX_EVAL_JOBS" ]; do
+            local next_eval_t=0
+            for ((t=1; t<=total_tasks; t++)); do
+                if [ "${task_eval_queued[$t]}" -eq 1 ] && [ "${task_eval_done[$t]}" -eq 0 ] && [ "${task_eval_pids[$t]}" -eq 0 ]; then
+                    next_eval_t=$t
+                    break
+                fi
+            done
+
+            if [ "$next_eval_t" -eq 0 ]; then
+                break
+            fi
+
+            local s="${task_stages[$next_eval_t]}"
+            local name="${task_models[$next_eval_t]}"
+            local steps="${task_steps[$next_eval_t]}"
+            log "-> Launching background evaluation for ${name}${st_suffix} (stage $s) ..."
+            trigger_eval "$name" "$s" "$EVAL_RUN_ID" "$steps"
+            task_eval_pids[$next_eval_t]=$!
+            ((++active_eval_count))
         done
 
         # 4. Check stage completion and merge per stage
