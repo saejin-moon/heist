@@ -273,12 +273,15 @@ def check_models_status(
             if lines:
                 for line_str in reversed(lines):
                     m_prog = re.search(
-                        r"step=(\d+)\s+sps=(\d+)\s+mean_reward=([-\d.]+)", line_str
+                        r"step=(\d+)(?:.*?\bsps=(\d+))?(?:.*?\b(?:mean_reward|ep_reward)=([-\d.]+))?",
+                        line_str,
                     )
-                    if m_prog:
+                    if m_prog and m_prog.group(1):
                         step_str = m_prog.group(1)
-                        sps_str = m_prog.group(2)
-                        reward_str = f"{float(m_prog.group(3)):.3f}"
+                        if m_prog.group(2):
+                            sps_str = m_prog.group(2)
+                        if m_prog.group(3):
+                            reward_str = f"{float(m_prog.group(3)):.3f}"
                         break
                     m_done = re.search(
                         r"training done in ([\d.]+s|[\d.]+ min)", line_str

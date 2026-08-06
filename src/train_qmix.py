@@ -357,8 +357,19 @@ def train(args: Args):
                     seed=args.seed + 1_000_000,
                     device=device,
                 )
-                for agent_name, val in imp.items():
-                    writer.add_scalar(f"eval/importance/{agent_name}", val, step)
+                if isinstance(imp, dict):
+                    if "baseline_win_rate" in imp:
+                        writer.add_scalar(
+                            "eval/importance/baseline_win_rate",
+                            imp["baseline_win_rate"],
+                            step,
+                        )
+                    importance_dict = imp.get("importance", {})
+                    if isinstance(importance_dict, dict):
+                        for agent_name, val in importance_dict.items():
+                            writer.add_scalar(
+                                f"eval/importance/{agent_name}", val, step
+                            )
             except Exception as e:
                 print(
                     f"  [Diagnostics] Warning: failed to calculate CAI/importance metrics: {e}"
