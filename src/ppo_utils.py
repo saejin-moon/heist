@@ -114,12 +114,9 @@ def get_previous_stage_checkpoint(run_name, exp_name=""):
                     if os.path.isdir(c) and os.listdir(c):
                         return c
             elif st == "_st":
-                # For Stage 0 side-tasks, check if a completed normal Stage 4 or Stage 0 checkpoint exists
-                candidates = [
-                    os.path.join("checkpoints", f"{prefix}_s4"),
-                    os.path.join("checkpoints", f"{prefix}_s0"),
-                ]
-                for c in candidates:
+                # For Stage 0 side-tasks, work backward from highest finished stage (s4 -> s3 -> s2 -> s1 -> s0)
+                for s_idx in range(4, -1, -1):
+                    c = os.path.join("checkpoints", f"{prefix}_s{s_idx}")
                     if os.path.isdir(c) and os.listdir(c):
                         return c
     return None

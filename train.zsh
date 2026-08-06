@@ -357,11 +357,16 @@ run_campaign() {
             if [ -n "$FROM_STAGE" ]; then
                 local src_ckpt="checkpoints/${name}${st_suffix}_s${FROM_STAGE}"
                 if [ ! -d "$src_ckpt" ]; then
-                    src_ckpt="checkpoints/${name}_s${FROM_STAGE}"
+                    for ((s_idx=FROM_STAGE; s_idx>=0; s_idx--)); do
+                        if [ -d "checkpoints/${name}_s${s_idx}" ]; then
+                            src_ckpt="checkpoints/${name}_s${s_idx}"
+                            break
+                        fi
+                    done
                 fi
                 if [ -d "$src_ckpt" ]; then
                     load_ckpt_flag=("--load-checkpoint" "$src_ckpt")
-                    log "-> Warm-starting ${name}${st_suffix} (stage $s) from stage ${FROM_STAGE} checkpoint: ${src_ckpt}"
+                    log "-> Warm-starting ${name}${st_suffix} (stage $s) from checkpoint: ${src_ckpt}"
                 fi
             fi
 
