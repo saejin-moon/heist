@@ -328,7 +328,21 @@ run_campaign() {
                     done
                     if [ "$stage_idx" -gt 1 ]; then
                         local prev_stg="${STAGE_LIST[$((stage_idx - 1))]}"
-                        if [ "${stage_merged[$prev_stg]}" -ne 1 ]; then
+                        local prev_task_done=0
+                        if [ "${stage_merged[$prev_stg]}" -eq 1 ]; then
+                            prev_task_done=1
+                        else
+                            local model_name="${task_models[$t]}"
+                            for ((pt=1; pt<=total_tasks; pt++)); do
+                                if [ "${task_stages[$pt]}" = "$prev_stg" ] && [ "${task_models[$pt]}" = "$model_name" ]; then
+                                    if [ "${task_status[$pt]}" = "done" ] || [ -f "checkpoints/${model_name}${st_suffix}_s${prev_stg}/complete.json" ] || [ -d "checkpoints/${model_name}${st_suffix}_s${prev_stg}" ]; then
+                                        prev_task_done=1
+                                    fi
+                                    break
+                                fi
+                            done
+                        fi
+                        if [ "$prev_task_done" -ne 1 ]; then
                             can_launch=0
                         fi
                     fi
