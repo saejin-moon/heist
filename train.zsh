@@ -393,43 +393,53 @@ run_campaign() {
             case "$name" in
                 ippo)
                     nohup .venv/bin/python -u src/train_ippo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --no-cuda --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
-                    task_pids[$next_t]=$!
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
                     ;;
                 mappo)
                     nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
-                    task_pids[$next_t]=$!
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
                     ;;
                 mappo_car)
                     nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
-                    task_pids[$next_t]=$!
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
                     ;;
                 mappo_cir)
                     nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
-                    task_pids[$next_t]=$!
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
                     ;;
                 comm)
                     nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
-                    task_pids[$next_t]=$!
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
                     ;;
                 comm_cir)
                     nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
-                    task_pids[$next_t]=$!
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
                     ;;
                 comm_cir_car)
                     nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
-                    task_pids[$next_t]=$!
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
                     ;;
                 qmix)
                     nohup .venv/bin/python -u src/train_qmix.py --total-steps "$steps" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
-                    task_pids[$next_t]=$!
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
                     ;;
                 coma)
                     nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
-                    task_pids[$next_t]=$!
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
                     ;;
                 coma_cir)
                     nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
-                    task_pids[$next_t]=$!
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
                     ;;
             esac
 
