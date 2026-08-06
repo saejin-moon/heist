@@ -175,7 +175,7 @@ def get_active_campaign_info() -> dict:
             and latest_log_mtime > 0
             and (active_training or latest_log_mtime > latest_results_mtime)
         ):
-            for p in LOG_DIR.glob("*.log"):
+            for p in LOG_DIR.rglob("*.log"):
                 mtime = p.stat().st_mtime
                 if (latest_log_mtime - mtime) < 300:
                     m_stage = re.search(r"_s(\d+)\.log$", p.name)
@@ -217,14 +217,18 @@ def check_models_status(
     for name in MODEL_NAMES:
         possible_candidates = []
         if run_id and run_id != "N/A":
-            possible_candidates.extend([
-                LOG_DIR / run_id / f"{name}_st_s{active_stage}.log",
-                LOG_DIR / run_id / f"{name}_s{active_stage}.log",
-            ])
-        possible_candidates.extend([
-            LOG_DIR / f"{name}_st_s{active_stage}.log",
-            LOG_DIR / f"{name}_s{active_stage}.log",
-        ])
+            possible_candidates.extend(
+                [
+                    LOG_DIR / run_id / f"{name}_st_s{active_stage}.log",
+                    LOG_DIR / run_id / f"{name}_s{active_stage}.log",
+                ]
+            )
+        possible_candidates.extend(
+            [
+                LOG_DIR / f"{name}_st_s{active_stage}.log",
+                LOG_DIR / f"{name}_s{active_stage}.log",
+            ]
+        )
         log_path = None
         log_mtime = 0.0
         for candidate in possible_candidates:
@@ -529,7 +533,7 @@ def make_dashboard_panel() -> Panel:
         log_files = sorted(
             [
                 p
-                for p in LOG_DIR.glob("*.log")
+                for p in LOG_DIR.rglob("*.log")
                 if (time.time() - p.stat().st_mtime) < 60
             ],
             key=lambda x: x.stat().st_mtime,
