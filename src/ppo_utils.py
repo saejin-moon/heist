@@ -92,6 +92,32 @@ def load_matching_weights(model, filepath, device):
         return False
 
 
+def get_previous_stage_checkpoint(run_name, exp_name=""):
+    """Parse experiment/run name to find candidate checkpoint paths from the previous stage."""
+    import os
+    import re
+
+    for name in [exp_name, run_name]:
+        if not name:
+            continue
+        match = re.search(r"^(.*?)(_st)?_s(\d+)(?:_s\d+)?$", name)
+        if match:
+            prefix, st, stage_str = match.group(1), match.group(2) or "", match.group(3)
+            stage = int(stage_str)
+            if stage > 0:
+                prev_stage = stage - 1
+                base = f"{prefix}{st}"
+                candidates = [
+                    os.path.join("checkpoints", f"{base}_s{prev_stage}"),
+                    os.path.join("checkpoints", f"{base}_s{prev_stage}_s0"),
+                ]
+                for c in candidates:
+                    if os.path.isdir(c) and os.listdir(c):
+                        return c
+    return None
+
+
+
 def compute_counterfactual_advantage(
     policy_probs, q_values_all, taken_actions, action_mask
 ):

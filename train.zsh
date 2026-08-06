@@ -53,6 +53,7 @@ Usage:
     ./train.zsh --parallel 4         # run up to 4 models concurrently to maximize GPU/CPU
     ./train.zsh --steps 20480        # custom step budget for tuning
     ./train.zsh --stages 0,1,2       # run selected stages (0, 1, 2)
+    ./train.zsh --stages 0,1 --resume # skip completed stage 0 and warm-start stage 1 from stage 0
     ./train.zsh --daemon             # background the campaign with nohup
     ./train.zsh -h, --help           # show this help message
 
@@ -63,6 +64,8 @@ Flags:
   --steps STEPS     total training timesteps per algorithm (default 299008)
   --stages STAGES   comma-separated curriculum stage indices (default 0)
   --num-stages N    run first N curriculum stages (0..N-1)
+  --resume, --use-ckpt  reuse completed model checkpoints and skip already trained stages
+  --from-stage N    initialize model weights from completed stage N checkpoints
   --cir-coef COEF   CIR coefficient for routing advantages (default 0.5)
   --car-coef COEF   CAR coefficient for intrinsic affordance rewards (default 0.5)
   --no-rnd          disable Random Network Distillation (RND is enabled by default)
@@ -83,6 +86,8 @@ USE_RND=1
 RND_COEF=0.05
 ENABLE_SIDE_TASKS=0
 CUSTOM_PREFIX=""
+USE_CKPT=0
+FROM_STAGE=""
 
 while (( $# )); do
     case "$1" in
@@ -94,6 +99,8 @@ while (( $# )); do
 
         --fast|--quick|--sample) FAST_MODE=1; CAMPAIGN_STEPS=10240; STAGES="0"; SKIP_SMOKE=1; shift ;;
         --parallel|-j) CONCURRENT_JOBS="$2"; shift 2 ;;
+        --resume|--use-ckpt|--reuse-checkpoints|--skip-completed) USE_CKPT=1; shift ;;
+        --from-stage|--init-stage) FROM_STAGE="$2"; shift 2 ;;
         --cir-coef)   CIR_COEF="$2"; shift 2 ;;
         --car-coef)   CAR_COEF="$2"; shift 2 ;;
         --rnd)        USE_RND=1; shift ;;
@@ -206,9 +213,7 @@ trigger_eval() {
     .venv/bin/python -u src/eval_stage.py --stage "$s" --algo "$name" --run-id "$run_id" --steps "$steps" > "log/eval_${name}${st_suffix}_s${s}.log" 2>&1 &
 }
 
-run_stage() {
-    local s="$1"
-    local stage_start_time=$(date +%s)
+run_campaign() {
     local st_py="False"
     local st_suffix=""
     if [ "$ENABLE_SIDE_TASKS" -eq 1 ]; then
@@ -216,132 +221,245 @@ run_stage() {
         st_suffix="_st"
         log "[SIDE-TASKS ENABLED] Running with dynamic side-task environment features!"
     fi
-    log "Starting training for stage $s at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-    local cfg
-    cfg=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from curriculum import CURRICULUM, env_config_str; c = dict(CURRICULUM[$s]); c['enable_side_tasks'] = $st_py; print(env_config_str(c))")
-    
+
     local -a model_names=()
     if [ -n "$MODELS" ]; then
         IFS=',' read -A model_names <<< "$MODELS"
     else
         model_names=("ippo" "mappo" "mappo_car" "mappo_cir" "comm" "comm_cir" "comm_cir_car" "qmix" "coma" "coma_cir")
     fi
-    local -a pids=()
-    local -a status_map=()
-    local -a start_times=()
-    local -a eval_pids=()
 
-    for ((i=1; i<=${#model_names[@]}; i++)); do
-        pids[$i]=0
-        status_map[$i]="queued"
-        start_times[$i]=0
+    local -a rnd_flags=()
+    if [ "$USE_RND" -eq 1 ]; then
+        rnd_flags=("--use-rnd" "--rnd-coef" "$RND_COEF")
+    fi
+
+    # Build queue of all tasks across selected stages
+    local -a task_stages=()
+    local -a task_models=()
+    local -a task_steps=()
+    local -a task_cfgs=()
+    local -a task_pids=()
+    local -a task_status=()
+    local -a task_start_times=()
+    local -a task_eval_pids=()
+    local -a task_eval_done=()
+
+    # Per-stage metrics tracking
+    typeset -A stage_start_times
+    typeset -A stage_merged
+    typeset -A stage_cfgs
+
+    for stg in "${STAGE_LIST[@]}"; do
+        stage_start_times[$stg]=0
+        stage_merged[$stg]=0
+
+        local steps_for_stage=$CAMPAIGN_STEPS
+        if [ "$FAST_MODE" -eq 0 ]; then
+            steps_for_stage=$(( CAMPAIGN_STEPS * (2 + stg) / 2 ))
+        fi
+
+        local cfg
+        cfg=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from curriculum import CURRICULUM, env_config_str; c = dict(CURRICULUM[$stg]); c['enable_side_tasks'] = $st_py; print(env_config_str(c))")
+        stage_cfgs[$stg]="$cfg"
+
+        for name in "${model_names[@]}"; do
+            task_stages+=("$stg")
+            task_models+=("$name")
+            task_steps+=("$steps_for_stage")
+            task_cfgs+=("$cfg")
+            task_pids+=(0)
+            task_status+=("queued")
+            task_start_times+=(0)
+            task_eval_pids+=(0)
+            task_eval_done+=(0)
+        done
     done
 
-    local steps_for_stage=$CAMPAIGN_STEPS
-    if [ "$FAST_MODE" -eq 0 ]; then
-        steps_for_stage=$(( CAMPAIGN_STEPS * (2 + s) / 2 ))
-    fi
+    local total_tasks=${#task_stages[@]}
+    log "Starting training campaign for stages: ${STAGE_LIST[*]}"
+    log "Total campaign tasks: $total_tasks models across ${#STAGE_LIST[@]} stages (max $CONCURRENT_JOBS parallel jobs)"
 
-    if [ "$FAST_MODE" -eq 1 ]; then
-        log "[FAST MODE] High-verbosity validation active ($steps_for_stage steps/model)"
-        log "[FAST MODE] Launching ${#model_names[@]} models concurrently (max $CONCURRENT_JOBS parallel jobs)..."
-    else
-        log "Starting training campaign for stage $s with adaptive steps: $steps_for_stage"
-        log "Training models concurrently (max $CONCURRENT_JOBS parallel jobs)..."
-    fi
+    local all_done=0
+    while [ "$all_done" -eq 0 ]; do
+        local now=$(date +%s)
 
-    for ((i=1; i<=${#model_names[@]}; i++)); do
-        local name="${model_names[$i]}"
-        
-        # Wait if we hit the concurrency limit
-        local active_count=999
-        while [ "$active_count" -ge "$CONCURRENT_JOBS" ]; do
-            active_count=0
-            for ((j=1; j<=${#model_names[@]}; j++)); do
-                if [ "${status_map[$j]}" = "running" ]; then
-                    local pid="${pids[$j]}"
-                    if kill -0 "$pid" 2>/dev/null; then
-                        ((++active_count))
+        # 1. Check running training tasks
+        local active_count=0
+        for ((t=1; t<=total_tasks; t++)); do
+            if [ "${task_status[$t]}" = "running" ]; then
+                local pid="${task_pids[$t]}"
+                if kill -0 "$pid" 2>/dev/null; then
+                    ((++active_count))
+                else
+                    task_status[$t]="done"
+                    local elapsed=$(( now - task_start_times[$t] ))
+                    local mins=$(( elapsed / 60 ))
+                    local secs=$(( elapsed % 60 ))
+                    local s="${task_stages[$t]}"
+                    local name="${task_models[$t]}"
+                    local steps="${task_steps[$t]}"
+                    log "[DONE] Model '${name}${st_suffix}' (stage $s) completed in ${mins}m ${secs}s (${elapsed}s total)."
+
+                    if [ "$RUN_EVAL" -eq 1 ]; then
+                        trigger_eval "$name" "$s" "$EVAL_RUN_ID" "$steps"
+                        task_eval_pids[$t]=$!
                     else
-                        status_map[$j]="done"
-                        local now=$(date +%s)
-                        local elapsed=$(( now - start_times[$j] ))
-                        local mins=$(( elapsed / 60 ))
-                        local secs=$(( elapsed % 60 ))
-                        log "[DONE] Model '${model_names[$j]}${st_suffix}' completed in ${mins}m ${secs}s (${elapsed}s total)."
-                        trigger_eval "${model_names[$j]}" "$s" "$EVAL_RUN_ID" "$steps_for_stage"
-                        eval_pids+=($!)
+                        task_eval_done[$t]=1
                     fi
                 fi
-            done
-            if [ "$active_count" -ge "$CONCURRENT_JOBS" ]; then
-                sleep 1.5
             fi
         done
 
-        local -a rnd_flags=()
-        if [ "$USE_RND" -eq 1 ]; then
-            rnd_flags=("--use-rnd" "--rnd-coef" "$RND_COEF")
-        fi
+        # 2. Fill available concurrency slots from queued tasks
+        while [ "$active_count" -lt "$CONCURRENT_JOBS" ]; do
+            local next_t=0
+            for ((t=1; t<=total_tasks; t++)); do
+                if [ "${task_status[$t]}" = "queued" ]; then
+                    next_t=$t
+                    break
+                fi
+            done
 
-        log "-> Launching ${name}${st_suffix} (RND=${USE_RND}) ..."
-        rm -f "checkpoints/${exp_name_tag}/complete.json"
-        start_times[$i]=$(date +%s)
-        local exp_name_tag="${name}${st_suffix}_s${s}"
-        local log_name_tag="${name}${st_suffix}_s${s}.log"
-        case "$name" in
-            ippo)
-                nohup .venv/bin/python -u src/train_ippo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --no-cuda --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
-                ;;
-            mappo)
-                nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
-                ;;
-            mappo_car)
-                nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
-                ;;
-            mappo_cir)
-                nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
-                ;;
-            comm)
-                nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
-                ;;
-            comm_cir)
-                nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
-                ;;
-            comm_cir_car)
-                nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
-                ;;
-            qmix)
-                nohup .venv/bin/python -u src/train_qmix.py --total-steps "$steps_for_stage" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
-                ;;
-            coma)
-                nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
-                ;;
-            coma_cir)
-                nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps_for_stage" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" > "log/${log_name_tag}" 2>&1 &
-                ;;
-        esac
+            if [ "$next_t" -eq 0 ]; then
+                break
+            fi
 
-        local last_pid=$!
-        pids[$i]=$last_pid
-        log "-> Launched ${name}${st_suffix} with PID: ${pids[$i]}"
-        status_map[$i]="running"
-    done
+            local s="${task_stages[$next_t]}"
+            local name="${task_models[$next_t]}"
+            local steps="${task_steps[$next_t]}"
+            local cfg="${task_cfgs[$next_t]}"
+            local exp_name_tag="${name}${st_suffix}_s${s}"
+            local log_name_tag="${name}${st_suffix}_s${s}.log"
 
-    # Wait for all remaining jobs and monitor progress if FAST_MODE
-    local running=1
-    while [ "$running" -eq 1 ]; do
-        sleep 2
-        running=0
-        local status_str=""
-        for ((j=1; j<=${#model_names[@]}; j++)); do
-            local name="${model_names[$j]}"
-            local stat="${status_map[$j]}"
-            if [ "$stat" = "running" ]; then
-                local pid="${pids[$j]}"
-                if kill -0 "$pid" 2>/dev/null; then
-                    running=1
-                    # Read latest progress from log
+            # Skip completed models if --resume / --use-ckpt is active
+            if [ "$USE_CKPT" -eq 1 ] && [ -f "checkpoints/${exp_name_tag}/complete.json" ]; then
+                log "[SKIP] Model '${name}${st_suffix}' (stage $s) completed checkpoint found at checkpoints/${exp_name_tag}. Skipping training."
+                task_status[$next_t]="done"
+                task_start_times[$next_t]=$now
+                if [ "$RUN_EVAL" -eq 1 ]; then
+                    trigger_eval "$name" "$s" "$EVAL_RUN_ID" "$steps"
+                    task_eval_pids[$next_t]=$!
+                else
+                    task_eval_done[$next_t]=1
+                fi
+                continue
+            fi
+
+            if [ "${stage_start_times[$s]}" -eq 0 ]; then
+                stage_start_times[$s]=$now
+                log "Starting training for stage $s at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            fi
+
+            local -a load_ckpt_flag=()
+            if [ -n "$FROM_STAGE" ]; then
+                local src_ckpt="checkpoints/${name}${st_suffix}_s${FROM_STAGE}"
+                if [ -d "$src_ckpt" ]; then
+                    load_ckpt_flag=("--load-checkpoint" "$src_ckpt")
+                    log "-> Warm-starting ${name}${st_suffix} (stage $s) from stage ${FROM_STAGE} checkpoint: ${src_ckpt}"
+                fi
+            fi
+
+            log "-> Launching ${name}${st_suffix} (stage $s, RND=${USE_RND}) ..."
+            rm -f "checkpoints/${exp_name_tag}/complete.json"
+            task_start_times[$next_t]=$now
+
+            case "$name" in
+                ippo)
+                    nohup .venv/bin/python -u src/train_ippo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --no-cuda --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    ;;
+                mappo)
+                    nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    ;;
+                mappo_car)
+                    nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    ;;
+                mappo_cir)
+                    nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    ;;
+                comm)
+                    nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    ;;
+                comm_cir)
+                    nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    ;;
+                comm_cir_car)
+                    nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    ;;
+                qmix)
+                    nohup .venv/bin/python -u src/train_qmix.py --total-steps "$steps" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    ;;
+                coma)
+                    nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    ;;
+                coma_cir)
+                    nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    ;;
+            esac
+
+            task_pids[$next_t]=$!
+            task_status[$next_t]="running"
+            log "-> Launched ${name}${st_suffix} (stage $s) with PID: ${task_pids[$next_t]}"
+            ((++active_count))
+        done
+
+        # 3. Check background evaluation status
+        for ((t=1; t<=total_tasks; t++)); do
+            if [ "${task_eval_pids[$t]}" -gt 0 ] && [ "${task_eval_done[$t]}" -eq 0 ]; then
+                if ! kill -0 "${task_eval_pids[$t]}" 2>/dev/null; then
+                    task_eval_done[$t]=1
+                    log "Background evaluation for ${task_models[$t]}${st_suffix} (stage ${task_stages[$t]}) completed."
+                fi
+            fi
+        done
+
+        # 4. Check stage completion and merge per stage
+        for stg in "${STAGE_LIST[@]}"; do
+            if [ "${stage_merged[$stg]}" -eq 0 ]; then
+                local stg_finished=1
+                local stg_steps=0
+                for ((t=1; t<=total_tasks; t++)); do
+                    if [ "${task_stages[$t]}" = "$stg" ]; then
+                        stg_steps="${task_steps[$t]}"
+                        if [ "${task_status[$t]}" != "done" ] || [ "${task_eval_done[$t]}" -ne 1 ]; then
+                            stg_finished=0
+                            break
+                        fi
+                    fi
+                done
+                if [ "$stg_finished" -eq 1 ]; then
+                    if [ "$RUN_EVAL" -eq 1 ]; then
+                        log "Merging evaluation results for stage $stg..."
+                        .venv/bin/python src/eval_stage.py --stage "$stg" --merge --run-id "$EVAL_RUN_ID" --steps "$stg_steps"
+                    fi
+                    stage_merged[$stg]=1
+                    local stage_elapsed=$(( now - stage_start_times[$stg] ))
+                    log "Stage $stg completed in $(( stage_elapsed / 60 ))m $(( stage_elapsed % 60 ))s (${stage_elapsed}s total)."
+                fi
+            fi
+        done
+
+        # 5. Check if all tasks and merges across all stages are complete
+        all_done=1
+        for ((t=1; t<=total_tasks; t++)); do
+            if [ "${task_status[$t]}" != "done" ] || [ "${task_eval_done[$t]}" -ne 1 ]; then
+                all_done=0
+                break
+            fi
+        done
+        for stg in "${STAGE_LIST[@]}"; do
+            if [ "${stage_merged[$stg]}" -eq 0 ]; then
+                all_done=0
+                break
+            fi
+        done
+
+        if [ "$FAST_MODE" -eq 1 ] && [ "$all_done" -eq 0 ]; then
+            local status_str=""
+            for ((t=1; t<=total_tasks; t++)); do
+                if [ "${task_status[$t]}" = "running" ]; then
+                    local s="${task_stages[$t]}"
+                    local name="${task_models[$t]}"
                     local log_file="log/${name}${st_suffix}_s${s}.log"
                     local prog="starting"
                     if [ -f "$log_file" ]; then
@@ -351,42 +469,20 @@ run_stage() {
                             prog=$(echo "$last_line" | awk '{print $1" "$2}')
                         fi
                     fi
-                    status_str="${status_str} | ${name}: ${prog}"
-                else
-                    status_map[$j]="done"
-                    local now=$(date +%s)
-                    local elapsed=$(( now - start_times[$j] ))
-                    local mins=$(( elapsed / 60 ))
-                    local secs=$(( elapsed % 60 ))
-                    log "[DONE] Model '${model_names[$j]}${st_suffix}' completed in ${mins}m ${secs}s (${elapsed}s total)."
-                    status_str="${status_str} | ${name}: done"
-                    trigger_eval "${model_names[$j]}" "$s" "$EVAL_RUN_ID" "$steps_for_stage"
-                    eval_pids+=($!)
+                    status_str="${status_str} | ${name}_s${s}: ${prog}"
                 fi
-            else
-                status_str="${status_str} | ${name}: ${stat}"
-            fi
-        done
-        if [ "$FAST_MODE" -eq 1 ] && [ "$running" -eq 1 ]; then
-            printf "\r[FAST MODE] Progress:%s" "$status_str"
+            done
+            printf "\r[FAST MODE] Active:%s" "$status_str"
+        fi
+
+        if [ "$all_done" -eq 0 ]; then
+            sleep 1.5
         fi
     done
+
     if [ "$FAST_MODE" -eq 1 ]; then
         printf "\n[FAST MODE] All models completed successfully.\n"
     fi
-
-    log "Waiting for background evaluations to complete..."
-    for pid in "${eval_pids[@]}"; do
-        while kill -0 "$pid" 2>/dev/null; do
-            sleep 0.5
-        done
-    done
-
-    log "Merging evaluation results..."
-    .venv/bin/python src/eval_stage.py --stage "$s" --merge --run-id "$EVAL_RUN_ID" --steps "$steps_for_stage"
-    local stage_end_time=$(date +%s)
-    local stage_elapsed=$(( stage_end_time - stage_start_time ))
-    log "Stage $s completed in $(( stage_elapsed / 60 ))m $(( stage_elapsed % 60 ))s (${stage_elapsed}s total)."
 }
 
 
@@ -412,9 +508,8 @@ if [ "$DAEMON" -eq 1 ]; then
     nohup zsh "$0" "${pass_args[@]}" > log/launch.out 2>&1 &
     print "Campaign launched as daemon (PID $!). Check log status with: uv run python tools/status.py"
 else
-    for stg in "${STAGE_LIST[@]}"; do
-        run_stage "$stg"
-    done
+    run_campaign
     log "All selected stages finished successfully!"
     print "Check final status with: uv run python tools/status.py"
 fi
+

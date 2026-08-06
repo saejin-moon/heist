@@ -272,24 +272,18 @@ def train(args: Args):
     target_mixing.load_state_dict(mixing.state_dict())
 
     # Stage-to-stage policy transfer
-    import re
+    from ppo_utils import get_previous_stage_checkpoint, load_matching_weights
 
-    from ppo_utils import load_matching_weights
-
-    match = re.search(r"^(.*)_s(\d+)$", run_name)
-    if match:
-        base_name, stage_str = match.groups()
-        stage = int(stage_str)
-        if stage > 0:
-            prev_run_name = f"{base_name}_s{stage - 1}"
-            print(
-                f"  [Transfer] Checking for previous stage checkpoint in checkpoints/{prev_run_name}"
+    prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
+    if prev_ckpt:
+        print(
+            f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}"
+        )
+        for a in AGENTS:
+            load_matching_weights(
+                q_nets[a], os.path.join(prev_ckpt, f"{a}_q.pt"), device
             )
-            for a in AGENTS:
-                load_matching_weights(
-                    q_nets[a], f"checkpoints/{prev_run_name}/{a}_q.pt", device
-                )
-                target_nets[a].load_state_dict(q_nets[a].state_dict())
+            target_nets[a].load_state_dict(q_nets[a].state_dict())
 
     if args.load_checkpoint:
         print(f"  [Transfer] Loading custom checkpoint from {args.load_checkpoint}")

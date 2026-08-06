@@ -193,28 +193,22 @@ def train(args: Args):
         }
 
     # Stage-to-stage policy transfer
-    import re
+    from ppo_utils import get_previous_stage_checkpoint, load_matching_weights
 
-    from ppo_utils import load_matching_weights
-
-    match = re.search(r"^(.*)_s(\d+)$", run_name)
-    if match:
-        base_name, stage_str = match.groups()
-        stage = int(stage_str)
-        if stage > 0:
-            prev_run_name = f"{base_name}_s{stage - 1}"
-            print(
-                f"  [Transfer] Checking for previous stage checkpoint in checkpoints/{prev_run_name}"
+    prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
+    if prev_ckpt:
+        print(
+            f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}"
+        )
+        if args.shared:
+            load_matching_weights(
+                shared_policy, os.path.join(prev_ckpt, "scout.pt"), device
             )
-            if args.shared:
+        else:
+            for a in AGENTS:
                 load_matching_weights(
-                    shared_policy, f"checkpoints/{prev_run_name}/scout.pt", device
+                    policies[a], os.path.join(prev_ckpt, f"{a}.pt"), device
                 )
-            else:
-                for a in AGENTS:
-                    load_matching_weights(
-                        policies[a], f"checkpoints/{prev_run_name}/{a}.pt", device
-                    )
 
     if args.load_checkpoint:
         print(f"  [Transfer] Loading custom checkpoint from {args.load_checkpoint}")
