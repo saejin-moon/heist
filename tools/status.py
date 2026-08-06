@@ -246,6 +246,20 @@ def check_models_status(
                 log_mtime = candidate.stat().st_mtime
                 break
 
+        if log_path is None and LOG_DIR.is_dir():
+            matching = [
+                p
+                for p in LOG_DIR.rglob("*.log")
+                if not p.name.startswith("eval_")
+                and (
+                    p.name == f"{name}_s{active_stage}.log"
+                    or p.name == f"{name}_st_s{active_stage}.log"
+                )
+            ]
+            if matching:
+                log_path = sorted(matching, key=lambda x: x.stat().st_mtime)[-1]
+                log_mtime = log_path.stat().st_mtime
+
         is_log_fresh = log_path is not None and (
             active_run_start == 0.0
             or log_mtime >= active_run_start - 60
@@ -284,10 +298,8 @@ def check_models_status(
         runtime_str = "-"
         status = "QUEUED"
 
-        if is_log_fresh and log_path:
+        if is_log_fresh and log_path and log_path.is_file():
             mtime_diff = time.time() - log_mtime
-            is_recent = mtime_diff < 30
-
             lines = log_path.read_text(errors="replace").splitlines()
             if lines:
                 for line_str in reversed(lines):
@@ -296,23 +308,23 @@ def check_models_status(
                         line_str,
                     )
                     if m_prog and m_prog.group(1):
-                        step_str = m_prog.group(1)
-                        if m_prog.group(2):
+                        if step_str == "-":
+                            step_str = m_prog.group(1)
+                        if sps_str == "-" and m_prog.group(2):
                             sps_str = m_prog.group(2)
-                        if m_prog.group(3):
+                        if reward_str == "-" and m_prog.group(3):
                             reward_str = f"{float(m_prog.group(3)):.3f}"
-                        break
                     m_done = re.search(
                         r"training done in ([\d.]+s|[\d.]+ min)", line_str
                     )
-                    if m_done:
+                    if m_done and runtime_str == "-":
                         runtime_str = m_done.group(1)
-                        break
 
             has_finished = lines and any(
                 "training done" in line_str for line_str in lines[-5:]
             )
-            if is_recent and not has_finished:
+            is_recent = mtime_diff < 300 or len(running_pids) > 0
+            if (is_recent or len(running_pids) > 0) and not has_finished:
                 status = "RUNNING"
             elif ckpt_complete or has_finished:
                 status = "COMPLETE"
