@@ -1,0 +1,1 @@
+./train.zsh -j 5 --daemon --steps 1000000 --stages 0,1,2,3,4 --resume
