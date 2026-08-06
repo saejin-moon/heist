@@ -211,6 +211,7 @@ trigger_eval() {
     fi
     mkdir -p "log/${run_id}"
     .venv/bin/python -u src/eval_stage.py --stage "$s" --algo "$name" --run-id "$run_id" --steps "$steps" > "log/${run_id}/eval_${name}${st_suffix}_s${s}.log" 2>&1 &
+    EVAL_PID=$!
 }
 
 run_campaign() {
@@ -392,39 +393,49 @@ run_campaign() {
             case "$name" in
                 ippo)
                     nohup .venv/bin/python -u src/train_ippo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --no-cuda --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    task_pids[$next_t]=$!
                     ;;
                 mappo)
                     nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    task_pids[$next_t]=$!
                     ;;
                 mappo_car)
                     nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --car-coef "$CAR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    task_pids[$next_t]=$!
                     ;;
                 mappo_cir)
                     nohup .venv/bin/python -u src/train_mappo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    task_pids[$next_t]=$!
                     ;;
                 comm)
                     nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    task_pids[$next_t]=$!
                     ;;
                 comm_cir)
                     nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    task_pids[$next_t]=$!
                     ;;
                 comm_cir_car)
                     nohup .venv/bin/python -u src/train_comm.py --total-steps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --car-coef "$CAR_COEF" --env-config "$cfg" --exp-name "$exp_name_tag" --save-model "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    task_pids[$next_t]=$!
                     ;;
                 qmix)
                     nohup .venv/bin/python -u src/train_qmix.py --total-steps "$steps" --train-freq 4 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    task_pids[$next_t]=$!
                     ;;
                 coma)
                     nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    task_pids[$next_t]=$!
                     ;;
                 coma_cir)
                     nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    task_pids[$next_t]=$!
                     ;;
             esac
 
-            task_pids[$next_t]=$!
+            local launched_pid="${task_pids[$next_t]}"
             task_status[$next_t]="running"
-            log "-> Launched ${name}${st_suffix} (stage $s) with PID: ${task_pids[$next_t]}"
+            log "-> Launched ${name}${st_suffix} (stage $s) with PID: $launched_pid"
             ((++active_count))
         done
 
@@ -433,8 +444,9 @@ run_campaign() {
         local active_eval_count=0
 
         for ((t=1; t<=total_tasks; t++)); do
-            if [ "${task_eval_pids[$t]}" -gt 0 ] && [ "${task_eval_done[$t]}" -eq 0 ]; then
-                if kill -0 "${task_eval_pids[$t]}" 2>/dev/null; then
+            local eval_pid="${task_eval_pids[$t]}"
+            if [[ "$eval_pid" =~ ^[0-9]+$ ]] && [ "$eval_pid" -gt 0 ] && [ "${task_eval_done[$t]}" -eq 0 ]; then
+                if kill -0 "$eval_pid" 2>/dev/null; then
                     ((++active_eval_count))
                 else
                     task_eval_done[$t]=1
@@ -446,7 +458,8 @@ run_campaign() {
         while [ "$active_eval_count" -lt "$MAX_EVAL_JOBS" ]; do
             local next_eval_t=0
             for ((t=1; t<=total_tasks; t++)); do
-                if [ "${task_eval_queued[$t]}" -eq 1 ] && [ "${task_eval_done[$t]}" -eq 0 ] && [ "${task_eval_pids[$t]}" -eq 0 ]; then
+                local eval_pid="${task_eval_pids[$t]}"
+                if [ "${task_eval_queued[$t]}" -eq 1 ] && [ "${task_eval_done[$t]}" -eq 0 ] && { [ -z "$eval_pid" ] || [ "$eval_pid" = "0" ]; }; then
                     next_eval_t=$t
                     break
                 fi
@@ -459,9 +472,10 @@ run_campaign() {
             local s="${task_stages[$next_eval_t]}"
             local name="${task_models[$next_eval_t]}"
             local steps="${task_steps[$next_eval_t]}"
-            log "-> Launching background evaluation for ${name}${st_suffix} (stage $s) ..."
+            task_eval_queued[$next_eval_t]=0
             trigger_eval "$name" "$s" "$EVAL_RUN_ID" "$steps"
-            task_eval_pids[$next_eval_t]=$!
+            task_eval_pids[$next_eval_t]=$EVAL_PID
+            log "-> Launched background evaluation for ${name}${st_suffix} (stage $s) with PID: $EVAL_PID"
             ((++active_eval_count))
         done
 
