@@ -174,10 +174,19 @@ def main():
 
     if args.merge:
         # Merge individual files
+        out_path = os.path.join(results_dir, "summary.json")
         all_stage_results = {}
+        if os.path.isfile(out_path):
+            try:
+                with open(out_path) as f:
+                    all_stage_results = json.load(f)
+            except Exception:
+                all_stage_results = {}
+
         for stg in stages:
             stage_key = f"stage_{stg}"
-            all_stage_results[stage_key] = {algo: [] for algo in DEFAULT_ALGOS}
+            if stage_key not in all_stage_results:
+                all_stage_results[stage_key] = {algo: [] for algo in DEFAULT_ALGOS}
 
             for algo in DEFAULT_ALGOS:
                 fpath = os.path.join(results_dir, f"individual_{algo}_stage{stg}.json")

@@ -111,12 +111,11 @@ def parse_args():
 
 
 def train(args: Args):
+    import re
+
     run_name = (
         args.exp_name
-        if (
-            f"_s{args.seed}" in args.exp_name
-            or args.exp_name.endswith(f"_s{args.seed}")
-        )
+        if re.search(r"_s\d+", args.exp_name)
         else f"{args.exp_name}_s{args.seed}"
     )
     os.makedirs(f"runs/{run_name}", exist_ok=True)

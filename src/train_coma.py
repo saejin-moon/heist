@@ -130,12 +130,11 @@ def construct_other_actions_onehot(actions_tensor, focal_agent_idx):
 
 def train(args: Args):  # noqa: C901
 
+    import re
+
     run_name = (
         args.exp_name
-        if (
-            f"_s{args.seed}" in args.exp_name
-            or args.exp_name.endswith(f"_s{args.seed}")
-        )
+        if re.search(r"_s\d+", args.exp_name)
         else f"{args.exp_name}_s{args.seed}"
     )
 
