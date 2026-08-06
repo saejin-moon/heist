@@ -129,3 +129,26 @@ def test_stale_checkpoints_and_logs_ignored_in_new_run(tmp_path):
         coma_status = next(m for m in models if m["model"] == "coma")
         assert coma_status["status"] == "QUEUED"
         assert coma_status["checkpoint"] == "[dim]PENDING[/dim]"
+
+
+def test_qmix_log_parsing_and_subfolder_discovery(tmp_path):
+    log_dir = tmp_path / "log"
+    run_dir = log_dir / "run021"
+    run_dir.mkdir(parents=True)
+
+    # QMIX log format in log/run021/qmix_s0.log
+    qmix_log = run_dir / "qmix_s0.log"
+    qmix_log.write_text("step=50000 eps=0.905 ep_reward=-0.519 buffer=50000")
+
+    with (
+        patch.object(status, "LOG_DIR", log_dir),
+        patch.object(status, "CKPT_DIR", tmp_path / "checkpoints"),
+    ):
+        models = status.check_models_status(
+            active_stages={0}, running_pids={1234}, run_id="run021"
+        )
+        qmix_status = next(m for m in models if m["model"] == "qmix")
+        assert qmix_status["status"] == "RUNNING"
+        assert qmix_status["steps"] == "50000"
+        assert qmix_status["mean_reward"] == "-0.519"
+

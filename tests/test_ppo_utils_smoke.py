@@ -98,3 +98,27 @@ def test_write_completion_marker():
     assert data["completed_steps"] == 1000
 
     shutil.rmtree(checkpoint_dir)
+
+
+def test_get_previous_stage_checkpoint_fallback(tmp_path, monkeypatch):
+    from ppo_utils import get_previous_stage_checkpoint
+
+    ckpt_dir = tmp_path / "checkpoints"
+    ckpt_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    # 1. Standard previous stage: mappo_s1 looks for checkpoints/mappo_s0
+    (ckpt_dir / "mappo_s0").mkdir()
+    (ckpt_dir / "mappo_s0" / "dummy.pt").write_text("1")
+    assert get_previous_stage_checkpoint("mappo_s1") == "checkpoints/mappo_s0"
+
+    # 2. Side-task stage 0 fallback to normal Stage 4 if available
+    (ckpt_dir / "ippo_s4").mkdir()
+    (ckpt_dir / "ippo_s4" / "dummy.pt").write_text("1")
+    assert get_previous_stage_checkpoint("ippo_st_s0") == "checkpoints/ippo_s4"
+
+    # 3. Side-task stage 0 fallback to highest available lower stage if s4 doesn't exist (e.g. s2)
+    (ckpt_dir / "comm_s2").mkdir()
+    (ckpt_dir / "comm_s2" / "dummy.pt").write_text("1")
+    assert get_previous_stage_checkpoint("comm_st_s0") == "checkpoints/comm_s2"
+
