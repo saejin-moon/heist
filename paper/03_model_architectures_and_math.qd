@@ -4,22 +4,24 @@ We evaluate 10 distinct algorithmic configurations across 4 fundamental MARL par
 
 ## 3.1 Model 1: IPPO (Independent PPO)
 
-IPPO treats each agent $i \in \mathcal{N}$ as an independent learning agent, ignoring non-stationarity:
+IPPO treats each agent $ i \in \mathcal{N} $ as an independent learning agent, ignoring non-stationarity:
 
-- **Policy Network $\pi_{\theta_i}(a_i|o_i)$:** Parameterized by $\theta_i$, maps local obs $o_i \in \mathbb{R}^{53}$ to action logits over $\mathcal{A}_i$.
-- **Value Network $V_{\phi_i}(o_i)$:** Local critic estimating state value from $o_i$.
+- **Policy Network $ \pi_{\theta_i}(a_i|o_i) $:** Parameterized by $ \theta_i $, maps local obs $ o_i \in \mathbb{R}^{53} $ to action logits over $ \mathcal{A}_i $.
+- **Value Network $ V_{\phi_i}(o_i) $:** Local critic estimating state value from $ o_i $.
 - **PPO Clipped Objective:**
+
   $ L_i^{\text{CLIP}}(\theta_i) = \hat{\mathbb{E}}_t \left[ \min \left( r_{t,i}(\theta_i) \hat{A}_{t,i}, \text{clip}(r_{t,i}(\theta_i), 1-\epsilon, 1+\epsilon) \hat{A}_{t,i} \right) \right] $
-  where $r_{t,i}(\theta_i) = \frac{\pi_{\theta_i}(a_{t,i}|o_{t,i})}{\pi_{\theta_i}^{\text{old}}(a_{t,i}|o_{t,i})}$ and $\hat{A}_{t,i}$ is computed via GAE($\lambda = 0.95$).
+
+  where $ r_{t,i}(\theta_i) = \frac{\pi_{\theta_i}(a_{t,i}|o_{t,i})}{\pi_{\theta_i}^{\text{old}}(a_{t,i}|o_{t,i})} $ and $ \hat{A}_{t,i} $ is computed via GAE($ \lambda = 0.95 $).
 
 ---
 
 ## 3.2 Model 2: MAPPO (Multi-Agent PPO with Centralized Critic)
 
-MAPPO replaces individual local critics with a centralized critic $V_{\Phi}(s_t)$ that consumes the global state $s_t$:
+MAPPO replaces individual local critics with a centralized critic $ V_{\Phi}(s_t) $ that consumes the global state $ s_t $:
 
-- **Joint Policy:** Decoupled actors $\pi_{\theta_i}(a_i|o_i)$ for decentralized execution.
-- **Centralized Advantage:** $\hat{A}_t^{\text{central}} = \sum_{l=0}^{\infty} (\gamma \lambda)^l \delta_{t+l}^{V}$, where $\delta_t^V = r_t + \gamma V_{\Phi}(s_{t+1}) - V_{\Phi}(s_t)$.
+- **Joint Policy:** Decoupled actors $ \pi_{\theta_i}(a_i|o_i) $ for decentralized execution.
+- **Centralized Advantage:** $ \hat{A}_t^{\text{central}} = \sum_{l=0}^{\infty} (\gamma \lambda)^l \delta_{t+l}^{V} $, where $ \delta_t^V = r_t + \gamma V_{\Phi}(s_{t+1}) - V_{\Phi}(s_t) $.
 
 ---
 
@@ -29,7 +31,7 @@ MAPPO_CAR injects action-mask affordance delta feedback into agent rewards:
 
 $ r_{t,i}^{\text{CAR}} = r_{t,i} + \beta_{\text{CAR}} \sum_{j \neq i} \Delta \text{Mask}_j(s_t, a_{t,i}) $
 
-where $\Delta \text{Mask}_j(s_t, a_{t,i}) = |\text{Mask}_j(s_{t+1})| - |\text{Mask}_j(s_t)|$ measures how agent $i$'s action expanded available action affordances for teammate $j$.
+where $ \Delta \text{Mask}_j(s_t, a_{t,i}) = |\text{Mask}_j(s_{t+1})| - |\text{Mask}_j(s_t)| $ measures how agent $ i $'s action expanded available action affordances for teammate $ j $.
 
 ---
 
@@ -39,7 +41,7 @@ MAPPO_CIR routes advantage estimation based on causal contribution rather than u
 
 $ \hat{A}_{t,i}^{\text{CIR}} = \hat{A}_t^{\text{central}} \cdot \psi_i(s_t, \mathbf{a}_t) $
 
-where $\psi_i(s_t, \mathbf{a}_t) = \frac{\exp(\| \nabla_{a_i} Q(s_t, \mathbf{a}_t) \|)}{\sum_{j} \exp(\| \nabla_{a_j} Q(s_t, \mathbf{a}_t) \|)}$ measures the local Jacobian sensitivity of the joint state-value with respect to agent $i$'s action vector.
+where $ \psi_i(s_t, \mathbf{a}_t) = \frac{\exp(\| \nabla_{a_i} Q(s_t, \mathbf{a}_t) \|)}{\sum_{j} \exp(\| \nabla_{a_j} Q(s_t, \mathbf{a}_t) \|)} $ measures the local Jacobian sensitivity of the joint state-value with respect to agent $ i $'s action vector.
 
 ---
 
@@ -48,18 +50,24 @@ where $\psi_i(s_t, \mathbf{a}_t) = \frac{\exp(\| \nabla_{a_i} Q(s_t, \mathbf{a}_
 COMM equips agents with a differentiable attention-based communication channel (TarMAC):
 
 1. **Key/Query/Message Projection:**
+
    $ q_i = W_q o_i, \quad k_i = W_k o_i, \quad m_i = W_m o_i \in \mathbb{R}^{32} $
+
 2. **Attention Weights:**
+
    $ \alpha_{ij} = \frac{\exp(q_i^\top k_j / \sqrt{d_k})}{\sum_{l \neq i} \exp(q_i^\top k_l / \sqrt{d_k})} $
+
 3. **Attended Aggregated Message:**
+
    $ \bar{m}_i = \sum_{j \neq i} \alpha_{ij} m_j \in \mathbb{R}^{32} $
-4. **Policy Input:** Policy $\pi_{\theta}(a_i | [o_i, \bar{m}_i]) \in \mathbb{R}^{85}$.
+
+4. **Policy Input:** Policy $ \pi_{\theta}(a_i | [o_i, \bar{m}_i]) \in \mathbb{R}^{85} $.
 
 ---
 
 ## 3.6 Model 6: COMM + CIR
 
-Combines TarMAC attention message passing ($\bar{m}_i$) with Causal Advantage Routing ($\hat{A}_{t,i}^{\text{CIR}}$).
+Combines TarMAC attention message passing ($ \bar{m}_i $) with Causal Advantage Routing ($ \hat{A}_{t,i}^{\text{CIR}} $).
 
 ---
 
@@ -71,29 +79,29 @@ Integrates TarMAC communication, CIR advantage routing, and CAR affordance credi
 
 ## 3.8 Model 8: QMIX (Monotonic Value Decomposition)
 
-QMIX factorizes joint action-value $Q_{\text{tot}}(s, \mathbf{a})$ as a monotonic combination of individual agent utilities $Q_i(o_i, a_i)$:
+QMIX factorizes joint action-value $ Q_{\text{tot}}(s, \mathbf{a}) $ as a monotonic combination of individual agent utilities $ Q_i(o_i, a_i) $:
 
 $ Q_{\text{tot}}(s, \mathbf{a}) = f_{\text{mixing}}(Q_1(o_1, a_1), \dots, Q_N(o_N, a_N) ; s) $
 
 ### Monotonicity Constraint & Factorization Breakdown
-To enforce $\arg\max_{\mathbf{a}} Q_{\text{tot}}(s, \mathbf{a}) = (\arg\max_{a_1} Q_1, \dots, \arg\max_{a_N} Q_N)$, hypernetworks produce positive weights $W_1 = |g_1(s)|, W_2 = |g_2(s)|$:
+To enforce $ \arg\max_{\mathbf{a}} Q_{\text{tot}}(s, \mathbf{a}) = (\arg\max_{a_1} Q_1, \dots, \arg\max_{a_N} Q_N) $, hypernetworks produce positive weights $ W_1 = |g_1(s)|, W_2 = |g_2(s)| $:
 
 $ \frac{\partial Q_{\text{tot}}}{\partial Q_i} \ge 0 \quad \forall i \in \mathcal{N} $
 
-**Failure Mode in HEIST:** Because HEIST features sequential causal dependencies (Scout/Hacker actions have 0 immediate return for themselves), forcing $\frac{\partial Q_{\text{tot}}}{\partial Q_i} \ge 0$ prevents QMIX from learning enabling actions that reduce an individual agent's immediate return to unlock massive joint returns.
+**Failure Mode in HEIST:** Because HEIST features sequential causal dependencies (Scout/Hacker actions have 0 immediate return for themselves), forcing $ \frac{\partial Q_{\text{tot}}}{\partial Q_i} \ge 0 $ prevents QMIX from learning enabling actions that reduce an individual agent's immediate return to unlock massive joint returns.
 
 ---
 
 ## 3.9 Model 9: COMA (Counterfactual Multi-Agent Policy Gradients)
 
-COMA uses a centralized critic $Q(s, \mathbf{a})$ and computes a counterfactual advantage baseline for agent $i$:
+COMA uses a centralized critic $ Q(s, \mathbf{a}) $ and computes a counterfactual advantage baseline for agent $ i $:
 
 $ A_i(s, \mathbf{a}) = Q(s, \mathbf{a}) - \sum_{a_i' \in \mathcal{A}_i} \pi_i(a_i' | o_i) Q(s, (a_i', \mathbf{a}_{-i})) $
 
-This marginalizes out agent $i$'s action while keeping all counterfactual actions $\mathbf{a}_{-i}$ of teammates fixed.
+This marginalizes out agent $ i $'s action while keeping all counterfactual actions $ \mathbf{a}_{-i} $ of teammates fixed.
 
 ---
 
 ## 3.10 Model 10: COMA + CIR
 
-Combines counterfactual baseline credit assignment with Causal Advantage Routing ($\hat{A}_i^{\text{CIR}}$).
+Combines counterfactual baseline credit assignment with Causal Advantage Routing ($ \hat{A}_i^{\text{CIR}} $).

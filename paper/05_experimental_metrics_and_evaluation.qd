@@ -4,33 +4,40 @@
 
 Rather than evaluating policy performance using a single scalar win rate, HEIST evaluates policies along the sequential causal chain:
 
-1. **Scout Tag Rate ($P_{\text{tag}}$):** $\mathbb{E} \left[ \mathbb{I}(\text{len}(\text{tagged\_pois}) > 0) \right]$
-2. **Terminal Disable Rate ($P_{\text{term}}$):** $\mathbb{E} \left[ \mathbb{I}(\text{terminal\_disabled}) \right]$
-3. **Loot Acquisition Rate ($P_{\text{loot}}$):** $\mathbb{E} \left[ \mathbb{I}(\text{loot\_acquired}) \right]$
-4. **Extraction Call Rate ($P_{\text{ext}}$):** $\mathbb{E} \left[ \mathbb{I}(\text{extraction\_triggered}) \right]$
-5. **Team Win Rate ($P_{\text{win}}$):** $\mathbb{E} \left[ \mathbb{I}(\text{win}) \right]$
+1. **Scout Tag Rate ($ P_{\text{tag}} $):** $ \mathbb{E} \left[ \mathbb{I}(\text{len}(\text{tagged\_pois}) > 0) \right] $
+2. **Terminal Disable Rate ($ P_{\text{term}} $):** $ \mathbb{E} \left[ \mathbb{I}(\text{terminal\_disabled}) \right] $
+3. **Loot Acquisition Rate ($ P_{\text{loot}} $):** $ \mathbb{E} \left[ \mathbb{I}(\text{loot\_acquired}) \right] $
+4. **Extraction Call Rate ($ P_{\text{ext}} $):** $ \mathbb{E} \left[ \mathbb{I}(\text{extraction\_triggered}) \right] $
+5. **Team Win Rate ($ P_{\text{win}} $):** $ \mathbb{E} \left[ \mathbb{I}(\text{win}) \right] $
 
-A model suffers from *Causal Bottlenecking* at stage $m$ if $P_m > 0$ but $P_{m+1} \approx 0$.
+A model suffers from *Causal Bottlenecking* at stage $ m $ if $ P_m > 0 $ but $ P_{m+1} \approx 0 $.
 
 ## 5.2 Credit Attribution Index (CAI)
 
-To quantify how effectively an algorithm attributes credit to upstream enablers versus downstream extractors, we define the **Credit Attribution Index (CAI)** for agent $i$:
+To quantify how effectively an algorithm attributes credit to upstream enablers versus downstream extractors, we define the **Credit Attribution Index (CAI)** for agent $ i $:
 
 $ \text{CAI}_i = \text{Corr}\left( \sum_{t=1}^T r_{t,i}^{\text{shaped}}, \quad Y_{\text{terminal}} \right) $
 
-where $Y_{\text{terminal}} \in \{+15, -10\}$ is the episode's shared outcome. High positive $\text{CAI}_i$ for Scout and Hacker indicates that enabling contributions are correctly correlated with team success.
+where $ Y_{\text{terminal}} \in \{+15, -10\} $ is the episode's shared outcome. High positive $ \text{CAI}_i $ for Scout and Hacker indicates that enabling contributions are correctly correlated with team success.
 
 ## 5.3 Loss Mode Cause Attribution
 
-Episode failures are classified into three disjoint loss modes:
+Episode failures are classified into three disjoint loss modes using multiline TeX case math:
 
-$ \text{Loss Cause} = \begin{cases} \text{alarm\_max} & \text{if } A_t \ge 100.0 \\ \text{guard\_catch} & \text{if } \exists i, j: \text{Manhattan}(p_i, g_j) \le d_{\text{catch}} \\ \text{timeout} & \text{if } t \ge T_{\text{max}} \end{cases} $
+$$$
+\text{Loss Cause} =
+\begin{cases}
+    \text{alarm\_max} & \text{if } A_t \ge 100.0 \\
+    \text{guard\_catch} & \text{if } \exists i, j: \text{Manhattan}(p_i, g_j) \le d_{\text{catch}} \\
+    \text{timeout} & \text{if } t \ge T_{\text{max}}
+\end{cases}
+$$$
 
 ## 5.4 Hardware Protection Kill Switch (`tools/thermal_guard.py`)
 
 To prevent thermal degradation during long multi-stage campaign runs across 10 models, HEIST executes live thermal monitoring at every iteration:
 
-- **CPU Threshold:** $T_{\text{CPU}} < 85.0^\circ\text{C}$ (derived from Intel/AMD TjMax safety limits).
-- **GPU Threshold:** $T_{\text{GPU}} < 83.0^\circ\text{C}$ (derived from NVIDIA GPU boost thermal throttling limits).
+- **CPU Threshold:** $ T_{\text{CPU}} < 85.0^\circ\text{C} $ (derived from Intel/AMD TjMax safety limits).
+- **GPU Threshold:** $ T_{\text{GPU}} < 83.0^\circ\text{C} $ (derived from NVIDIA GPU boost thermal throttling limits).
 
 If temperature exceeds limits, `thermal_guard.py` triggers an emergency `pkill` to gracefully stop python processes and protect hardware integrity.

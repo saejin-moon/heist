@@ -4,21 +4,23 @@ The HEIST environment models a high-security facility infiltration requiring coo
 
 ## 2.1 Role Specialization & Action Space
 
-The agent set $\mathcal{N} = \{\text{scout}, \text{hacker}, \text{muscle}, \text{extractor}\}$ shares a discrete action space $|\mathcal{A}_i| = 6$:
+The agent set $ \mathcal{N} = \{\text{scout}, \text{hacker}, \text{muscle}, \text{extractor}\} $ shares a discrete action space $ |\mathcal{A}_i| = 6 $:
 
 $ \mathcal{A}_i = \{0: \text{UP}, 1: \text{DOWN}, 2: \text{LEFT}, 3: \text{RIGHT}, 4: \text{WAIT}, 5: \text{INTERACT}\} $
 
-The semantics of Action 5 ($\text{INTERACT}$) depend strictly on the role identity $i$:
-- $\text{Scout} \implies \text{tag\_tile}$: Broadcasts a point of interest (terminal, camera, door) to allies and reveals a $17 \times 17$ vision cone ($\text{SCOUT\_VISION\_RADIUS} = 8$).
-- $\text{Hacker} \implies \text{hack\_terminal}$: Executes multi-turn hacking on adjacent security terminals ($\text{HACK\_TURNS} = 3$) or bypasses locked doors.
-- $\text{Muscle} \implies \text{neutralize}$: Temporarily knocks out a nearby guard within Manhattan distance 1 ($\text{NEUTRALIZE\_TURNS} = 8$).
-- $\text{Extractor} \implies \text{call\_extract}$: Secures loot at the vault and activates the extraction countdown ($\text{EXTRACTION\_COUNTDOWN} = 60$).
+The semantics of Action 5 ($ \text{INTERACT} $) depend strictly on the role identity $ i $:
+- $ \text{Scout} \implies \text{tag\_tile} $: Broadcasts a point of interest (terminal, camera, door) to allies and reveals a $ 17 \times 17 $ vision cone ($ \text{SCOUT\_VISION\_RADIUS} = 8 $).
+- $ \text{Hacker} \implies \text{hack\_terminal} $: Executes multi-turn hacking on adjacent security terminals ($ \text{HACK\_TURNS} = 3 $) or bypasses locked doors.
+- $ \text{Muscle} \implies \text{neutralize} $: Temporarily knocks out a nearby guard within Manhattan distance 1 ($ \text{NEUTRALIZE\_TURNS} = 8 $).
+- $ \text{Extractor} \implies \text{call\_extract} $: Secures loot at the vault and activates the extraction countdown ($ \text{EXTRACTION\_COUNTDOWN} = 60 $).
 
 ## 2.2 Global State & Observation Encoding
 
-- **Local Observation Tensor ($o_i \in \mathbb{R}^{53}$):** Each non-scout agent receives a $7 \times 7$ local grid view window ($\text{OBSERVATION\_SIZE} = (7, 7)$, $\text{AGENT\_VISION\_RADIUS} = 3$) centered on its position, flattened to $49$ scalar cell values, concatenated with a $4$-element one-hot role vector $e_{\text{role}_i} \in \{0, 1\}^4$:
+- **Local Observation Tensor ($ o_i \in \mathbb{R}^{53} $):** Each non-scout agent receives a $ 7 \times 7 $ local grid view window ($ \text{OBSERVATION\_SIZE} = (7, 7) $, $ \text{AGENT\_VISION\_RADIUS} = 3 $) centered on its position, flattened to $ 49 $ scalar cell values, concatenated with a $ 4 $-element one-hot role vector $ e_{\text{role}_i} \in \{0, 1\}^4 $:
+
   $ o_i = \text{Concat}(\text{Flatten}(\text{Crop}_{7 \times 7}(\text{Grid})), e_{\text{role}_i}) \in \mathbb{R}^{53} $
-- **Centralized State Tensor ($s \in \mathbb{R}^{D}$):** Centralized critics (MAPPO, QMIX) consume the unmasked global grid layout, full agent position coordinates $(r_i, c_i)_{i=1}^4$, guard trajectory states, and the global alarm meter $A_t \in [0, 100]$.
+
+- **Centralized State Tensor ($ s \in \mathbb{R}^{D} $):** Centralized critics (MAPPO, QMIX) consume the unmasked global grid layout, full agent position coordinates $ (r_i, c_i)_{i=1}^4 $, guard trajectory states, and the global alarm meter $ A_t \in [0, 100] $.
 
 ## 2.3 Comprehensive Parameter Specification Table
 
@@ -26,32 +28,32 @@ Every hyperparameter and environment constant is strictly defined as follows:
 
 | Parameter Constant | Symbol | Value | Physical & Game-Theoretic Definition |
 | :--- | :--- | :---: | :--- |
-| $\text{MAP\_SIZE}$ | $(W, H)$ | $(50, 50)$ | Maximum grid dimensions of benchmark facility |
-| $\text{OBSERVATION\_SIZE}$ | $(w_{\text{obs}}, h_{\text{obs}})$ | $(7, 7)$ | Agent local observation view window |
-| $\text{SCOUT\_VISION\_RADIUS}$ | $R_{\text{scout}}$ | $8$ | Fog-of-war reveal radius for Scout ($17 \times 17$ tile window) |
-| $\text{AGENT\_VISION\_RADIUS}$ | $R_{\text{agent}}$ | $3$ | Fog-of-war reveal radius for non-scout agents ($7 \times 7$ window) |
-| $\text{HACK\_TURNS}$ | $K_{\text{hack}}$ | $3$ | Consecutive turns required at terminal to disable security |
-| $\text{EXTRACTION\_COUNTDOWN}$ | $K_{\text{extract}}$ | $60$ | Step budget remaining after extraction is called |
-| $\text{REWARD\_WIN}$ | $R_{\text{win}}$ | $+15.0$ | Shared terminal return awarded upon full team extraction |
-| $\text{REWARD\_LOSE}$ | $R_{\text{lose}}$ | $-10.0$ | Shared terminal return awarded on caught/alarm/timeout loss |
-| $\text{REWARD\_TASK}$ | $R_{\text{task}}$ | $+2.0$ | Immediate reward for sub-goal completion (hack, loot) |
-| $\text{REWARD\_TAG}$ | $R_{\text{tag}}$ | $+1.0$ | Scout shaping reward for discovering security POIs |
-| $\text{REWARD\_TIME\_BLEED}$ | $R_{\text{step}}$ | $-0.01$ | Step penalty enforcing minimum-time path execution |
-| $\text{CONVERGE\_BONUS}$ | $C_{\text{bonus}}$ | $+1.0$ | Potential-based shaping coefficient for extraction exit pathing |
-| $\text{WIN\_CONVERGE\_RADIUS}$ | $R_{\text{win\_zone}}$ | $3$ | Manhattan distance to extract tile required for team win ($7 \times 7$ area) |
-| $\text{ALARM\_MAX}$ | $A_{\text{max}}$ | $100.0$ | Global alarm threshold triggering immediate episode termination |
-| $\text{ALARM\_CAMERA}$ | $\delta A_{\text{cam}}$ | $0.20$ | Alarm rate per step per agent standing in camera vision cone |
-| $\text{ALARM\_HACK\_TURN}$ | $\delta A_{\text{hack}}$ | $2.00$ | Alarm cost per turn of active terminal hacking |
-| $\text{ALARM\_BYPASS}$ | $\delta A_{\text{door}}$ | $6.00$ | Alarm penalty for forced door bypass |
-| $\text{ALARM\_NEUTRALIZE}$ | $\delta A_{\text{neut}}$ | $10.00$ | Alarm penalty when Muscle knocks out a security guard |
-| $\text{ALARM\_GUARD\_SPOT}$ | $\delta A_{\text{spot}}$ | $25.00$ | Alarm penalty when guard spots an agent within catch distance |
-| $\text{ALARM\_TIMEOUT}$ | $\delta A_{\text{timeout}}$ | $25.00$ | Alarm surge when extraction countdown expires |
-| $\text{CAMERA\_RANGE}$ | $L_{\text{cam}}$ | $12$ | Maximum line-of-sight distance for security cameras |
-| $\text{CATCH\_DISTANCE}$ | $d_{\text{catch}}$ | $1$ | Manhattan distance triggering guard catch termination |
-| $\text{CONVERGE\_ALARM}$ | $A_{\text{hunt}}$ | $50.0$ | Alarm threshold above which guards switch to active Hunt mode |
-| $\text{NEUTRALIZE\_TURNS}$ | $K_{\text{neut}}$ | $8$ | Turns a guard remains incapacitated |
-| $\text{ALARM\_NEUTRALIZE\_DELAY}$ | $K_{\text{delay}}$ | $15$ | Delay turns before security command notices a missing guard |
-| $\text{COMM\_MESSAGE\_DIM}$ | $d_{\text{msg}}$ | $32$ | Vector dimension of TarMAC communication messages |
+| $ \text{MAP\_SIZE} $ | $ (W, H) $ | $ (50, 50) $ | Maximum grid dimensions of benchmark facility |
+| $ \text{OBSERVATION\_SIZE} $ | $ (w_{\text{obs}}, h_{\text{obs}}) $ | $ (7, 7) $ | Agent local observation view window |
+| $ \text{SCOUT\_VISION\_RADIUS} $ | $ R_{\text{scout}} $ | $ 8 $ | Fog-of-war reveal radius for Scout ($ 17 \times 17 $ tile window) |
+| $ \text{AGENT\_VISION\_RADIUS} $ | $ R_{\text{agent}} $ | $ 3 $ | Fog-of-war reveal radius for non-scout agents ($ 7 \times 7 $ window) |
+| $ \text{HACK\_TURNS} $ | $ K_{\text{hack}} $ | $ 3 $ | Consecutive turns required at terminal to disable security |
+| $ \text{EXTRACTION\_COUNTDOWN} $ | $ K_{\text{extract}} $ | $ 60 $ | Step budget remaining after extraction is called |
+| $ \text{REWARD\_WIN} $ | $ R_{\text{win}} $ | $ +15.0 $ | Shared terminal return awarded upon full team extraction |
+| $ \text{REWARD\_LOSE} $ | $ R_{\text{lose}} $ | $ -10.0 $ | Shared terminal return awarded on caught/alarm/timeout loss |
+| $ \text{REWARD\_TASK} $ | $ R_{\text{task}} $ | $ +2.0 $ | Immediate reward for sub-goal completion (hack, loot) |
+| $ \text{REWARD\_TAG} $ | $ R_{\text{tag}} $ | $ +1.0 $ | Scout shaping reward for discovering security POIs |
+| $ \text{REWARD\_TIME\_BLEED} $ | $ R_{\text{step}} $ | $ -0.01 $ | Step penalty enforcing minimum-time path execution |
+| $ \text{CONVERGE\_BONUS} $ | $ C_{\text{bonus}} $ | $ +1.0 $ | Potential-based shaping coefficient for extraction exit pathing |
+| $ \text{WIN\_CONVERGE\_RADIUS} $ | $ R_{\text{win\_zone}} $ | $ 3 $ | Manhattan distance to extract tile required for team win ($ 7 \times 7 $ area) |
+| $ \text{ALARM\_MAX} $ | $ A_{\text{max}} $ | $ 100.0 $ | Global alarm threshold triggering immediate episode termination |
+| $ \text{ALARM\_CAMERA} $ | $ \delta A_{\text{cam}} $ | $ 0.20 $ | Alarm rate per step per agent standing in camera vision cone |
+| $ \text{ALARM\_HACK\_TURN} $ | $ \delta A_{\text{hack}} $ | $ 2.00 $ | Alarm cost per turn of active terminal hacking |
+| $ \text{ALARM\_BYPASS} $ | $ \delta A_{\text{door}} $ | $ 6.00 $ | Alarm penalty for forced door bypass |
+| $ \text{ALARM\_NEUTRALIZE} $ | $ \delta A_{\text{neut}} $ | $ 10.00 $ | Alarm penalty when Muscle knocks out a security guard |
+| $ \text{ALARM\_GUARD\_SPOT} $ | $ \delta A_{\text{spot}} $ | $ 25.00 $ | Alarm penalty when guard spots an agent within catch distance |
+| $ \text{ALARM\_TIMEOUT} $ | $ \delta A_{\text{timeout}} $ | $ 25.00 $ | Alarm surge when extraction countdown expires |
+| $ \text{CAMERA\_RANGE} $ | $ L_{\text{cam}} $ | $ 12 $ | Maximum line-of-sight distance for security cameras |
+| $ \text{CATCH\_DISTANCE} $ | $ d_{\text{catch}} $ | $ 1 $ | Manhattan distance triggering guard catch termination |
+| $ \text{CONVERGE\_ALARM} $ | $ A_{\text{hunt}} $ | $ 50.0 $ | Alarm threshold above which guards switch to active Hunt mode |
+| $ \text{NEUTRALIZE\_TURNS} $ | $ K_{\text{neut}} $ | $ 8 $ | Turns a guard remains incapacitated |
+| $ \text{ALARM\_NEUTRALIZE\_DELAY} $ | $ K_{\text{delay}} $ | $ 15 $ | Delay turns before security command notices a missing guard |
+| $ \text{COMM\_MESSAGE\_DIM} $ | $ d_{\text{msg}} $ | $ 32 $ | Vector dimension of TarMAC communication messages |
 
 ## 2.4 Potential-Based Reward Shaping (PBRS)
 
@@ -61,4 +63,4 @@ $ \Phi(s) = - \text{Manhattan}(\text{pos}_i, \text{pos}_{\text{extract}}) $
 
 $ F(s, s') = \gamma \Phi(s') - \Phi(s) = C_{\text{bonus}} \cdot (d_{\text{prev}} - d_{\text{cur}}) $
 
-Because $F(s, s')$ is a difference of potential functions $\Phi$, policy invariance is mathematically guaranteed by Ng et al. (1999).
+Because $ F(s, s') $ is a difference of potential functions $ \Phi $, policy invariance is mathematically guaranteed by Ng et al. (1999).
