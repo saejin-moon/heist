@@ -26,25 +26,23 @@ $ \rho(T_k, A_k) = \rho(T_0, A_0) \quad \forall k \in \{0, 1, 2, 3, 4\} $
 
 where $ A_0 = 11 \times 11 = 121 \text{ tiles} $ is the Stage 0 baseline facility area.
 
-## 4.3 Parameterizable Step Scaling Law Formula
+## 4.3 Step Scaling Law Formula
 
-Equating spatial sample densities $ \frac{T_k}{A_k} = \frac{T_0}{121} $ yields the exact, parameterizable step scaling law used by `scripts/train.zsh`:
+Equating spatial sample densities $ \frac{T_k}{A_k} = \frac{T_0}{121} $ yields the exact step scaling law used by `scripts/train.zsh`:
 
-$ T_k(T_0) = T_0 \cdot \frac{W_k \cdot H_k}{121} $
+$ T_k = T_0 \cdot \frac{W_k \cdot H_k}{121} $
 
-where $ T_0 $ is the user-configured baseline step budget for Stage 0 (passed via `--steps T0`).
+### Optimal Multi-Stage Step Allocation ($ T_0 = 1,000,000 $)
 
-### Concrete Multi-Stage Step Budgets Across Campaign Regimes
+Setting the Stage 0 baseline to the optimal convergence budget $ T_0 = 1,000,000 \text{ steps} $ ($ \rho^* \approx 8,264 \text{ steps/tile} $), the exact multi-stage step allocations are:
 
-The total step budget across all 5 stages scales as $ \sum_{k=0}^4 T_k = T_0 \times \left( \sum_{k=0}^4 \frac{A_k}{121} \right) = T_0 \times 39.338 $. The table below details exact step allocations across standard campaign execution regimes:
+| Curriculum Stage $ k $ | Facility Area $ A_k $ | Area Scale Factor $ \frac{A_k}{121} $ | Optimal Step Budget ($ T_k $) | Cumulative Campaign Steps |
+| :---: | :---: | :---: | :---: | :---: |
+| **Stage 0** ($ 11 \times 11 $) | 121 | $ 1.000\times $ | **1,000,000 steps** (1.00M) | 1,000,000 steps |
+| **Stage 1** ($ 17 \times 17 $) | 289 | $ 2.388\times $ | **2,388,429 steps** (2.39M) | 3,388,429 steps |
+| **Stage 2** ($ 25 \times 25 $) | 625 | $ 5.165\times $ | **5,165,289 steps** (5.17M) | 8,553,718 steps |
+| **Stage 3** ($ 35 \times 35 $) | 1,225 | $ 10.124\times $ | **10,123,966 steps** (10.12M) | 18,677,684 steps |
+| **Stage 4** ($ 50 \times 50 $) | 2,500 | $ 20.661\times $ | **20,661,157 steps** (20.66M) | 39,338,841 steps |
+| **Total Campaign** | — | **$ 39.338\times $** | **39,338,841 steps** (39.34M) | — |
 
-| Curriculum Stage $ k $ | Facility Area $ A_k $ | Area Scale Factor $ \frac{A_k}{121} $ | Fast Test ($ T_0=10.2\text{k} $) | 4-Hour Budget ($ T_0=75\text{k} $) | Standard ($ T_0=250\text{k} $) | Extended ($ T_0=1.0\text{M} $) |
-| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Stage 0** ($ 11 \times 11 $) | 121 | $ 1.000\times $ | 10,240 steps | 75,000 steps | 250,000 steps | 1,000,000 steps |
-| **Stage 1** ($ 17 \times 17 $) | 289 | $ 2.388\times $ | 24,457 steps | 179,132 steps | 597,107 steps | 2,388,429 steps |
-| **Stage 2** ($ 25 \times 25 $) | 625 | $ 5.165\times $ | 52,892 steps | 387,396 steps | 1,291,322 steps | 5,165,289 steps |
-| **Stage 3** ($ 35 \times 35 $) | 1,225 | $ 10.124\times $ | 103,669 steps | 759,297 steps | 2,530,991 steps | 10,123,966 steps |
-| **Stage 4** ($ 50 \times 50 $) | 2,500 | $ 20.661\times $ | 211,570 steps | 1,549,586 steps | 5,165,289 steps | 20,661,157 steps |
-| **Total Campaign** | — | **$ 39.338\times $** | **402,828 steps** | **2,950,411 steps** | **9,834,709 steps** | **39,338,841 steps** |
-
-This spatial scaling law mathematically guarantees that every curriculum stage maintains the exact same spatial sample coverage $ \rho = \frac{T_0}{121} $ steps/tile, providing a principled foundation for multi-stage MARL evaluation.
+This spatial scaling law mathematically guarantees that every curriculum stage maintains the exact same spatial sample coverage $ \rho \approx 8,264 \text{ steps / tile} $, providing a principled foundation for multi-stage MARL evaluation.
