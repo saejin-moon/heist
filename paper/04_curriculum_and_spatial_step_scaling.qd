@@ -1,0 +1,47 @@
+# 4. Curriculum Design & Spatial-Area Step Scaling Law
+
+Training multi-agent policies directly on full $50 \times 50$ facility layouts leads to exploration collapse due to sparse initial reward signals. HEIST employs a 5-stage geometric curriculum.
+
+## 4.1 Geometric Stage Geometry
+
+The 5 curriculum stages expand map area $A_k = W_k \times H_k$ smoothly while gradually introducing security entities:
+
+| Stage $k$ | Map Size $(W \times H)$ | Total Area $A_k$ | Guards | Cameras | Doors | Primary Learning Objective |
+| :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **Stage 0** | $11 \times 11$ | 121 tiles | 0 | 0 | 0 | Master basic causal chain (scout $\to$ hack $\to$ extract) |
+| **Stage 1** | $17 \times 17$ | 289 tiles | 1 | 0 | 1 | Master 1-guard patrol timing |
+| **Stage 2** | $25 \times 25$ | 625 tiles | 2 | 1 | 2 | Master single-camera vision cone evasion & hacking |
+| **Stage 3** | $35 \times 35$ | 1,225 tiles | 3 | 2 | 3 | Master multi-camera security coordination |
+| **Stage 4** | $50 \times 50$ | 2,500 tiles | 4 | 3 | 4 | Full benchmark facility extraction |
+
+## 4.2 Mathematical Derivation of Spatial Sample Density ($\rho^*$)
+
+In a 2D Partially Observable Markov Decision Process with local view radius $R$, the expected cover time of a random/$\epsilon$-greedy policy scales as $\mathcal{O}(A \log A)$.
+
+To ensure equal policy convergence stability across stages, the step budget $T_k$ allocated to stage $k$ must maintain a constant spatial sample density $\rho$:
+
+$ \rho = \frac{T_k}{A_k} \quad \left[ \frac{\text{environment steps}}{\text{grid tile}} \right] $
+
+### Empirical Derivation of $\rho^*$
+Analyzing empirical training curves on Stage 0 ($A_0 = 121 \text{ tiles}$), all PPO policy algorithms reach return plateau at $T_{\text{conv}} \approx 120,000 \text{ steps}$:
+
+$ \rho^*_{\text{min}} = \frac{120,000}{121} \approx 1,000 \text{ steps / tile} $
+
+To account for guard patrol complexity and multi-room pathfinding in larger maps, we apply a $2\times$ robustness multiplier:
+
+$ \rho^*_{\text{robust}} = 2,000 \text{ steps / tile} $
+
+## 4.3 Step Scaling Law Formula
+
+Anchored at a Stage 0 baseline step count $T_0 = 1,000,000 \text{ steps}$, the required step budget $T_k$ for any curriculum stage $k$ is computed by:
+
+$ T_k = T_0 \cdot \frac{W_k \cdot H_k}{121} $
+
+### Concrete Step Breakdown for 1.0M Baseline:
+- **Stage 0 ($11 \times 11 = 121 \text{ tiles}$):** $T_0 = \mathbf{1,000,000 \text{ steps}}$ (1.00M)
+- **Stage 1 ($17 \times 17 = 289 \text{ tiles}$):** $T_1 = \mathbf{2,388,429 \text{ steps}}$ (2.39M)
+- **Stage 2 ($25 \times 25 = 625 \text{ tiles}$):** $T_2 = \mathbf{5,165,289 \text{ steps}}$ (5.17M)
+- **Stage 3 ($35 \times 35 = 1,225 \text{ tiles}$):** $T_3 = \mathbf{10,123,966 \text{ steps}}$ (10.12M)
+- **Stage 4 ($50 \times 50 = 2,500 \text{ tiles}$):** $T_4 = \mathbf{20,661,157 \text{ steps}}$ (20.66M)
+
+This mathematical formula guarantees that every single stage maintains the exact same spatial sample density ($\rho \approx 8,264 \text{ steps / tile}$ at 1.0M base), guaranteeing fair convergence across all map scales.

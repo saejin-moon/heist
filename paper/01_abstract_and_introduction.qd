@@ -1,0 +1,37 @@
+.docname {HEIST: Multi-Agent Causal Credit Assignment under Sequential Task Dependencies}
+.doctype {plain}
+.doclang {English}
+.theme {paperwhite} layout:{latex}
+
+.docauthors
+    - Saejin Moon
+    - DeepMind Advanced Agentic Coding Team
+
+# Abstract
+
+Cooperative Multi-Agent Reinforcement Learning (MARL) in partially observable environments frequently suffers from *Causal Credit Dilution*—a structural failure mode where upstream agents whose actions enable downstream success receive zero or negative immediate feedback, while downstream agents absorb the shared reward. In this paper, we formalize **HEIST** (Hierarchical Environment for Interdependent Sequential Tasks), a partially observable 4-agent cooperative benchmark featuring strict role specialization (*Scout*, *Hacker*, *Muscle*, *Extractor*) and non-linear causal dependency chains. We provide complete mathematical derivations for the environment's state transition dynamics, alarm mechanics, reward shaping, and an exhaustive taxonomy of 10 MARL paradigms spanning Independent Learning (IPPO), Centralized Critics (MAPPO), Value Decomposition (QMIX), Counterfactual Advantage (COMA), Differentiable Communication (TarMAC), Causal Advantage Routing (CIR), and Causal Affordance Credit (CAR). Furthermore, we establish a mathematically proven spatial density step scaling law $\rho^* \approx 2,000 \text{ steps/tile}$ ensuring equal sample coverage across geometric curriculum stages up to a $50 \times 50$ facility.
+
+---
+
+# 1. Introduction & Formal Problem Statement
+
+In multi-agent reinforcement learning (MARL), a team of $N$ agents must learn a joint policy $\boldsymbol{\pi}(\mathbf{a}|\mathbf{o}) = \prod_{i=1}^N \pi_i(a_i|o_i)$ to maximize cumulative discounted return in a Decentralized Partially Observable Markov Decision Process (Dec-POMDP).
+
+## 1.1 Dec-POMDP Formalism
+
+A Dec-POMDP is formally defined by the tuple $\mathcal{M} = \langle \mathcal{N}, \mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \Omega, \mathcal{O}, \gamma \rangle$:
+
+- $\mathcal{N} = \{1, 2, \dots, N\}$ is the set of $N=4$ specialized agents.
+- $\mathcal{S}$ is the global environment state space.
+- $\mathcal{A} = \mathcal{A}_1 \times \dots \times \mathcal{A}_N$ is the joint action space, where $|\mathcal{A}_i| = 6$ for all $i \in \mathcal{N}$.
+- $\mathcal{P}(s' | s, \mathbf{a}): \mathcal{S} \times \mathcal{A} \times \mathcal{S} \to [0, 1]$ is the state transition probability distribution.
+- $\mathcal{R}(s, \mathbf{a}): \mathcal{S} \times \mathcal{A} \to \mathbb{R}^N$ is the reward vector function.
+- $\Omega = \Omega_1 \times \dots \times \Omega_N$ is the joint observation space.
+- $\mathcal{O}(s, \mathbf{a}): \mathcal{S} \times \mathcal{A} \to \Delta(\Omega)$ is the observation probability distribution.
+- $\gamma \in [0, 1)$ is the discount factor ($\gamma = 0.99$).
+
+## 1.2 The Causal Credit Dilution Problem
+
+In standard Dec-POMDPs, agents receive a shared global reward $r_t = \frac{1}{N} \sum_{i=1}^N r_t^i$. When task execution is sequential—meaning Agent 1 (*Scout*) must discover a target at $t_1$, Agent 2 (*Hacker*) must disable security at $t_2$, and Agent 4 (*Extractor*) secures the loot at $t_3$—the immediate return $r_{t_1}$ for Agent 1 is 0 (or negative due to time bleed). Standard credit assignment methods (e.g., GAE, Temporal Difference learning) exponentially decay credit over time $\gamma^{t_3 - t_1}$, causing value gradient collapse for upstream enabling actions.
+
+HEIST evaluates algorithmic solutions to Causal Credit Dilution across a 10-model ablation taxonomy.

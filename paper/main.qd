@@ -1,0 +1,16 @@
+.docname {HEIST: Multi-Agent Causal Credit Assignment under Sequential Task Dependencies}
+.doctype {plain}
+.doclang {English}
+.theme {paperwhite} layout:{latex}
+
+.docauthors
+    - Saejin Moon
+    - DeepMind Advanced Agentic Coding Team
+
+.tableofcontents
+
+.include {01_abstract_and_introduction.qd}
+.include {02_environment_and_constants.qd}
+.include {03_model_architectures_and_math.qd}
+.include {04_curriculum_and_spatial_step_scaling.qd}
+.include {05_experimental_metrics_and_evaluation.qd}
