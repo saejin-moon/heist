@@ -189,7 +189,7 @@ def evaluate_policies(
         run_episode(env, policies, device, greedy=greedy, seed=seed + i)
         for i in range(episodes)
     ]
-    
+
     # Vectorized fast metric calculation
     n_ep = float(episodes)
     metrics["win_rate"] = sum(r["win"] for r in results) / n_ep
@@ -200,16 +200,28 @@ def evaluate_policies(
     metrics["terminal_rate"] = sum(r["terminal_disabled"] for r in results) / n_ep
     metrics["loot_rate"] = sum(r["loot_acquired"] for r in results) / n_ep
     metrics["extraction_rate"] = sum(r["extraction_triggered"] for r in results) / n_ep
-    metrics["mean_hack_progress"] = float(np.mean([r["hack_progress"] for r in results]))
-    metrics["mean_explored_pct"] = float(np.mean([r.get("explored_pct", 0.0) for r in results]))
-    metrics["mean_tagged_pois"] = float(np.mean([r.get("tagged_pois", 0.0) for r in results]))
-    metrics["mean_neutralized_guards"] = float(np.mean([r.get("neutralized_guards", 0.0) for r in results]))
-    
+    metrics["mean_hack_progress"] = float(
+        np.mean([r["hack_progress"] for r in results])
+    )
+    metrics["mean_explored_pct"] = float(
+        np.mean([r.get("explored_pct", 0.0) for r in results])
+    )
+    metrics["mean_tagged_pois"] = float(
+        np.mean([r.get("tagged_pois", 0.0) for r in results])
+    )
+    metrics["mean_neutralized_guards"] = float(
+        np.mean([r.get("neutralized_guards", 0.0) for r in results])
+    )
+
     # Cause attribution breakdown
-    metrics["cause_alarm_max_rate"] = sum(r["cause"] == "alarm_max" for r in results) / n_ep
-    metrics["cause_guard_catch_rate"] = sum(r["cause"] == "guard_catch" for r in results) / n_ep
+    metrics["cause_alarm_max_rate"] = (
+        sum(r["cause"] == "alarm_max" for r in results) / n_ep
+    )
+    metrics["cause_guard_catch_rate"] = (
+        sum(r["cause"] == "guard_catch" for r in results) / n_ep
+    )
     metrics["cause_timeout_rate"] = sum(r["cause"] == "timeout" for r in results) / n_ep
-    
+
     # Role credit breakdown
     for a in AGENTS:
         metrics[f"role_credit_{a}"] = float(np.mean([r["credit"][a] for r in results]))

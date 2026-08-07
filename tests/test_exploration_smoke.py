@@ -14,7 +14,9 @@ def test_rnd_module_shapes_and_update():
     rnd = RNDModule(obs_dim=obs_dim, feature_dim=32, device="cpu")
 
     # Mock observation batch: shape (4 agents, 8 envs, obs_h, obs_w)
-    obs = torch.randint(0, 10, (4, 8, OBSERVATION_SIZE[0], OBSERVATION_SIZE[1]), dtype=torch.int32)
+    obs = torch.randint(
+        0, 10, (4, 8, OBSERVATION_SIZE[0], OBSERVATION_SIZE[1]), dtype=torch.int32
+    )
     rewards = rnd.compute_reward(obs)
 
     assert rewards.shape == (4, 8), f"Expected shape (4, 8), got {rewards.shape}"

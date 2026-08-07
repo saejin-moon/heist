@@ -192,7 +192,14 @@ def get_active_campaign_info() -> dict:
             info["active_stages"] = {active_train_stage}
 
         if active_training and latest_log_mtime > latest_results_mtime:
-            if latest_log_file and latest_log_file.parent != LOG_DIR and (latest_log_file.parent.name.startswith("run") or latest_log_file.parent.name.startswith("st")):
+            if (
+                latest_log_file
+                and latest_log_file.parent != LOG_DIR
+                and (
+                    latest_log_file.parent.name.startswith("run")
+                    or latest_log_file.parent.name.startswith("st")
+                )
+            ):
                 info["run_id"] = latest_log_file.parent.name
             else:
                 prefix = "st" if info["side_tasks"] else "run"
@@ -399,6 +406,7 @@ def get_system_metrics() -> dict:
     }
     try:
         from tools.thermal_guard import get_cpu_temp
+
         metrics["cpu_temp_c"] = get_cpu_temp()
     except Exception:
         pass
@@ -491,7 +499,9 @@ def make_dashboard_panel() -> Panel:
     cores = metrics["cpu_cores"]
     cpu_pct = min(100.0, (load_val / cores) * 100)
     cpu_bar = make_progress_bar(cpu_pct, 10)
-    cpu_temp_str = f"  |  {metrics['cpu_temp_c']:.1f}°C" if metrics['cpu_temp_c'] > 0 else ""
+    cpu_temp_str = (
+        f"  |  {metrics['cpu_temp_c']:.1f}°C" if metrics["cpu_temp_c"] > 0 else ""
+    )
     sys_table.add_row(
         "CPU",
         f"{cpu_bar}  Load: {metrics['cpu_load']} ({cpu_pct:.1f}%)",

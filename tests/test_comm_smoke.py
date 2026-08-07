@@ -146,9 +146,7 @@ def test_obs_contract():
 def test_local_input_dim():
     """LOCAL_INPUT_DIM = obs_flat + N_AGENTS (no global_state)."""
     expected = OBSERVATION_SIZE[0] * OBSERVATION_SIZE[1] + N_AGENTS
-    assert LOCAL_INPUT_DIM == expected, (
-        f"expected {expected}, got {LOCAL_INPUT_DIM}"
-    )
+    assert LOCAL_INPUT_DIM == expected, f"expected {expected}, got {LOCAL_INPUT_DIM}"
     print("  LOCAL_INPUT_DIM OK")
 
 
