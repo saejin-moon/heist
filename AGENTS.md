@@ -129,3 +129,4 @@ uv run python tools/status.py --watch
 3. **Thermal Safety:** Never disable `tools/thermal_guard.py` checks in `train.zsh`.
 4. **Verification:** Never declare success on an issue without running `uv run pytest` to verify zero regression.
 5. **Mandatory Pre-Commit Pipeline:** ALWAYS run `uv run ruff check --fix src/ tests/ tools/`, `uv run ruff format src/ tests/ tools/`, and `uv run pytest` BEFORE making any git commit.
+6. **Quarkdown TeX Math Rule:** EVERY inline TeX math expression in `.qd` files MUST have a space immediately after the opening `$` and before the closing `$`, e.g. `$ formula $`, NOT `$formula$`. Multiline block math MUST use three dollar signs (`$$$`), NOT two (`$$`). Never omit internal spaces around dollar sign math delimiters.

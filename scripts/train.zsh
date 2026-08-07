@@ -260,9 +260,7 @@ run_campaign() {
 
         local steps_for_stage=$CAMPAIGN_STEPS
         if [ "$FAST_MODE" -eq 0 ]; then
-            local map_area
-            map_area=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from curriculum import CURRICULUM; ms = CURRICULUM[$stg]['map_size']; print(ms[0]*ms[1])")
-            steps_for_stage=$(( CAMPAIGN_STEPS * map_area / 121 ))
+            steps_for_stage=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from curriculum import CURRICULUM; c = CURRICULUM[$stg]; area = c['map_size'][0] * c['map_size'][1]; entities = c['guard_count'] + c['camera_count'] + c['door_count']; mu = 1.0 + 0.10 * entities; print(int(round($CAMPAIGN_STEPS * (area / 121.0) * mu)))")
         fi
 
         local cfg
