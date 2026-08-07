@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from constants import OBSERVATION_SIZE
 
 class RNDTargetNetwork(nn.Module):
     """Fixed random target network for RND."""
@@ -57,7 +58,7 @@ class RNDModule:
 
     def __init__(
         self,
-        obs_dim: int = 25,  # 5x5 local box flattened
+        obs_dim: int = OBSERVATION_SIZE[0] * OBSERVATION_SIZE[1],
         feature_dim: int = 64,
         lr: float = 1e-4,
         device: torch.device | str = "cpu",
