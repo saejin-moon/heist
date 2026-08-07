@@ -6,9 +6,9 @@ Training multi-agent policies directly on full $ 50 \times 50 $ facility layouts
 
 The 5 curriculum stages expand map area $ A_k = W_k \times H_k $ smoothly while introducing security entities $ E_k = g_k + c_k + d_k $ (guards $ g_k $, cameras $ c_k $, doors $ d_k $):
 
-| Stage $ k $ | Map Size $(W \times H)$ | Total Area $ A_k $ | Guards ($ g_k $) | Cameras ($ c_k $) | Doors ($ d_k $) | Total Entities $ E_k $ | Primary Learning Objective |
+| Stage $ k $ | Map Size ($ W \times H $) | Total Area $ A_k $ | Guards ($ g_k $) | Cameras ($ c_k $) | Doors ($ d_k $) | Total Entities $ E_k $ | Primary Learning Objective |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Stage 0** | $ 11 \times 11 $ | 121 tiles | 0 | 0 | 0 | **0** | Master basic causal chain (scout $\to$ hack $\to$ extract) |
+| **Stage 0** | $ 11 \times 11 $ | 121 tiles | 0 | 0 | 0 | **0** | Master basic causal chain (scout $ \to $ hack $ \to $ extract) |
 | **Stage 1** | $ 17 \times 17 $ | 289 tiles | 1 | 0 | 1 | **2** | Master 1-guard patrol timing & single door bypass |
 | **Stage 2** | $ 25 \times 25 $ | 625 tiles | 2 | 1 | 2 | **5** | Master vision cone evasion & multi-room navigation |
 | **Stage 3** | $ 35 \times 35 $ | 1,225 tiles | 3 | 2 | 3 | **8** | Master multi-camera security coordination |
@@ -28,16 +28,16 @@ $ \rho^* = \frac{120,000 \text{ steps}}{121 \text{ tiles}} \approx 991.74 \text{
 
 While pure spatial area scaling accounts for grid coverage, introducing dynamic security entities ($ E_k = g_k + c_k + d_k $) increases state-space entropy and horizon branching complexity.
 
-In Dec-POMDP sample complexity theory, introducing dynamic obstacles expands policy rollout variance. Based on empirical ablation measurements of horizon requirements per added security element, each active entity introduces a fractional state-space expansion factor $ \kappa = 0.10 $ ($+10\%$ sample budget per entity):
+In Dec-POMDP sample complexity theory, introducing dynamic obstacles expands policy rollout variance. Based on empirical ablation measurements of horizon requirements per added security element, each active entity introduces a fractional state-space expansion factor $ \kappa = 0.10 $ (+10% sample budget per entity):
 
 $ \mu_k = 1 + \kappa \cdot E_k = 1 + 0.10 \cdot (g_k + c_k + d_k) $
 
 ### Concrete Multiplier Breakdown across Curriculum Stages:
 - **Stage 0 ($ E_0 = 0 $):** $ \mu_0 = 1 + 0.10(0) = \mathbf{1.00\times} $
-- **Stage 1 ($ E_1 = 2 $):** $ \mu_1 = 1 + 0.10(2) = \mathbf{1.20\times} $ ($+20\%$ budget for 1 guard + 1 door)
-- **Stage 2 ($ E_2 = 5 $):** $ \mu_2 = 1 + 0.10(5) = \mathbf{1.50\times} $ ($+50\%$ budget for 2 guards + 1 camera + 2 doors)
-- **Stage 3 ($ E_3 = 8 $):** $ \mu_3 = 1 + 0.10(8) = \mathbf{1.80\times} $ ($+80\%$ budget for 3 guards + 2 cameras + 3 doors)
-- **Stage 4 ($ E_4 = 11 $):** $ \mu_4 = 1 + 0.10(11) = \mathbf{2.10\times} $ ($+110\%$ budget for 4 guards + 3 cameras + 4 doors)
+- **Stage 1 ($ E_1 = 2 $):** $ \mu_1 = 1 + 0.10(2) = \mathbf{1.20\times} $ (+20% budget for 1 guard + 1 door)
+- **Stage 2 ($ E_2 = 5 $):** $ \mu_2 = 1 + 0.10(5) = \mathbf{1.50\times} $ (+50% budget for 2 guards + 1 camera + 2 doors)
+- **Stage 3 ($ E_3 = 8 $):** $ \mu_3 = 1 + 0.10(8) = \mathbf{1.80\times} $ (+80% budget for 3 guards + 2 cameras + 3 doors)
+- **Stage 4 ($ E_4 = 11 $):** $ \mu_4 = 1 + 0.10(11) = \mathbf{2.10\times} $ (+110% budget for 4 guards + 3 cameras + 4 doors)
 
 ## 4.4 Unified Spatial-Entity Step Scaling Law Formula
 
@@ -47,7 +47,7 @@ $ T_k = T_0^{\text{conv}} \cdot \left( \frac{W_k \cdot H_k}{121} \right) \cdot \
 
 ### Grounded Multi-Stage Campaign Step Allocation Table
 
-| Curriculum Stage $ k $ | Area $ A_k $ | Area Scale $\frac{A_k}{121}$ | Entities $ E_k $ | Entity Multiplier $ \mu_k $ | Grounded Step Budget ($ T_k $) | Cumulative Campaign Steps |
+| Curriculum Stage $ k $ | Area $ A_k $ | Area Scale $ \frac{A_k}{121} $ | Entities $ E_k $ | Entity Multiplier $ \mu_k $ | Grounded Step Budget ($ T_k $) | Cumulative Campaign Steps |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Stage 0** ($ 11 \times 11 $) | 121 | $ 1.000\times $ | 0 | $ 1.00\times $ | **120,000 steps** (120k) | 120,000 steps |
 | **Stage 1** ($ 17 \times 17 $) | 289 | $ 2.388\times $ | 2 | $ 1.20\times $ | **343,933 steps** (344k) | 463,933 steps |
