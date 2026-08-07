@@ -13,6 +13,7 @@ import torch.optim as optim
 
 from constants import OBSERVATION_SIZE
 
+
 class RNDTargetNetwork(nn.Module):
     """Fixed random target network for RND."""
 

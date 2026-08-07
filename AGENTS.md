@@ -128,3 +128,4 @@ uv run python tools/status.py --watch
 2. **Preserve Contracts:** When modifying `HeistEnv.step()` or `run_episode()`, ensure observation, reward, and info dictionary schemas are strictly preserved.
 3. **Thermal Safety:** Never disable `tools/thermal_guard.py` checks in `train.zsh`.
 4. **Verification:** Never declare success on an issue without running `uv run pytest` to verify zero regression.
+5. **Mandatory Pre-Commit Pipeline:** ALWAYS run `uv run ruff check --fix src/ tests/ tools/`, `uv run ruff format src/ tests/ tools/`, and `uv run pytest` BEFORE making any git commit.

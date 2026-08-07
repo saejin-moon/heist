@@ -99,6 +99,7 @@ while (( $# )); do
         --steps)      CAMPAIGN_STEPS="$2"; shift 2 ;;
 
         --fast|--quick|--sample) FAST_MODE=1; CAMPAIGN_STEPS=10240; STAGES="0"; SKIP_SMOKE=1; shift ;;
+        --turbo) FAST_MODE=1; CAMPAIGN_STEPS=1024; STAGES="0"; SKIP_SMOKE=1; shift ;;
         --parallel|-j) CONCURRENT_JOBS="$2"; shift 2 ;;
         --resume|--use-ckpt|--reuse-checkpoints|--skip-completed) USE_CKPT=1; shift ;;
         --from-stage|--init-stage) FROM_STAGE="$2"; shift 2 ;;

@@ -170,10 +170,11 @@ def train(args: Args):
 
     rnd_module = None
     if args.use_rnd:
-        from constants import OBSERVATION_SIZE
         from exploration import RNDModule
 
-        rnd_module = RNDModule(obs_dim=OBSERVATION_SIZE[0] * OBSERVATION_SIZE[1], device=device)
+        rnd_module = RNDModule(
+            obs_dim=OBSERVATION_SIZE[0] * OBSERVATION_SIZE[1], device=device
+        )
         print("  [Exploration] RND Module initialized.")
 
     obs_h, obs_w = OBSERVATION_SIZE
