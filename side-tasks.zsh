@@ -1,1 +1,1 @@
-./train.zsh -j 5 --side-tasks --stages 0,1,2,3,4 --from-stage 4 --daemon --steps 1000000
+scripts/side-tasks.zsh
