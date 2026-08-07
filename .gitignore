@@ -18,3 +18,5 @@ src/runs/
 checkpoints/
 runs/
 log/
+quarkdown-output/
+output/
