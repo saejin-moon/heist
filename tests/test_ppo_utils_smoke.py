@@ -121,4 +121,3 @@ def test_get_previous_stage_checkpoint_fallback(tmp_path, monkeypatch):
     (ckpt_dir / "comm_s2").mkdir()
     (ckpt_dir / "comm_s2" / "dummy.pt").write_text("1")
     assert get_previous_stage_checkpoint("comm_st_s0") == "checkpoints/comm_s2"
-

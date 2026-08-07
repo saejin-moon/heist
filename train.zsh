@@ -258,7 +258,9 @@ run_campaign() {
 
         local steps_for_stage=$CAMPAIGN_STEPS
         if [ "$FAST_MODE" -eq 0 ]; then
-            steps_for_stage=$(( CAMPAIGN_STEPS * (2 + stg) / 2 ))
+            local map_area
+            map_area=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from curriculum import CURRICULUM; ms = CURRICULUM[$stg]['map_size']; print(ms[0]*ms[1])")
+            steps_for_stage=$(( CAMPAIGN_STEPS * map_area / 121 ))
         fi
 
         local cfg
@@ -286,6 +288,13 @@ run_campaign() {
     local all_done=0
     while [ "$all_done" -eq 0 ]; do
         local now=$(date +%s)
+
+        # Thermal protection check & hardware temp logging
+        if ! uv run python tools/thermal_guard.py --log; then
+            log "[EMERGENCY STOP] High hardware temperature detected! Stopping training campaign for safety."
+            pkill -f "src/train_" 2>/dev/null || true
+            exit 1
+        fi
 
         # 1. Check running training tasks
         local active_count=0
@@ -335,7 +344,7 @@ run_campaign() {
                             local model_name="${task_models[$t]}"
                             for ((pt=1; pt<=total_tasks; pt++)); do
                                 if [ "${task_stages[$pt]}" = "$prev_stg" ] && [ "${task_models[$pt]}" = "$model_name" ]; then
-                                    if [ "${task_status[$pt]}" = "done" ] || [ -f "checkpoints/${model_name}${st_suffix}_s${prev_stg}/complete.json" ] || [ -d "checkpoints/${model_name}${st_suffix}_s${prev_stg}" ]; then
+                                    if [ "${task_status[$pt]}" = "done" ] || [ -f "checkpoints/${model_name}${st_suffix}_s${prev_stg}/complete.json" ]; then
                                         prev_task_done=1
                                     fi
                                     break

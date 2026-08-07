@@ -11,6 +11,7 @@ Run with: uv run pytest src/test_qmix_opt_smoke.py
 
 import torch
 
+from constants import OBSERVATION_SIZE
 from env import HeistEnv
 from model import QMixMixing, QNetwork
 from train_qmix import ReplayBuffer, select_actions
@@ -57,7 +58,7 @@ def test_qmix_optimization_step():
     mixing = QMixMixing(len(env.agents), state_dim).to(device)
     target_mixing = QMixMixing(len(env.agents), state_dim).to(device)
 
-    buffer = ReplayBuffer(100, (5, 5), state_dim)
+    buffer = ReplayBuffer(100, OBSERVATION_SIZE, state_dim)
     for _ in range(10):
         actions = select_actions(env, obs, q_nets, epsilon=0.2, device=device)
         next_obs, rewards, terms, truncs, _ = env.step(actions)

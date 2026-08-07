@@ -151,4 +151,3 @@ def test_qmix_log_parsing_and_subfolder_discovery(tmp_path):
         assert qmix_status["status"] == "RUNNING"
         assert qmix_status["steps"] == "50000"
         assert qmix_status["mean_reward"] == "-0.519"
-

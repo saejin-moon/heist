@@ -145,7 +145,7 @@ def train(args: Args):
             save_code=True,
         )
     os.makedirs(f"runs/{run_name}", exist_ok=True)
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(f"runs/{run_name}", flush_secs=30)
 
     writer.add_text(
         "hyperparameters",
@@ -196,9 +196,7 @@ def train(args: Args):
 
     prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
     if prev_ckpt:
-        print(
-            f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}"
-        )
+        print(f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}")
         if args.shared:
             load_matching_weights(
                 shared_policy, os.path.join(prev_ckpt, "scout.pt"), device

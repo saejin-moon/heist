@@ -192,8 +192,11 @@ def get_active_campaign_info() -> dict:
             info["active_stages"] = {active_train_stage}
 
         if active_training and latest_log_mtime > latest_results_mtime:
-            prefix = "st" if info["side_tasks"] else "run"
-            info["run_id"] = _get_next_run_id(RESULTS_DIR, prefix=prefix)
+            if latest_log_file and latest_log_file.parent != LOG_DIR and (latest_log_file.parent.name.startswith("run") or latest_log_file.parent.name.startswith("st")):
+                info["run_id"] = latest_log_file.parent.name
+            else:
+                prefix = "st" if info["side_tasks"] else "run"
+                info["run_id"] = _get_next_run_id(RESULTS_DIR, prefix=prefix)
             info["active_run_start"] = (
                 min(recent_log_mtimes) if recent_log_mtimes else latest_log_mtime
             )
@@ -383,6 +386,7 @@ def get_system_metrics() -> dict:
     metrics = {
         "cpu_load": "0.00",
         "cpu_cores": os.cpu_count() or 1,
+        "cpu_temp_c": 0.0,
         "ram_used_gb": 0.0,
         "ram_total_gb": 0.0,
         "ram_pct": 0.0,
@@ -393,6 +397,11 @@ def get_system_metrics() -> dict:
         "gpu_temp_c": 0,
         "gpu_available": False,
     }
+    try:
+        from tools.thermal_guard import get_cpu_temp
+        metrics["cpu_temp_c"] = get_cpu_temp()
+    except Exception:
+        pass
 
     try:
         with open("/proc/meminfo") as f:
@@ -482,10 +491,11 @@ def make_dashboard_panel() -> Panel:
     cores = metrics["cpu_cores"]
     cpu_pct = min(100.0, (load_val / cores) * 100)
     cpu_bar = make_progress_bar(cpu_pct, 10)
+    cpu_temp_str = f"  |  {metrics['cpu_temp_c']:.1f}°C" if metrics['cpu_temp_c'] > 0 else ""
     sys_table.add_row(
         "CPU",
         f"{cpu_bar}  Load: {metrics['cpu_load']} ({cpu_pct:.1f}%)",
-        f"{cores} Cores available",
+        f"{cores} Cores available{cpu_temp_str}",
     )
 
     ram_pct = metrics["ram_pct"]

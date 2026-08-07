@@ -129,6 +129,16 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
         if done:
             break
 
+    # Loss mode cause attribution
+    if win:
+        cause = "win"
+    elif env.alarm >= env.config.get("alarm_max", 100.0):
+        cause = "alarm_max"
+    elif env._check_caught():
+        cause = "guard_catch"
+    else:
+        cause = "timeout"
+
     return {
         "return": total_return,
         "length": length,
@@ -140,6 +150,11 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
         "loot_acquired": env.loot_acquired,
         "extraction_triggered": env.extraction_triggered,
         "hack_progress": env.hack_progress,
+        "explored_pct": float(np.mean(env.explored_map)),
+        "tagged_pois": len(env.tagged_pois),
+        "scout_tagged": len(env.tagged_pois) > 0,
+        "neutralized_guards": int(np.sum(env.neutralized > 0)),
+        "cause": cause,
     }
 
 
@@ -152,10 +167,21 @@ def evaluate_policies(
         "mean_return": 0.0,
         "mean_length": 0.0,
         "mean_alarm": 0.0,
+        "scout_tag_rate": 0.0,
         "terminal_rate": 0.0,
         "loot_rate": 0.0,
         "extraction_rate": 0.0,
         "mean_hack_progress": 0.0,
+        "mean_explored_pct": 0.0,
+        "mean_tagged_pois": 0.0,
+        "mean_neutralized_guards": 0.0,
+        "cause_alarm_max_rate": 0.0,
+        "cause_guard_catch_rate": 0.0,
+        "cause_timeout_rate": 0.0,
+        "role_credit_scout": 0.0,
+        "role_credit_hacker": 0.0,
+        "role_credit_muscle": 0.0,
+        "role_credit_extractor": 0.0,
     }
     if episodes <= 0:
         return metrics
@@ -163,15 +189,31 @@ def evaluate_policies(
         run_episode(env, policies, device, greedy=greedy, seed=seed + i)
         for i in range(episodes)
     ]
-    wins = sum(r["win"] for r in results)
-    metrics["win_rate"] = wins / episodes
-    metrics["mean_return"] = np.mean([r["return"] for r in results])
-    metrics["mean_length"] = np.mean([r["length"] for r in results])
-    metrics["mean_alarm"] = np.mean([r["alarm"] for r in results])
-    metrics["terminal_rate"] = np.mean([r["terminal_disabled"] for r in results])
-    metrics["loot_rate"] = np.mean([r["loot_acquired"] for r in results])
-    metrics["extraction_rate"] = np.mean([r["extraction_triggered"] for r in results])
-    metrics["mean_hack_progress"] = np.mean([r["hack_progress"] for r in results])
+    
+    # Vectorized fast metric calculation
+    n_ep = float(episodes)
+    metrics["win_rate"] = sum(r["win"] for r in results) / n_ep
+    metrics["mean_return"] = float(np.mean([r["return"] for r in results]))
+    metrics["mean_length"] = float(np.mean([r["length"] for r in results]))
+    metrics["mean_alarm"] = float(np.mean([r["alarm"] for r in results]))
+    metrics["scout_tag_rate"] = sum(r["scout_tagged"] for r in results) / n_ep
+    metrics["terminal_rate"] = sum(r["terminal_disabled"] for r in results) / n_ep
+    metrics["loot_rate"] = sum(r["loot_acquired"] for r in results) / n_ep
+    metrics["extraction_rate"] = sum(r["extraction_triggered"] for r in results) / n_ep
+    metrics["mean_hack_progress"] = float(np.mean([r["hack_progress"] for r in results]))
+    metrics["mean_explored_pct"] = float(np.mean([r.get("explored_pct", 0.0) for r in results]))
+    metrics["mean_tagged_pois"] = float(np.mean([r.get("tagged_pois", 0.0) for r in results]))
+    metrics["mean_neutralized_guards"] = float(np.mean([r.get("neutralized_guards", 0.0) for r in results]))
+    
+    # Cause attribution breakdown
+    metrics["cause_alarm_max_rate"] = sum(r["cause"] == "alarm_max" for r in results) / n_ep
+    metrics["cause_guard_catch_rate"] = sum(r["cause"] == "guard_catch" for r in results) / n_ep
+    metrics["cause_timeout_rate"] = sum(r["cause"] == "timeout" for r in results) / n_ep
+    
+    # Role credit breakdown
+    for a in AGENTS:
+        metrics[f"role_credit_{a}"] = float(np.mean([r["credit"][a] for r in results]))
+
     return metrics
 
 

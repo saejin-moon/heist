@@ -83,11 +83,11 @@ ROLE_ACTIONS = {
 # Observation / layout dimensions
 # ---------------------------------------------------------------------------
 MAP_SIZE = (50, 50)  # default; overridable via env config
-OBSERVATION_SIZE = (5, 5)  # agent local view window
+OBSERVATION_SIZE = (7, 7)  # agent local view window
 ACTION_SPACE_SIZE = 6  # |A| for every agent
 TILE_SIZE = 20  # renderer pixels per tile
 SCOUT_VISION_RADIUS = 8  # scout reveals this far in every direction
-AGENT_VISION_RADIUS = 2  # every agent sees/reveals this local radius
+AGENT_VISION_RADIUS = 3  # every agent sees/reveals this local radius
 GUARD_COUNT = 6
 CAMERA_COUNT = 3
 DOOR_COUNT = 4
@@ -96,20 +96,20 @@ DOOR_COUNT = 4
 # Causal-chain mechanics
 # ---------------------------------------------------------------------------
 HACK_TURNS = 3  # multi-turn hack before terminal is disabled
-EXTRACTION_COUNTDOWN = 45  # turns to gather at extract after loot secured
+EXTRACTION_COUNTDOWN = 60  # turns to gather at extract after loot secured
 
 # ---------------------------------------------------------------------------
 # Reward structure (design doc section 5)
 # ---------------------------------------------------------------------------
-REWARD_WIN = 10.0  # shared terminal reward: successful extraction
+REWARD_WIN = 15.0  # shared terminal reward: successful extraction
 REWARD_LOSE = -10.0  # shared terminal reward: caught / alarm / timeout
 REWARD_TASK = 2.0  # key task completions (hack, loot, extract call)
-REWARD_TAG = 0.5  # scout revealing a point of interest
+REWARD_TAG = 1.0  # scout revealing a point of interest
 REWARD_TIME_BLEED = -0.01  # baseline penalty per step
-CONVERGE_BONUS = 0.5  # per-step proximity bonus to the extract tile
+CONVERGE_BONUS = 1.0  # per-step proximity bonus to the extract tile
 # once extraction is called (shapes the final phase)
 CONVERGE_RADIUS = 4  # manhattan distance that counts as "converging"
-WIN_CONVERGE_RADIUS = 2  # all agents within this radius of extract to win
+WIN_CONVERGE_RADIUS = 3  # all agents within this radius of extract to win
 # (0 = strict stacking on the tile)
 
 # ---------------------------------------------------------------------------
@@ -119,10 +119,10 @@ WIN_CONVERGE_RADIUS = 2  # all agents within this radius of extract to win
 # at 100 the guards converge and the episode terminates with REWARD_LOSE.
 # ---------------------------------------------------------------------------
 ALARM_MAX = 100.0
-ALARM_CAMERA = 0.35  # per visible agent per camera per step
+ALARM_CAMERA = 0.20  # per visible agent per camera per step
 ALARM_HACK_TURN = 2.0  # per turn of hacking a terminal
 ALARM_BYPASS = 6.0  # door bypassed by force
-ALARM_NEUTRALIZE = 15.0  # guard knocked out (delay until noticed)
+ALARM_NEUTRALIZE = 10.0  # guard knocked out (delay until noticed)
 ALARM_GUARD_SPOT = 25.0  # guard gets within catch distance
 ALARM_EXTRACTION_TIMEOUT = 25.0  # extraction countdown expired (fires once)
 CAMERA_RANGE = 12  # max line-of-sight distance for cameras
@@ -159,7 +159,7 @@ BREACH_SEARCH_TRIGGER = True  # a fresh breach puts nearby guards into Search
 # ---------------------------------------------------------------------------
 # M2 communication (REV-7): learned message channel
 # ---------------------------------------------------------------------------
-COMM_MESSAGE_DIM = 16  # TarMAC-style message embedding size
+COMM_MESSAGE_DIM = 32  # TarMAC-style message embedding size
 COMM_HIDDEN_DIM = 64  # communication network hidden width
 
 # ---------------------------------------------------------------------------

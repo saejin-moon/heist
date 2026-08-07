@@ -122,7 +122,6 @@ def get_previous_stage_checkpoint(run_name, exp_name=""):
     return None
 
 
-
 def compute_counterfactual_advantage(
     policy_probs, q_values_all, taken_actions, action_mask
 ):

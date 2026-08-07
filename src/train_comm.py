@@ -138,7 +138,7 @@ if __name__ == "__main__":
     if device.type == "cpu":
         torch.set_num_threads(max(1, (os.cpu_count() or 4) // 2))
     os.makedirs(f"runs/{run_name}", exist_ok=True)
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(f"runs/{run_name}", flush_secs=30)
 
     writer.add_text(
         "hyperparameters",
@@ -168,9 +168,7 @@ if __name__ == "__main__":
 
     prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
     if prev_ckpt:
-        print(
-            f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}"
-        )
+        print(f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}")
         ckpt_pt = os.path.join(prev_ckpt, "comm.pt")
         if not os.path.isfile(ckpt_pt):
             ckpt_pt = os.path.join(prev_ckpt, "policy.pt")

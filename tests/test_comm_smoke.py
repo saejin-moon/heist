@@ -9,7 +9,7 @@ Run with:  uv run python src/test_comm_smoke.py
 
 import torch
 
-from constants import N_AGENTS
+from constants import N_AGENTS, OBSERVATION_SIZE
 from env import HeistEnv
 from model import (
     COMM_HIDDEN_DIM,
@@ -44,7 +44,7 @@ def test_comm_agent_shapes():
     """CommAgent produces correct action/value shapes."""
     agent = CommAgent(state_dim=100, centralized=False)
     B = 4
-    obs = torch.randn(B, N_AGENTS, 5, 5)
+    obs = torch.randn(B, N_AGENTS, OBSERVATION_SIZE[0], OBSERVATION_SIZE[1])
     roles = [torch.zeros(B, N_AGENTS) for _ in range(N_AGENTS)]
     for i in range(N_AGENTS):
         roles[i][:, i] = 1.0
@@ -67,7 +67,7 @@ def test_comm_agent_centralized():
     """MAPPO-style CommAgent with centralized critic."""
     agent = CommAgent(state_dim=100, centralized=True)
     B = 4
-    obs = torch.randn(B, N_AGENTS, 5, 5)
+    obs = torch.randn(B, N_AGENTS, OBSERVATION_SIZE[0], OBSERVATION_SIZE[1])
     roles = [torch.zeros(B, N_AGENTS) for _ in range(N_AGENTS)]
     for i in range(N_AGENTS):
         roles[i][:, i] = 1.0
@@ -144,9 +144,10 @@ def test_obs_contract():
 
 
 def test_local_input_dim():
-    """LOCAL_INPUT_DIM = 25 + N_AGENTS (no global_state)."""
-    assert LOCAL_INPUT_DIM == 25 + N_AGENTS, (
-        f"expected {25 + N_AGENTS}, got {LOCAL_INPUT_DIM}"
+    """LOCAL_INPUT_DIM = obs_flat + N_AGENTS (no global_state)."""
+    expected = OBSERVATION_SIZE[0] * OBSERVATION_SIZE[1] + N_AGENTS
+    assert LOCAL_INPUT_DIM == expected, (
+        f"expected {expected}, got {LOCAL_INPUT_DIM}"
     )
     print("  LOCAL_INPUT_DIM OK")
 

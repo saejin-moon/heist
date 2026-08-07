@@ -150,7 +150,7 @@ def train(args: Args):  # noqa: C901
             pass
 
     os.makedirs(f"runs/{run_name}", exist_ok=True)
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(f"runs/{run_name}", flush_secs=30)
 
     writer.add_text(
         "hyperparameters",
@@ -192,12 +192,8 @@ def train(args: Args):  # noqa: C901
     else:
         prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
         if prev_ckpt:
-            print(
-                f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}"
-            )
-            load_matching_weights(
-                policy, os.path.join(prev_ckpt, "policy.pt"), device
-            )
+            print(f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}")
+            load_matching_weights(policy, os.path.join(prev_ckpt, "policy.pt"), device)
             target_critic.load_state_dict(policy.critic.state_dict())
 
     if args.load_checkpoint:

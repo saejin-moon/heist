@@ -56,7 +56,7 @@ class Args:
     eps_end: float = 0.05
     eps_anneal_steps: int = 500_000
     learning_starts: int = 10_000
-    train_freq: int = 1  # gradient steps per env step
+    train_freq: int = 4  # gradient steps per 4 env steps (standard QMIX PyMARL setting)
     target_update_freq: int = 200
     eval_every: int = 5_000
     eval_episodes: int = 20
@@ -158,13 +158,14 @@ class ReplayBuffer:
         self.pos = (self.pos + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
-    def sample(self, batch_size):
+    def sample(self, batch_size, device=None):
         idx = np.random.randint(0, self.size, size=batch_size)
 
         def tensor(array, dtype):
-            # Advanced NumPy indexing already materializes a contiguous batch;
-            # from_numpy avoids an additional CPU-side copy before transfer.
-            return torch.from_numpy(array).to(dtype=dtype)
+            t = torch.from_numpy(array)
+            if device is not None:
+                return t.to(device=device, dtype=dtype, non_blocking=True)
+            return t.to(dtype=dtype)
 
         batch = {
             "obs": {a: tensor(self.obs[a][idx], torch.float32) for a in AGENTS},
@@ -237,7 +238,7 @@ def train(args: Args):
         else f"{args.exp_name}_s{args.seed}"
     )
     os.makedirs(f"runs/{run_name}", exist_ok=True)
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(f"runs/{run_name}", flush_secs=30)
 
     writer.add_text(
         "hyperparameters",
@@ -275,9 +276,7 @@ def train(args: Args):
 
     prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
     if prev_ckpt:
-        print(
-            f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}"
-        )
+        print(f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}")
         for a in AGENTS:
             load_matching_weights(
                 q_nets[a], os.path.join(prev_ckpt, f"{a}_q.pt"), device
@@ -430,12 +429,7 @@ def train(args: Args):
                 replay.size > args.learning_starts
                 and global_step % args.train_freq == 0
             ):
-                batch = replay.sample(args.batch_size)
-                for key in batch:
-                    if isinstance(batch[key], dict):
-                        batch[key] = {a: t.to(device) for a, t in batch[key].items()}
-                    else:
-                        batch[key] = batch[key].to(device)
+                batch = replay.sample(args.batch_size, device=device)
 
                 # online joint Q
                 q_vals = []

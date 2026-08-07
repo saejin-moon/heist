@@ -29,16 +29,16 @@ import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
 
-from constants import N_AGENTS
+from constants import N_AGENTS, OBSERVATION_SIZE
 
-# REV-7 Phase A: local obs (25) + role one-hot (4).  No global_state crutch.
-LOCAL_INPUT_DIM = 25 + N_AGENTS  # 29
+# local obs (7x7=49) + role one-hot (4) = 53
+LOCAL_INPUT_DIM = OBSERVATION_SIZE[0] * OBSERVATION_SIZE[1] + N_AGENTS  # 53
 
 # TarMAC communication dimensions (Phase B)
 COMM_HIDDEN_DIM = 64  # shared encoder dim for message / query
 COMM_MESSAGE_DIM = 32  # per-agent message vector length
-# Comm agent input: obs (25) + role (4) + attended message (32) = 61
-COMM_INPUT_DIM = LOCAL_INPUT_DIM + COMM_MESSAGE_DIM  # 61
+# Comm agent input: obs (49) + role (4) + attended message (32) = 85
+COMM_INPUT_DIM = LOCAL_INPUT_DIM + COMM_MESSAGE_DIM  # 85
 
 ACTION_DIM = 6
 HIDDEN_DIM = 64

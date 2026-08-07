@@ -119,7 +119,7 @@ def train(args: Args):
         else f"{args.exp_name}_s{args.seed}"
     )
     os.makedirs(f"runs/{run_name}", exist_ok=True)
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(f"runs/{run_name}", flush_secs=30)
 
     writer.add_text(
         "hyperparameters",
@@ -161,12 +161,8 @@ def train(args: Args):
 
     prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
     if prev_ckpt:
-        print(
-            f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}"
-        )
-        load_matching_weights(
-            policy, os.path.join(prev_ckpt, "policy.pt"), device
-        )
+        print(f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}")
+        load_matching_weights(policy, os.path.join(prev_ckpt, "policy.pt"), device)
 
     if args.load_checkpoint:
         print(f"  [Transfer] Loading custom checkpoint from {args.load_checkpoint}")

@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from constants import DOOR, WAIT, WALL
+from constants import DOOR, OBSERVATION_SIZE, WAIT, WALL
 from curriculum import CURRICULUM
 from env import AGENTS, HeistEnv
 
@@ -18,7 +18,7 @@ def test_curriculum_stages_reset_and_step():
             assert set(obs) == set(AGENTS)
             assert env.state().shape == state_dim
             for agent in AGENTS:
-                assert obs[agent]["observation"].shape == (5, 5)
+                assert obs[agent]["observation"].shape == OBSERVATION_SIZE
                 assert obs[agent]["action_mask"].any()
 
 
