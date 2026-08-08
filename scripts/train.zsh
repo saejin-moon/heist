@@ -233,7 +233,7 @@ run_campaign() {
     if [ -n "$MODELS" ]; then
         IFS=',' read -A model_names <<< "$MODELS"
     else
-        model_names=("ippo" "mappo" "coma" "comm" "mappo_car" "mappo_cir" "loo" "ate" "macca" "marc")
+        model_names=("ippo" "mappo" "coma" "mappo_car" "mappo_cir" "loo" "ate" "macca" "marc")
     fi
 
     local -a rnd_flags=()
