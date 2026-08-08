@@ -53,7 +53,7 @@ $ T_k = T_0^{\text{conv}} \cdot \left( \frac{W_k \cdot H_k}{121} \right) \cdot \
 | **Stage 1** ($ 17 \times 17 $) | 289 | $ 2.388\times $ | 2 | $ 1.20\times $ | **343,933 steps** (344k) | 463,933 steps |
 | **Stage 2** ($ 25 \times 25 $) | 625 | $ 5.165\times $ | 5 | $ 1.50\times $ | **929,752 steps** (930k) | 1,393,685 steps |
 | **Stage 3** ($ 35 \times 35 $) | 1,225 | $ 10.124\times $ | 8 | $ 1.80\times $ | **2,186,776 steps** (2.19M) | 3,580,461 steps |
-| **Stage 4** ($ 50 \times 50 $) | 2,500 | $ 20.661\times $ | 11 | $ 2.10\times $ | **5,206,610 steps** (5.21M) | 8,787,071 steps |
-| **Total Campaign** | — | **$ 39.338\times $** | — | — | **8,787,071 steps** (8.79M) | — |
+| **Stage 4** ($ 50 \times 50 $) | 2,500 | $ 20.661\times $ | 11 | $ 2.10\times $ | **5,206,611 steps** (5.21M) | 8,787,072 steps |
+| **Total Campaign** | — | **$ 39.338\times $** | — | — | **8,787,072 steps** (8.79M) | — |
 
 This unified scaling law mathematically accounts for both facility area expansion and security obstacle density, ensuring all curriculum stages receive an empirically grounded sample budget.

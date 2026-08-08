@@ -47,13 +47,23 @@ Every hyperparameter and environment constant is strictly defined as follows:
 | $ \text{ALARM\_BYPASS} $ | $ \delta A_{\text{door}} $ | $ 6.00 $ | Alarm penalty for forced door bypass |
 | $ \text{ALARM\_NEUTRALIZE} $ | $ \delta A_{\text{neut}} $ | $ 10.00 $ | Alarm penalty when Muscle knocks out a security guard |
 | $ \text{ALARM\_GUARD\_SPOT} $ | $ \delta A_{\text{spot}} $ | $ 25.00 $ | Alarm penalty when guard spots an agent within catch distance |
-| $ \text{ALARM\_TIMEOUT} $ | $ \delta A_{\text{timeout}} $ | $ 25.00 $ | Alarm surge when extraction countdown expires |
+| $ \text{ALARM\_EXTRACTION\_TIMEOUT} $ | $ \delta A_{\text{timeout}} $ | $ 25.00 $ | Alarm surge when extraction countdown expires |
 | $ \text{CAMERA\_RANGE} $ | $ L_{\text{cam}} $ | $ 12 $ | Maximum line-of-sight distance for security cameras |
 | $ \text{CATCH\_DISTANCE} $ | $ d_{\text{catch}} $ | $ 1 $ | Manhattan distance triggering guard catch termination |
 | $ \text{CONVERGE\_ALARM} $ | $ A_{\text{hunt}} $ | $ 50.0 $ | Alarm threshold above which guards switch to active Hunt mode |
 | $ \text{NEUTRALIZE\_TURNS} $ | $ K_{\text{neut}} $ | $ 8 $ | Turns a guard remains incapacitated |
 | $ \text{ALARM\_NEUTRALIZE\_DELAY} $ | $ K_{\text{delay}} $ | $ 15 $ | Delay turns before security command notices a missing guard |
 | $ \text{COMM\_MESSAGE\_DIM} $ | $ d_{\text{msg}} $ | $ 32 $ | Vector dimension of TarMAC communication messages |
+| $ \text{ALARM\_BREACH} $ | $ \delta A_{\text{breach}} $ | $ 30.00 $ | Instant global-alarm cost of a wall breach |
+| $ \text{BREACH\_RADIUS} $ | $ R_{\text{breach}} $ | $ 10 $ | Guards within this range repath to the breach |
+| $ \text{EXTRACTOR\_BURDEN\_TURNS} $ | $ K_{\text{burden}} $ | $ 2 $ | Loot-carrying extractor moves 1 tile per $ K $ turns |
+| $ \text{GUARD\_LOS\_RANGE} $ | $ L_{\text{guard}} $ | $ 8 $ | Directional line-of-sight reach for guards |
+| $ \text{SEARCH\_RADIUS} $ | $ R_{\text{search}} $ | $ 5 $ | Tiles around a last-known position to sweep |
+| $ \text{SEARCH\_TURNS} $ | $ K_{\text{search}} $ | $ 6 $ | Turns a guard stays in Search before Patrol |
+| $ \text{BREACH\_SEARCH\_TRIGGER} $ | $ b_{\text{trigger}} $ | $ \text{True} $ | A fresh breach puts nearby guards into Search |
+| $ \text{GUARD\_COUNT} $ | $ N_{\text{guard}} $ | $ 6 $ | Number of rule-based adversary guards |
+| $ \text{CAMERA\_COUNT} $ | $ N_{\text{cam}} $ | $ 3 $ | Number of static security cameras |
+| $ \text{DOOR\_COUNT} $ | $ N_{\text{door}} $ | $ 4 $ | Number of locked bypassable doors |
 
 ## 2.4 Potential-Based Reward Shaping (PBRS)
 

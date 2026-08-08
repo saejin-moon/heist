@@ -1,0 +1,119 @@
+[
+  {
+    "seed": 0,
+    "metrics": {
+      "win_rate": 0.0,
+      "mean_return": -8.901216666666667,
+      "mean_length": 12.116666666666667,
+      "mean_alarm": 100.0,
+      "scout_tag_rate": 1.0,
+      "terminal_rate": 0.8666666666666667,
+      "loot_rate": 0.7333333333333333,
+      "extraction_rate": 0.55,
+      "mean_hack_progress": 0.18333333333333332,
+      "mean_explored_pct": 0.0553,
+      "mean_tagged_pois": 1.05,
+      "mean_neutralized_guards": 0.36666666666666664,
+      "cause_alarm_max_rate": 1.0,
+      "cause_guard_catch_rate": 0.0,
+      "cause_timeout_rate": 0.0,
+      "role_credit_scout": 0.040033333333333275,
+      "role_credit_hacker": 0.6916999999999999,
+      "role_credit_muscle": 3.340033333333334,
+      "role_credit_extractor": 0.3233666666666668
+    },
+    "cai": {
+      "scout": 0.0,
+      "hacker": 0.0,
+      "muscle": 0.0,
+      "extractor": 0.0
+    },
+    "counterfactual": {
+      "baseline_win_rate": 0.0,
+      "importance": {
+        "scout": 0.0,
+        "hacker": 0.0,
+        "muscle": 0.0,
+        "extractor": 0.0
+      }
+    }
+  },
+  {
+    "seed": 1,
+    "metrics": {
+      "win_rate": 0.0,
+      "mean_return": -8.901216666666667,
+      "mean_length": 12.116666666666667,
+      "mean_alarm": 100.0,
+      "scout_tag_rate": 1.0,
+      "terminal_rate": 0.8666666666666667,
+      "loot_rate": 0.7333333333333333,
+      "extraction_rate": 0.55,
+      "mean_hack_progress": 0.18333333333333332,
+      "mean_explored_pct": 0.0553,
+      "mean_tagged_pois": 1.05,
+      "mean_neutralized_guards": 0.36666666666666664,
+      "cause_alarm_max_rate": 1.0,
+      "cause_guard_catch_rate": 0.0,
+      "cause_timeout_rate": 0.0,
+      "role_credit_scout": 0.040033333333333275,
+      "role_credit_hacker": 0.6916999999999999,
+      "role_credit_muscle": 3.340033333333334,
+      "role_credit_extractor": 0.3233666666666668
+    },
+    "cai": {
+      "scout": 0.0,
+      "hacker": 0.0,
+      "muscle": 0.0,
+      "extractor": 0.0
+    },
+    "counterfactual": {
+      "baseline_win_rate": 0.0,
+      "importance": {
+        "scout": 0.0,
+        "hacker": 0.0,
+        "muscle": 0.0,
+        "extractor": 0.0
+      }
+    }
+  },
+  {
+    "seed": 2,
+    "metrics": {
+      "win_rate": 0.0,
+      "mean_return": -8.901216666666667,
+      "mean_length": 12.116666666666667,
+      "mean_alarm": 100.0,
+      "scout_tag_rate": 1.0,
+      "terminal_rate": 0.8666666666666667,
+      "loot_rate": 0.7333333333333333,
+      "extraction_rate": 0.55,
+      "mean_hack_progress": 0.18333333333333332,
+      "mean_explored_pct": 0.0553,
+      "mean_tagged_pois": 1.05,
+      "mean_neutralized_guards": 0.36666666666666664,
+      "cause_alarm_max_rate": 1.0,
+      "cause_guard_catch_rate": 0.0,
+      "cause_timeout_rate": 0.0,
+      "role_credit_scout": 0.040033333333333275,
+      "role_credit_hacker": 0.6916999999999999,
+      "role_credit_muscle": 3.340033333333334,
+      "role_credit_extractor": 0.3233666666666668
+    },
+    "cai": {
+      "scout": 0.0,
+      "hacker": 0.0,
+      "muscle": 0.0,
+      "extractor": 0.0
+    },
+    "counterfactual": {
+      "baseline_win_rate": 0.0,
+      "importance": {
+        "scout": 0.0,
+        "hacker": 0.0,
+        "muscle": 0.0,
+        "extractor": 0.0
+      }
+    }
+  }
+]

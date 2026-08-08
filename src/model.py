@@ -2,7 +2,7 @@
 Neural network components for HEIST training.
 
 All networks share the observation contract from env.py:
-    observation  : 5x5 Fog-Masked Box (25 values after flatten)
+    observation  : Flattened 7x7 Fog-Masked Box (49 values)
     action_mask  : 6-element binary gate
     role_id      : 4-element one-hot identifying the controlling role (REV-2)
 
