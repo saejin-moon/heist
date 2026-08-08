@@ -62,6 +62,8 @@ class Args:
     alpha_alarm: float = 1.5
     gamma_causal: float = 0.95
     affordance_coef: float = 0.5
+    no_shielding: bool = False
+    no_macro: bool = False
     use_rnd: bool = True
     rnd_coef: float = 0.05
     use_ckpt: bool = False
@@ -295,7 +297,7 @@ def train(args):
         for step in range(args.num_steps):
             global_step += args.num_envs
             state_t = torch.tensor(
-                np.array(vec_env.call("state")),
+                vec_env.state,
                 dtype=torch.float32,
                 device=device,
             )

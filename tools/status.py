@@ -35,7 +35,6 @@ MODEL_NAMES = [
     "ippo",
     "mappo",
     "coma",
-    "comm",
     "mappo_car",
     "mappo_cir",
     "loo",

@@ -190,7 +190,7 @@ def train(args):
         for step in range(args.num_steps):
             global_step += args.num_envs
             state_t = torch.tensor(
-                np.array(vec_env.call("state")),
+                vec_env.state,
                 dtype=torch.float32,
                 device=device,
             )
