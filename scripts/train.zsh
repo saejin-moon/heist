@@ -89,6 +89,8 @@ ENABLE_SIDE_TASKS=0
 CUSTOM_PREFIX=""
 USE_CKPT=0
 FROM_STAGE=""
+MAX_CPU_TEMP=""
+MAX_GPU_TEMP=""
 
 while (( $# )); do
     case "$1" in
@@ -117,6 +119,8 @@ while (( $# )); do
         --daemon)     DAEMON=1; shift ;;
         --eval)       RUN_EVAL=1; shift ;;
         --no-eval)    RUN_EVAL=0; shift ;;
+        --max-cpu-temp) MAX_CPU_TEMP="$2"; shift 2 ;;
+        --max-gpu-temp) MAX_GPU_TEMP="$2"; shift 2 ;;
         --skip-smoke) SKIP_SMOKE=1; shift ;;
         --pull)       DO_PULL=1; shift ;;
         -h|--help)    usage ;;
@@ -290,7 +294,10 @@ run_campaign() {
         local now=$(date +%s)
 
         # Thermal protection check & hardware temp logging
-        if ! uv run python tools/thermal_guard.py --log; then
+        local t_args=("--log")
+        if [ -n "$MAX_CPU_TEMP" ]; then t_args+=("--max-cpu-temp" "$MAX_CPU_TEMP"); fi
+        if [ -n "$MAX_GPU_TEMP" ]; then t_args+=("--max-gpu-temp" "$MAX_GPU_TEMP"); fi
+        if ! uv run python tools/thermal_guard.py "${t_args[@]}"; then
             log "[EMERGENCY STOP] High hardware temperature detected! Stopping training campaign for safety."
             pkill -f "src/train_" 2>/dev/null || true
             exit 1
