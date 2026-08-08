@@ -49,9 +49,9 @@ HEIST evaluates a 9-baseline benchmark suite alongside our flagship novel algori
 | **`ippo`** | Independent RL | Fully decentralized actor-critic per agent (baseline) |
 | **`mappo`** | Centralized Critic | Shared actor with centralized state-based $V(s)$ critic |
 | **`coma`** | Counterfactual Advantage | Centralized critic $Q_i(s, \mathbf{a}_{-i}, a_i)$ with counterfactual baseline |
-| **`comm`** | Differentiable Comm | TarMAC inter-agent attention-based message passing |
-| **`mappo_car`** | Affordance Shaping | Intrinsic affordance reward shaping for unlocking teammate actions |
-| **`mappo_cir`** | Advantage Routing | Causal Influence Routing via state feature ablation ($V(s)$ sensitivity) |
+| **`comm`** | Differentiable Comm | TarMAC inter-agent attention-based message passing (self-attention excluded) |
+| **`mappo_car`** | Affordance Shaping | Intrinsic affordance reward shaping ($\sum \Delta \text{Mask}$) for unlocking teammate actions |
+| **`mappo_cir`** | Advantage Routing | Causal Influence Routing (Paper: $\nabla_a Q$ Jacobian $\vert$ Code: Approximated via $V(s)$ positional feature ablation) |
 | **`loo`** | Leave-One-Out (C3-Style) | Marginal counterfactual baseline isolating $i$-th agent's contribution |
 | **`ate`** | Average Treatment Effect | Contrastive advantage against explicit WAIT null action ($a_{\text{WAIT}} = 4$) |
 | **`macca`** | Dynamic Bayesian Graph | Dynamic Bayesian Network (DBN) factorizing global state transitions |
@@ -90,7 +90,7 @@ cd heist
 uv sync --locked
 ```
 
-Run Pytest unit test suite (57 tests):
+Run Pytest unit test suite (59 tests):
 
 ```bash
 uv run pytest -v
@@ -141,6 +141,6 @@ src/train_ate.py              Average Treatment Effect contrastive trainer
 src/train_macca.py            Dynamic Bayesian Network causal credit trainer
 src/train_marc.py             MARC flagship novel algorithm trainer
 paper/                        Quarkdown research paper documentation suite
-tests/                        Pytest unit test suite (55 PyTest cases)
+tests/                        Pytest unit test suite (59 PyTest cases)
 results/                      Run artifacts, JSON summaries, and benchmark logs
 ```
