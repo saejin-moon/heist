@@ -16,8 +16,9 @@ LOCAL_DEST="${1:-.}"
 echo "Syncing results and checkpoints from ${TARGET_USER}@${TARGET_HOST}:${REMOTE_PATH} ..."
 
 rsync -avzP \
-    --include="results/*** \
-    --include="checkpoints/*** \
+    --include="results/***" \
+    --include="checkpoints/***" \
+    --include="log/***" \
     --exclude="*" \
     "${TARGET_USER}@${TARGET_HOST}:${REMOTE_PATH}/" \
     "${LOCAL_DEST}/"
