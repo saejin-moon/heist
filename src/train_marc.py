@@ -95,10 +95,9 @@ def parse_args() -> Args:
         default=False,
     )
     parser.add_argument(
-        "--no-rnd",
-        action="store_false",
-        dest="use_rnd",
-        default=True,
+        "--use-rnd",
+        action="store_true",
+        default=False,
     )
     parser.add_argument("--rnd-coef", type=float, default=args.rnd_coef)
     parser.add_argument(
