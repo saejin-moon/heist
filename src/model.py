@@ -305,10 +305,15 @@ class TarMACComm(nn.Module):
 
         # attention scores: [B, n, n]  (receiver x sender)
         scores = torch.bmm(queries, keys.transpose(1, 2)) / self.scale
+
+        # Mask out self-attention to match TarMAC research (sum over j != i)
+        mask = torch.eye(scores.size(1), device=scores.device).bool()
+        scores.masked_fill_(mask.unsqueeze(0), -1e9)
+
         attention = torch.softmax(scores, dim=-1)
 
         messages_gated = gates * keys  # [B, n, msg]
-        # each receiver aggregates across all senders (including self)
+        # each receiver aggregates across all other senders (excluding self)
         aggregated = torch.bmm(attention, messages_gated)  # [B, n, msg]
 
         return aggregated, messages_gated, attention

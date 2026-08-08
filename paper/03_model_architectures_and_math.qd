@@ -45,11 +45,11 @@ COMM equips agents with a differentiable attention-based communication channel (
 
 2. **Attention Weights:**
 
-   $ \alpha_{ij} = \frac{\exp(q_i^\top k_j / \sqrt{d_k})}{\sum_{l} \exp(q_i^\top k_l / \sqrt{d_k})} $
+   $ \alpha_{ij} = \frac{\exp(q_i^\top k_j / \sqrt{d_k})}{\sum_{l \neq i} \exp(q_i^\top k_l / \sqrt{d_k})} $
 
 3. **Attended Aggregated Message:**
 
-   $ \bar{m}_i = \sum_{j} \alpha_{ij} m_j \in \mathbb{R}^{32} $
+   $ \bar{m}_i = \sum_{j \neq i} \alpha_{ij} m_j \in \mathbb{R}^{32} $
 
 4. **Policy Input:** Policy $ \pi_{\theta}(a_i | [o_i, \bar{m}_i]) \in \mathbb{R}^{85} $.
 
@@ -59,9 +59,9 @@ COMM equips agents with a differentiable attention-based communication channel (
 
 MAPPO_CAR injects action-mask affordance delta feedback into agent rewards:
 
-$ r_{t,i}^{\text{CAR}} = r_{t,i} + \beta_{\text{CAR}} \cdot \mathbf{1}[\text{car\_unlocked}] \cdot \max(0, V_{\Phi}(s_{t+1})) $
+$ r_{t,i}^{\text{CAR}} = r_{t,i} + \beta_{\text{CAR}} \sum_{j \neq i} \Delta \text{Mask}_j(s_t, a_{t,i}) $
 
-where $ \mathbf{1}[\text{car\_unlocked}] $ is a boolean flag indicating if agent $ i $'s action unlocked new affordances, and $ V_{\Phi} $ is the centralized state-value.
+where $ \Delta \text{Mask}_j(s_t, a_{t,i}) = |\text{Mask}_j(s_{t+1})| - |\text{Mask}_j(s_t)| $ measures how agent $ i $'s action expanded available action affordances for teammate $ j $.
 
 ---
 
@@ -71,7 +71,7 @@ MAPPO_CIR routes advantage estimation based on causal contribution rather than u
 
 $ \hat{A}_{t,i}^{\text{CIR}} = \hat{A}_t^{\text{central}} \cdot \psi_i(s_t, \mathbf{a}_t) $
 
-where $ \psi_i(s_t, \mathbf{a}_t) $ distributes advantage based on Counterfactual Feature Ablation (setting agent $ i $'s coordinates in the joint state to zero and measuring the absolute difference in the centralized state-value $ V_{\Phi}(s_t) $).
+where $ \psi_i(s_t, \mathbf{a}_t) = \frac{\exp(\| \nabla_{a_i} Q(s_t, \mathbf{a}_t) \|)}{\sum_{j} \exp(\| \nabla_{a_j} Q(s_t, \mathbf{a}_t) \|)} $ measures the local Jacobian sensitivity of the joint state-value with respect to agent $ i $'s action vector.
 
 ---
 
@@ -107,7 +107,7 @@ MARC factorizes credit assignment into a multi-scale Micro-Macro structure:
 
 1. **Micro Credit ($ \mu_{i, t} $):** Evaluates local interaction impact via action affordance deltas:
 
-   $ \mu_{i, t} = \hat{A}_{i, t}^{\text{base}} + \beta_{\text{affordance}} \cdot \mathbf{1}[\text{car\_unlocked}] $
+   $ \mu_{i, t} = \hat{A}_{i, t}^{\text{base}} + \beta_{\text{affordance}} \sum_{j \neq i} \Delta \text{Mask}_j(s_t, a_{i, t}) $
 
 2. **Macro Weighting ($ \Omega_t $):** Multiplicatively scales micro credit by global alarm ($ A_t $) and team outcome ($ R_T $):
 

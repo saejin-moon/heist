@@ -327,16 +327,19 @@ def train(args: Args):
             )
             # --- CAR: Counterfactual Affordance Reward ---
             if getattr(args, "car_coef", 0.0) > 0.0:
-                with torch.no_grad():
-                    next_state_t = torch.as_tensor(vec_env.state, device=device)
-                    v_s_next = policy.get_value(next_state_t).squeeze(-1)
+                new_masks = next_obs["_stacked"]["action_mask"]
+                old_masks = mask_all.cpu().numpy()
+                delta_masks = new_masks.sum(axis=-1) - old_masks.sum(axis=-1)
                 for env_idx in range(args.num_envs):
-                    for a in AGENTS:
+                    for idx_a, a in enumerate(AGENTS):
                         if infos[env_idx].get(a, {}).get("car_unlocked", False):
-                            bonus = args.car_coef * max(
-                                0.0, float(v_s_next[env_idx].item())
-                            )
-                            rewards[a][env_idx] += bonus
+                            bonus = 0.0
+                            for idx_j in range(len(AGENTS)):
+                                if idx_j != idx_a:
+                                    bonus += max(
+                                        0.0, float(delta_masks[idx_j, env_idx])
+                                    )
+                            rewards[a][env_idx] += args.car_coef * bonus
 
             next_terminations = torch.as_tensor(
                 terminations["scout"], device=device

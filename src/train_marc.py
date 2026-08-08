@@ -127,7 +127,7 @@ def compute_marc_advantages(
     dones,
     truncs,
     alarms,
-    car_events,
+    affordance_deltas,
     gamma,
     gae_lambda,
     alpha_alarm,
@@ -144,7 +144,7 @@ def compute_marc_advantages(
         dones: [N_AGENTS, T, B]
         truncs: [N_AGENTS, T, B]
         alarms: [T, B] Alarm values A_t in [0, 100]
-        car_events: [N_AGENTS, T, B] Boolean mask expansion indicators
+        affordance_deltas: [N_AGENTS, T, B] Continuous mask expansion sum
         no_shielding: If True, disables asymmetric failure shielding.
         no_macro: If True, disables macro weighting (\Omega_t = 1.0).
     """
@@ -183,14 +183,14 @@ def compute_marc_advantages(
 
         if not no_shielding:
             not_win = (~win).unsqueeze(0).unsqueeze(0)  # [1, 1, B]
-            shield_mask = not_win & car_events  # [N_AGENTS, T, B]
+            shield_mask = not_win & (affordance_deltas > 0)  # [N_AGENTS, T, B]
             omega_t = torch.where(shield_mask, alarm_fac, unshielded_omega)
         else:
             omega_t = unshielded_omega
 
     # Micro credit: Base GAE + Affordance boost
     affordance_boost = (
-        car_events.float() * affordance_coef if affordance_coef > 0.0 else 0.0
+        affordance_deltas * affordance_coef if affordance_coef > 0.0 else 0.0
     )
     micro_credit = base_adv + affordance_boost
     immediate_marc = micro_credit * omega_t  # [N_AGENTS, T, B]
@@ -272,9 +272,9 @@ def train(args):
             "dones": torch.zeros((args.num_steps, args.num_envs), device=device),
             "truncs": torch.zeros((args.num_steps, args.num_envs), device=device),
             "values": torch.zeros((args.num_steps, args.num_envs), device=device),
-            "car_unlocked": torch.zeros(
+            "affordance_deltas": torch.zeros(
                 (args.num_steps, args.num_envs),
-                dtype=torch.bool,
+                dtype=torch.float32,
                 device=device,
             ),
         }
@@ -347,7 +347,14 @@ def train(args):
                 alarms_step, dtype=torch.float32, device=device
             )
 
-            for a in AGENTS:
+            # Compute affordance deltas
+            delta_masks = np.zeros((len(AGENTS), args.num_envs), dtype=np.float32)
+            for j, a_j in enumerate(AGENTS):
+                new_m = np.sum(next_obs[a_j]["action_mask"], axis=-1)
+                old_m = np.sum(obs_dict[a_j]["action_mask"], axis=-1)
+                delta_masks[j] = new_m - old_m
+
+            for idx_a, a in enumerate(AGENTS):
                 r_tensor = torch.tensor(rewards[a], dtype=torch.float32, device=device)
                 if rnd_module is not None:
                     rnd_r = rnd_module.compute_reward(buffers[a]["obs"][step])
@@ -361,14 +368,21 @@ def train(args):
                     truncs[a], dtype=torch.float32, device=device
                 )
 
-                car_flags = [
-                    infos[env_idx].get(a, {}).get("car_unlocked", False)
-                    if isinstance(infos, list) and env_idx < len(infos)
-                    else False
-                    for env_idx in range(args.num_envs)
-                ]
-                buffers[a]["car_unlocked"][step] = torch.tensor(
-                    car_flags, dtype=torch.bool, device=device
+                affordance_val = np.zeros(args.num_envs, dtype=np.float32)
+                for env_idx in range(args.num_envs):
+                    if (
+                        isinstance(infos, list)
+                        and env_idx < len(infos)
+                        and infos[env_idx].get(a, {}).get("car_unlocked", False)
+                    ):
+                        for idx_j in range(len(AGENTS)):
+                            if idx_j != idx_a:
+                                affordance_val[env_idx] += max(
+                                    0.0, float(delta_masks[idx_j, env_idx])
+                                )
+
+                buffers[a]["affordance_deltas"][step] = torch.tensor(
+                    affordance_val, dtype=torch.float32, device=device
                 )
 
             obs_dict = next_obs
@@ -379,7 +393,9 @@ def train(args):
             raw_values = torch.stack([buffers[a]["values"] for a in AGENTS], dim=0)
             raw_dones = torch.stack([buffers[a]["dones"] for a in AGENTS], dim=0)
             raw_truncs = torch.stack([buffers[a]["truncs"] for a in AGENTS], dim=0)
-            raw_car = torch.stack([buffers[a]["car_unlocked"] for a in AGENTS], dim=0)
+            raw_affordance = torch.stack(
+                [buffers[a]["affordance_deltas"] for a in AGENTS], dim=0
+            )
 
             stacked_adv, stacked_returns = compute_marc_advantages(
                 raw_rewards,
@@ -387,7 +403,7 @@ def train(args):
                 raw_dones,
                 raw_truncs,
                 buffer_alarms,
-                raw_car,
+                raw_affordance,
                 args.gamma,
                 args.gae_lambda,
                 args.alpha_alarm,
