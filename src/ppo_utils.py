@@ -151,3 +151,37 @@ def compute_counterfactual_advantage(
     # 4. Counterfactual Advantage
     advantage = q_taken - baseline
     return advantage, q_taken
+
+
+def compute_loo_advantage(q_values_all, taken_actions, action_mask):
+    r"""Computes Leave-One-Out (C3-style) marginal advantage for an agent batch.
+
+    Formula:
+        A_i^{LOO}(s, a_i) = Q_i(s, a_{-i}, a_i) - (1 / (|A_legal| - 1)) * \sum_{a' != a_i} Q_i(s, a_{-i}, a')
+    """
+    q_taken = q_values_all.gather(1, taken_actions.unsqueeze(1)).squeeze(1)
+    legal_counts = torch.sum(action_mask, dim=-1) - 1.0
+    legal_counts = torch.clamp(legal_counts, min=1.0)
+
+    # Sum of all legal Q-values minus the taken action Q-value
+    masked_q = torch.where(
+        action_mask == 1, q_values_all, torch.zeros_like(q_values_all)
+    )
+    sum_all_q = torch.sum(masked_q, dim=-1)
+    sum_other_q = sum_all_q - q_taken
+
+    baseline = sum_other_q / legal_counts
+    advantage = q_taken - baseline
+    return advantage, q_taken
+
+
+def compute_ate_advantage(q_values_all, taken_actions, action_mask, null_action_idx=4):
+    """Computes Average Treatment Effect (ATE) advantage against the explicit WAIT null action.
+
+    Formula:
+        A_i^{ATE}(s, a_i) = Q_i(s, a_{-i}, a_i) - Q_i(s, a_{-i}, a_{WAIT})
+    """
+    q_taken = q_values_all.gather(1, taken_actions.unsqueeze(1)).squeeze(1)
+    q_wait = q_values_all[:, null_action_idx]
+    advantage = q_taken - q_wait
+    return advantage, q_taken

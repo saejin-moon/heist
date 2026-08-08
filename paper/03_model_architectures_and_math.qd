@@ -1,6 +1,6 @@
-# 3. Complete Model Suite Architecture & Mathematical Formulations
+# 3. Model Suite Architecture & Mathematical Formulations
 
-We evaluate 10 distinct algorithmic configurations across 4 fundamental MARL paradigms plus 6 targeted mechanism ablations.
+We evaluate a structured suite of 9 baseline algorithms spanning standard MARL paradigms, counterfactual advantage methods, differentiable communication, dynamic Bayesian causal graphs, and treatment effect contrastive learning.
 
 ## 3.1 Model 1: IPPO (Independent PPO)
 
@@ -25,27 +25,17 @@ MAPPO replaces individual local critics with a centralized critic $ V_{\Phi}(s_t
 
 ---
 
-## 3.3 Model 3: MAPPO + CAR (Causal Affordance Credit)
+## 3.3 Model 3: COMA (Counterfactual Multi-Agent Policy Gradients)
 
-MAPPO_CAR injects action-mask affordance delta feedback into agent rewards:
+COMA uses a centralized critic $ Q(s, \mathbf{a}) $ and computes a counterfactual advantage baseline for agent $ i $:
 
-$ r_{t,i}^{\text{CAR}} = r_{t,i} + \beta_{\text{CAR}} \sum_{j \neq i} \Delta \text{Mask}_j(s_t, a_{t,i}) $
+$ A_i^{\text{COMA}}(s, \mathbf{a}) = Q(s, \mathbf{a}) - \sum_{a_i' \in \mathcal{A}_i} \pi_i(a_i' | o_i) Q(s, (a_i', \mathbf{a}_{-i})) $
 
-where $ \Delta \text{Mask}_j(s_t, a_{t,i}) = |\text{Mask}_j(s_{t+1})| - |\text{Mask}_j(s_t)| $ measures how agent $ i $'s action expanded available action affordances for teammate $ j $.
-
----
-
-## 3.4 Model 4: MAPPO + CIR (Causal Advantage Routing)
-
-MAPPO_CIR routes advantage estimation based on causal contribution rather than uniform spatial sharing:
-
-$ \hat{A}_{t,i}^{\text{CIR}} = \hat{A}_t^{\text{central}} \cdot \psi_i(s_t, \mathbf{a}_t) $
-
-where $ \psi_i(s_t, \mathbf{a}_t) = \frac{\exp(\| \nabla_{a_i} Q(s_t, \mathbf{a}_t) \|)}{\sum_{j} \exp(\| \nabla_{a_j} Q(s_t, \mathbf{a}_t) \|)} $ measures the local Jacobian sensitivity of the joint state-value with respect to agent $ i $'s action vector.
+This marginalizes out agent $ i $'s action while keeping all teammate actions $ \mathbf{a}_{-i} $ fixed.
 
 ---
 
-## 3.5 Model 5: COMM (TarMAC Differentiable Communication)
+## 3.4 Model 4: COMM (TarMAC Differentiable Communication)
 
 COMM equips agents with a differentiable attention-based communication channel (TarMAC):
 
@@ -65,43 +55,76 @@ COMM equips agents with a differentiable attention-based communication channel (
 
 ---
 
-## 3.6 Model 6: COMM + CIR
+## 3.5 Model 5: MAPPO + CAR (Causal Affordance Credit)
 
-Combines TarMAC attention message passing ($ \bar{m}_i $) with Causal Advantage Routing ($ \hat{A}_{t,i}^{\text{CIR}} $).
+MAPPO_CAR injects action-mask affordance delta feedback into agent rewards:
 
----
+$ r_{t,i}^{\text{CAR}} = r_{t,i} + \beta_{\text{CAR}} \sum_{j \neq i} \Delta \text{Mask}_j(s_t, a_{t,i}) $
 
-## 3.7 Model 7: COMM + CIR + CAR (Full Unified Architecture)
-
-Integrates TarMAC communication, CIR advantage routing, and CAR affordance credit shaping into a single unified MARL architecture.
+where $ \Delta \text{Mask}_j(s_t, a_{t,i}) = |\text{Mask}_j(s_{t+1})| - |\text{Mask}_j(s_t)| $ measures how agent $ i $'s action expanded available action affordances for teammate $ j $.
 
 ---
 
-## 3.8 Model 8: QMIX (Monotonic Value Decomposition)
+## 3.6 Model 6: MAPPO + CIR (Causal Advantage Routing)
 
-QMIX factorizes joint action-value $ Q_{\text{tot}}(s, \mathbf{a}) $ as a monotonic combination of individual agent utilities $ Q_i(o_i, a_i) $:
+MAPPO_CIR routes advantage estimation based on causal contribution rather than uniform spatial sharing:
 
-$ Q_{\text{tot}}(s, \mathbf{a}) = f_{\text{mixing}}(Q_1(o_1, a_1), \dots, Q_N(o_N, a_N) ; s) $
+$ \hat{A}_{t,i}^{\text{CIR}} = \hat{A}_t^{\text{central}} \cdot \psi_i(s_t, \mathbf{a}_t) $
 
-### Monotonicity Constraint & Factorization Breakdown
-To enforce $ \arg\max_{\mathbf{a}} Q_{\text{tot}}(s, \mathbf{a}) = (\arg\max_{a_1} Q_1, \dots, \arg\max_{a_N} Q_N) $, hypernetworks produce positive weights $ W_1 = |g_1(s)|, W_2 = |g_2(s)| $:
+where $ \psi_i(s_t, \mathbf{a}_t) = \frac{\exp(\| \nabla_{a_i} Q(s_t, \mathbf{a}_t) \|)}{\sum_{j} \exp(\| \nabla_{a_j} Q(s_t, \mathbf{a}_t) \|)} $ measures the local Jacobian sensitivity of the joint state-value with respect to agent $ i $'s action vector.
+
+---
+
+## 3.7 Model 7: LOO (Leave-One-Out Marginal Counterfactual)
+
+LOO implements a Leave-One-Out marginal counterfactual advantage (C3-style):
+
+$ A_i^{\text{LOO}}(s, \mathbf{a}) = Q_i(s, a_{-i}, a_i) - \frac{1}{|\mathcal{A}_{\text{legal}}|-1} \sum_{a' \neq a_i} Q_i(s, a_{-i}, a') $
+
+By isolating the marginal contribution without taking expectations over uncalibrated policy distributions $ \pi_i(a_i'|o_i) $, LOO reduces counterfactual variance compared to COMA.
+
+---
+
+## 3.8 Model 8: ATE (Average Treatment Effect Contrastive PPO)
+
+ATE measures the direct treatment effect of executing an action $ a_i $ compared to the explicit null action ($ a_{\text{WAIT}} = 4 $):
+
+$ A_i^{\text{ATE}}(s, a_i) = Q_i(s, a_{-i}, a_i) - Q_i(s, a_{-i}, a_{\text{WAIT}}) $
+
+---
+
+## 3.9 Model 9: MACCA (Multi-Agent Dynamic Bayesian Causal Graph)
+
+MACCA factorizes global state transitions into a Dynamic Bayesian Network (DBN) to measure inter-agent influence graphs:
+
+$ \hat{A}_{t,i}^{\text{MACCA}} = \hat{A}_{t,i}^{\text{central}} \cdot \left[ 1 + \eta_{\text{MACCA}} \sum_{j \neq i} P_{\text{DBN}}(s_{j, t+1} \mid s_t, a_{i, t}) \right] $
+
+---
+
+## 3.10 Model 10: MARC (Micro-Macro Asymmetric Retroactive Causal-chain) — *Flagship Algorithm*
+
+MARC factorizes credit assignment into a multi-scale Micro-Macro structure:
+
+1. **Micro Credit ($ \mu_{i, t} $):** Evaluates local interaction impact via action affordance deltas:
+
+   $ \mu_{i, t} = \hat{A}_{i, t}^{\text{base}} + \beta_{\text{affordance}} \sum_{j \neq i} \Delta \text{Mask}_j(s_t, a_{i, t}) $
+
+2. **Macro Weighting ($ \Omega_t $):** Multiplicatively scales micro credit by global alarm ($ A_t $) and team outcome ($ R_T $):
+
+   $ \Omega_t = \Phi_{\text{outcome}}(R_T) \cdot \exp\left( -\alpha_{\text{alarm}} \frac{A_t}{A_{\text{max}}} \right) $
+
+3. **Asymmetric Failure Shielding:** On team failure, negative credit targets direct failure triggers while shielding upstream enabling actions ($ \Omega_t = 1.0 $ for enablers).
+
+4. **Backward Retroactive Pass ($ t = T \to 0 $):** Propagates joint Micro-Macro advantages backward through time:
+
+   $ \hat{A}_{i, t}^{\text{MARC}} = \mu_{i, t} \cdot \Omega_t + \gamma_{\text{causal}} \hat{A}_{i, t+1}^{\text{MARC}} $
+
+---
+
+## 3.11 Theoretical Note: QMIX Monotonicity Limitation
+
+Value factorization methods like QMIX enforce monotonicity:
 
 $ \frac{\partial Q_{\text{tot}}}{\partial Q_i} \ge 0 \quad \forall i \in \mathcal{N} $
 
-**Failure Mode in HEIST:** Because HEIST features sequential causal dependencies (Scout/Hacker actions have 0 immediate return for themselves), forcing $ \frac{\partial Q_{\text{tot}}}{\partial Q_i} \ge 0 $ prevents QMIX from learning enabling actions that reduce an individual agent's immediate return to unlock massive joint returns.
-
----
-
-## 3.9 Model 9: COMA (Counterfactual Multi-Agent Policy Gradients)
-
-COMA uses a centralized critic $ Q(s, \mathbf{a}) $ and computes a counterfactual advantage baseline for agent $ i $:
-
-$ A_i(s, \mathbf{a}) = Q(s, \mathbf{a}) - \sum_{a_i' \in \mathcal{A}_i} \pi_i(a_i' | o_i) Q(s, (a_i', \mathbf{a}_{-i})) $
-
-This marginalizes out agent $ i $'s action while keeping all counterfactual actions $ \mathbf{a}_{-i} $ of teammates fixed.
-
----
-
-## 3.10 Model 10: COMA + CIR
-
-Combines counterfactual baseline credit assignment with Causal Advantage Routing ($ \hat{A}_i^{\text{CIR}} $).
+In HEIST, enabling actions (e.g. Scout tagging or Hacker terminal bypass) carry temporary step penalties or alarm surges, reducing individual $ Q_i $ while increasing expected joint team return $ Q_{\text{tot}} $. Monotonicity constraints strictly forbid this state-action relationship, resulting in total exploration collapse (0.00% across all metrics). QMIX is thus excluded from active multi-stage training runs due to this fundamental structural incompatibility.

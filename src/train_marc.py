@@ -1,0 +1,487 @@
+"""
+MARC (Micro-Macro Asymmetric Retroactive Causal-chain) trainer for HEIST.
+
+Implements the MARC algorithm:
+1. Micro Credit (\\mu_{i, t}): Local action interaction impact via Action Affordance Deltas (\\Delta Mask_j(s_t, a_{i,t})).
+2. Macro Weighting (\\Omega_t): Multiplicative global alarm penalty exp(-\alpha A_t / A_max) and outcome factor.
+3. Asymmetric Failure Shielding: Negative credit targets direct failure triggers while shielding upstream enablers.
+4. Backward Retroactive Pass (t = T -> 0): Propagates Micro-Macro causal advantages backward over trajectory.
+"""
+
+import argparse
+import os
+import time
+from dataclasses import dataclass
+
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.tensorboard import SummaryWriter
+
+from constants import (
+    ACTION_SPACE_SIZE as ACTION_DIM,
+)
+from constants import (
+    ALARM_MAX,
+    N_AGENTS,
+    OBSERVATION_SIZE,
+)
+from env import AGENTS, parse_env_config
+from model import HeistAgent, HeistCritic
+from ppo_utils import (
+    get_previous_stage_checkpoint,
+    load_matching_weights,
+    write_completion,
+)
+from vec_env import VectorEnv
+
+
+@dataclass
+class Args:
+    exp_name: str = "marc"
+    seed: int = 0
+    torch_deterministic: bool = True
+    cuda: bool = True
+    total_timesteps: int = 300_000
+    learning_rate: float = 2.5e-4
+    num_envs: int = 8
+    num_steps: int = 256
+    anneal_lr: bool = True
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    num_minibatches: int = 4
+    update_epochs: int = 4
+    norm_adv: bool = True
+    clip_coef: float = 0.2
+    clip_vloss: bool = True
+    ent_coef: float = 0.01
+    vf_coef: float = 0.5
+    max_grad_norm: float = 0.5
+    env_config: str = ""
+    save_model: bool = True
+    eval_every: int = 10
+    alpha_alarm: float = 1.5
+    gamma_causal: float = 0.95
+    affordance_coef: float = 0.5
+    use_rnd: bool = True
+    rnd_coef: float = 0.05
+    use_ckpt: bool = False
+    from_stage: str = ""
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--exp-name", type=str, default="marc")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--total-timesteps", type=int, default=300_000)
+    parser.add_argument("--learning-rate", type=float, default=2.5e-4)
+    parser.add_argument("--num-envs", type=int, default=8)
+    parser.add_argument("--num-steps", type=int, default=256)
+    parser.add_argument("--env-config", type=str, default="")
+    parser.add_argument(
+        "--no-save-model",
+        action="store_false",
+        dest="save_model",
+        default=True,
+    )
+    parser.add_argument("--alpha-alarm", type=float, default=1.5)
+    parser.add_argument("--gamma-causal", type=float, default=0.95)
+    parser.add_argument("--affordance-coef", type=float, default=0.5)
+    parser.add_argument(
+        "--no-rnd",
+        action="store_false",
+        dest="use_rnd",
+        default=True,
+    )
+    parser.add_argument("--rnd-coef", type=float, default=0.05)
+    parser.add_argument(
+        "--use-ckpt",
+        action="store_true",
+        dest="use_ckpt",
+        default=False,
+    )
+    parser.add_argument("--from-stage", type=str, default="")
+    return parser.parse_args()
+
+
+def compute_marc_advantages(
+    rewards,
+    values,
+    dones,
+    truncs,
+    alarms,
+    car_events,
+    gamma,
+    gae_lambda,
+    alpha_alarm,
+    gamma_causal,
+    affordance_coef,
+):
+    """Computes Micro-Macro Asymmetric Retroactive Causal-chain (MARC) advantages.
+
+    Args:
+        rewards: [N_AGENTS, T, B]
+        values: [N_AGENTS, T, B]
+        dones: [N_AGENTS, T, B]
+        truncs: [N_AGENTS, T, B]
+        alarms: [T, B] Alarm values A_t in [0, 100]
+        car_events: [N_AGENTS, T, B] Boolean mask expansion indicators
+    """
+    num_agents, num_steps, num_envs = rewards.shape
+    base_adv = torch.zeros_like(rewards)
+    marc_adv = torch.zeros_like(rewards)
+
+    # 1. Standard GAE base computation
+    for step in range(num_steps - 1, -1, -1):
+        if step == num_steps - 1:
+            next_val = torch.zeros_like(values[:, step])
+        else:
+            next_val = values[:, step + 1]
+        nonterminal = 1.0 - dones[:, step]
+        delta = rewards[:, step] + gamma * next_val * nonterminal - values[:, step]
+        if step == num_steps - 1:
+            base_adv[:, step] = delta
+        else:
+            base_adv[:, step] = (
+                delta + gamma * gae_lambda * nonterminal * base_adv[:, step + 1]
+            )
+
+    # 2. Micro-Macro Retroactive Backward Pass
+    for env_i in range(num_envs):
+        # A rollout contains a win if any agent received the positive team win reward (+10.0)
+        win = bool((rewards[:, :, env_i] > 5.0).any())
+
+        # Backward accumulated retroactive advantage trace
+        retro_trace = torch.zeros(num_agents, device=rewards.device)
+
+        for step in range(num_steps - 1, -1, -1):
+            alarm_t = alarms[step, env_i]
+            # Macro Alarm Penalty Factor
+            macro_alarm_factor = torch.exp(
+                -alpha_alarm * torch.tensor(alarm_t / ALARM_MAX, device=rewards.device)
+            )
+
+            # Macro Outcome Factor & Asymmetric Failure Shielding
+            macro_outcome = 1.0 if win else -0.5
+
+            for agent_i in range(num_agents):
+                # Micro Credit: Base GAE + Affordance Delta Boost
+                micro_credit = base_adv[agent_i, step, env_i]
+                if car_events[agent_i, step, env_i]:
+                    micro_credit = micro_credit + affordance_coef
+
+                # Multiplicative Micro-Macro Weighting
+                if not win and not car_events[agent_i, step, env_i]:
+                    # Asymmetric Shielding: Shield upstream enablers on team failure
+                    omega_t = macro_alarm_factor
+                else:
+                    omega_t = macro_outcome * macro_alarm_factor
+
+                immediate_marc = micro_credit * omega_t
+
+                # Backward Causal Trace Propagation
+                retro_trace[agent_i] = (
+                    immediate_marc
+                    + gamma_causal
+                    * (1.0 - dones[agent_i, step, env_i])
+                    * retro_trace[agent_i]
+                )
+                marc_adv[agent_i, step, env_i] = retro_trace[agent_i]
+
+    return marc_adv, marc_adv + values
+
+
+def train(args):
+    run_name = f"{args.exp_name}_{args.seed}_{int(time.time())}"
+    writer = SummaryWriter(f"runs/{run_name}")
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+
+    env_cfg = parse_env_config(args.env_config) if args.env_config else {}
+    vec_env = VectorEnv(num_envs=args.num_envs, env_config=env_cfg, seed=args.seed)
+
+    dummy_env = vec_env.envs[0]
+    dummy_obs, _ = dummy_env.reset()
+    state_dim = dummy_env.state().shape[0]
+
+    policy = HeistAgent(hidden_dim=64, device=device).to(device)
+    critic = HeistCritic(state_dim=state_dim, hidden_dim=64).to(device)
+
+    if args.use_ckpt:
+        ckpt_dir = get_previous_stage_checkpoint(run_name, exp_name=args.exp_name)
+        if ckpt_dir:
+            ckpt_path = os.path.join(ckpt_dir, "policy.pt")
+            load_matching_weights(policy, ckpt_path, device)
+            load_matching_weights(critic, ckpt_path, device)
+
+    params = list(policy.parameters()) + list(critic.parameters())
+    optimizer = torch.optim.Adam(params, lr=args.learning_rate, eps=1e-5)
+
+    rnd_module = None
+    if args.use_rnd:
+        from exploration import RNDModule
+
+        rnd_module = RNDModule(
+            obs_dim=OBSERVATION_SIZE[0] * OBSERVATION_SIZE[1], device=device
+        )
+
+    batch_size = args.num_envs * args.num_steps
+    minibatch_size = batch_size // args.num_minibatches
+    num_updates = args.total_timesteps // batch_size
+
+    def make_agent_dict(factory):
+        return {a: factory() for a in AGENTS}
+
+    buffers = make_agent_dict(
+        lambda: {
+            "obs": torch.zeros(
+                (args.num_steps, args.num_envs, *OBSERVATION_SIZE),
+                device=device,
+            ),
+            "role_id": torch.zeros(
+                (args.num_steps, args.num_envs, N_AGENTS), device=device
+            ),
+            "action_mask": torch.zeros(
+                (args.num_steps, args.num_envs, ACTION_DIM), device=device
+            ),
+            "actions": torch.zeros(
+                (args.num_steps, args.num_envs),
+                dtype=torch.long,
+                device=device,
+            ),
+            "log_probs": torch.zeros((args.num_steps, args.num_envs), device=device),
+            "rewards": torch.zeros((args.num_steps, args.num_envs), device=device),
+            "dones": torch.zeros((args.num_steps, args.num_envs), device=device),
+            "truncs": torch.zeros((args.num_steps, args.num_envs), device=device),
+            "values": torch.zeros((args.num_steps, args.num_envs), device=device),
+            "car_unlocked": torch.zeros(
+                (args.num_steps, args.num_envs),
+                dtype=torch.bool,
+                device=device,
+            ),
+        }
+    )
+    buffer_states = torch.zeros(
+        (args.num_steps, args.num_envs, state_dim), device=device
+    )
+    buffer_alarms = torch.zeros((args.num_steps, args.num_envs), device=device)
+
+    obs_dict, info_dict = vec_env.reset()
+    global_step = 0
+    start_time = time.time()
+
+    for update in range(1, num_updates + 1):
+        if args.anneal_lr:
+            frac = 1.0 - (update - 1.0) / num_updates
+            optimizer.param_groups[0]["lr"] = frac * args.learning_rate
+
+        for step in range(args.num_steps):
+            global_step += args.num_envs
+            state_t = torch.tensor(
+                np.array(vec_env.call("state")),
+                dtype=torch.float32,
+                device=device,
+            )
+            buffer_states[step] = state_t
+
+            with torch.no_grad():
+                val_t = critic(state_t).squeeze(-1)
+
+            step_actions = {}
+            with torch.no_grad():
+                for a in AGENTS:
+                    o_t = torch.tensor(
+                        np.array(obs_dict[a]["observation"]),
+                        dtype=torch.float32,
+                        device=device,
+                    )
+                    r_t = torch.tensor(
+                        np.array(obs_dict[a]["role_id"]),
+                        dtype=torch.float32,
+                        device=device,
+                    )
+                    m_t = torch.tensor(
+                        np.array(obs_dict[a]["action_mask"]),
+                        dtype=torch.float32,
+                        device=device,
+                    )
+                    act, lp, _, _ = policy.get_action_and_probs(o_t, r_t, m_t)
+                    step_actions[a] = act
+
+                    buffers[a]["obs"][step] = o_t
+                    buffers[a]["role_id"][step] = r_t
+                    buffers[a]["action_mask"][step] = m_t
+                    buffers[a]["actions"][step] = act
+                    buffers[a]["log_probs"][step] = lp
+                    buffers[a]["values"][step] = val_t
+
+            joint_actions_np = {a: step_actions[a].cpu().numpy() for a in AGENTS}
+            next_obs, rewards, dones, truncs, infos = vec_env.step(joint_actions_np)
+
+            # Store global alarm
+            alarms_step = [info_dict[a]["alarm"] for a in AGENTS if a in info_dict]
+            if not alarms_step and infos:
+                alarms_step = [infos[a]["alarm"] for a in AGENTS if a in infos]
+            alarm_val = alarms_step[0] if alarms_step else 0.0
+            buffer_alarms[step] = torch.tensor(
+                alarm_val, dtype=torch.float32, device=device
+            )
+
+            for a in AGENTS:
+                r_tensor = torch.tensor(rewards[a], dtype=torch.float32, device=device)
+                if rnd_module is not None:
+                    rnd_r = rnd_module.compute_reward(buffers[a]["obs"][step])
+                    r_tensor = r_tensor + args.rnd_coef * rnd_r
+
+                buffers[a]["rewards"][step] = r_tensor
+                buffers[a]["dones"][step] = torch.tensor(
+                    dones[a], dtype=torch.float32, device=device
+                )
+                buffers[a]["truncs"][step] = torch.tensor(
+                    truncs[a], dtype=torch.float32, device=device
+                )
+
+                car_flags = [
+                    infos[a].get("car_unlocked", False) for _ in range(args.num_envs)
+                ]
+                buffers[a]["car_unlocked"][step] = torch.tensor(
+                    car_flags, dtype=torch.bool, device=device
+                )
+
+            obs_dict = next_obs
+
+        # Compute MARC Micro-Macro Retroactive Advantages
+        with torch.no_grad():
+            raw_rewards = torch.stack([buffers[a]["rewards"] for a in AGENTS], dim=0)
+            raw_values = torch.stack([buffers[a]["values"] for a in AGENTS], dim=0)
+            raw_dones = torch.stack([buffers[a]["dones"] for a in AGENTS], dim=0)
+            raw_truncs = torch.stack([buffers[a]["truncs"] for a in AGENTS], dim=0)
+            raw_car = torch.stack([buffers[a]["car_unlocked"] for a in AGENTS], dim=0)
+
+            stacked_adv, stacked_returns = compute_marc_advantages(
+                raw_rewards,
+                raw_values,
+                raw_dones,
+                raw_truncs,
+                buffer_alarms,
+                raw_car,
+                args.gamma,
+                args.gae_lambda,
+                args.alpha_alarm,
+                args.gamma_causal,
+                args.affordance_coef,
+            )
+
+            b_advs = {a: stacked_adv[i].reshape(-1) for i, a in enumerate(AGENTS)}
+            b_returns = {
+                a: stacked_returns[i].reshape(-1) for i, a in enumerate(AGENTS)
+            }
+
+        b_states = buffer_states.reshape(-1, state_dim)
+        b_obs = {a: buffers[a]["obs"].reshape(-1, *OBSERVATION_SIZE) for a in AGENTS}
+        b_role = {a: buffers[a]["role_id"].reshape(-1, N_AGENTS) for a in AGENTS}
+        b_mask = {a: buffers[a]["action_mask"].reshape(-1, ACTION_DIM) for a in AGENTS}
+        b_actions = {a: buffers[a]["actions"].reshape(-1) for a in AGENTS}
+        b_log_probs = {a: buffers[a]["log_probs"].reshape(-1) for a in AGENTS}
+        b_values = {a: buffers[a]["values"].reshape(-1) for a in AGENTS}
+
+        b_inds = np.arange(batch_size)
+        for _epoch in range(args.update_epochs):
+            np.random.shuffle(b_inds)
+            for start in range(0, batch_size, minibatch_size):
+                end = start + minibatch_size
+                mb = b_inds[start:end]
+
+                tot_policy_loss = 0.0
+                tot_value_loss = 0.0
+                tot_entropy_loss = 0.0
+
+                state_mb = b_states[mb]
+                new_value = critic(state_mb).squeeze(-1)
+
+                for a in AGENTS:
+                    obs_mb = b_obs[a][mb]
+                    role_mb = b_role[a][mb]
+                    mask_mb = b_mask[a][mb]
+                    act_mb = b_actions[a][mb]
+                    old_lp_mb = b_log_probs[a][mb]
+                    adv_mb = b_advs[a][mb]
+                    ret_mb = b_returns[a][mb]
+
+                    if args.norm_adv:
+                        adv_mb = (adv_mb - adv_mb.mean()) / (adv_mb.std() + 1e-8)
+
+                    _, newlogprob, _, entropy = policy.get_action_and_probs(
+                        obs_mb, role_mb, mask_mb, action=act_mb
+                    )
+                    logratio = newlogprob - old_lp_mb
+                    ratio = logratio.exp()
+
+                    pg_loss1 = -adv_mb * ratio
+                    pg_loss2 = -adv_mb * torch.clamp(
+                        ratio, 1 - args.clip_coef, 1 + args.clip_coef
+                    )
+                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+                    if args.clip_vloss:
+                        v_loss_unclipped = (new_value - ret_mb) ** 2
+                        v_clipped = b_values[a][mb] + torch.clamp(
+                            new_value - b_values[a][mb],
+                            -args.clip_coef,
+                            args.clip_coef,
+                        )
+                        v_loss_clipped = (v_clipped - ret_mb) ** 2
+                        v_loss = (
+                            0.5 * torch.max(v_loss_unclipped, v_loss_clipped).mean()
+                        )
+                    else:
+                        v_loss = 0.5 * ((new_value - ret_mb) ** 2).mean()
+
+                    tot_policy_loss = tot_policy_loss + pg_loss
+                    tot_value_loss = tot_value_loss + v_loss
+                    tot_entropy_loss = tot_entropy_loss + entropy.mean()
+
+                loss = (
+                    (tot_policy_loss / N_AGENTS)
+                    + args.vf_coef * (tot_value_loss / N_AGENTS)
+                    - args.ent_coef * (tot_entropy_loss / N_AGENTS)
+                )
+
+                optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(params, args.max_grad_norm)
+                optimizer.step()
+
+                if rnd_module is not None:
+                    rnd_module.update(torch.cat([b_obs[a][mb] for a in AGENTS], dim=0))
+
+        sps = int(global_step / (time.time() - start_time))
+        avg_reward = np.mean([buffers[a]["rewards"].mean().item() for a in AGENTS])
+        print(
+            f"update={update} step={global_step} sps={sps} mean_reward={avg_reward:.4f}"
+        )
+
+        if (update % args.eval_every == 0 or update == num_updates) and args.save_model:
+            os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
+            torch.save(policy.state_dict(), f"checkpoints/{run_name}/policy.pt")
+
+    vec_env.close()
+    writer.close()
+    if args.save_model:
+        os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
+        torch.save(policy.state_dict(), f"checkpoints/{run_name}/policy.pt")
+        write_completion(
+            run_name,
+            "marc",
+            args.total_timesteps,
+            num_updates * args.num_steps * args.num_envs,
+        )
+    elapsed = time.time() - start_time
+    end_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    print(f"[{end_utc}] training done in {elapsed:.1f}s ({elapsed / 60:.1f} min).")
+
+
+if __name__ == "__main__":
+    train(parse_args())

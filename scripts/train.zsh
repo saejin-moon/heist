@@ -233,7 +233,7 @@ run_campaign() {
     if [ -n "$MODELS" ]; then
         IFS=',' read -A model_names <<< "$MODELS"
     else
-        model_names=("ippo" "mappo" "mappo_car" "mappo_cir" "comm" "comm_cir" "comm_cir_car" "qmix" "coma" "coma_cir")
+        model_names=("ippo" "mappo" "coma" "comm" "mappo_car" "mappo_cir" "loo" "ate" "macca" "marc")
     fi
 
     local -a rnd_flags=()
@@ -468,6 +468,26 @@ run_campaign() {
                     ;;
                 coma_cir)
                     nohup .venv/bin/python -u src/train_coma.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --cir-coef "$CIR_COEF" --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
+                loo)
+                    nohup .venv/bin/python -u src/train_loo.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
+                ate)
+                    nohup .venv/bin/python -u src/train_ate.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
+                macca)
+                    nohup .venv/bin/python -u src/train_macca.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
+                marc)
+                    nohup .venv/bin/python -u src/train_marc.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;

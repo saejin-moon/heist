@@ -38,60 +38,37 @@ When launched with the `--side-tasks` CLI trigger, agents gain role-specific sec
 * **Muscle (Shortcut Wall Breach):** Destroys internal walls (`WALL` $\rightarrow$ `EMPTY`) to create custom escape corridors.
 * **Extractor (Beacon Pre-Calibration):** Calibrates the extraction beacon early, dropping the final extraction countdown from 10 steps down to **3 steps**.
 
-### 3. Integrated Curiosity & Execution Infrastructure
-* **Random Network Distillation (RND):** Includes RND curiosity-driven exploration (`src/exploration.py`) by default (`USE_RND=1`) with fixed target and online predictor neural networks.
-* **Timestamp & Wall-Clock Logging:** All training logs display UTC start/end timestamps and elapsed execution duration per model and stage.
-* **Run Output Isolation:** Side-task runs use distinct experiment suffixes (`_st`) and result directories (`st001`, `st002`) to ensure 0 overwriting of baseline runs.
-
 ---
 
-## 10-Model Benchmark Suite & Research Taxonomy
+## Benchmark Suite & Research Taxonomy (9 Baselines + 1 Novel Algorithm)
 
-HEIST includes a 10-model algorithm suite covering the major MARL paradigms:
+HEIST evaluates a 9-baseline benchmark suite alongside our flagship novel algorithm **MARC**:
 
-| Algorithm | Model Architecture | Core Mechanism |
+| Model ID | Paradigm / Family | Core Mechanism |
 | :--- | :--- | :--- |
-| **`ippo`** | Independent PPO | Fully decentralized actor-critic per agent (baseline) |
-| **`mappo`** | Centralized Critic PPO | Shared actor with centralized state-based $V(s)$ critic |
-| **`mappo_car`** | MAPPO + CAR | Intrinsic affordance reward shaping for unlocking teammate actions |
-| **`mappo_cir`** | MAPPO + Non-Comm CIR | Causal Influence Routing via state feature ablation ($V(s)$ sensitivity) |
-| **`comm`** | TarMAC Communication | Inter-agent attention-based message passing |
-| **`comm_cir`** | Comm + CIR | Causal Influence Routing via counterfactual message ablation |
-| **`comm_cir_car`** | Comm + CIR + CAR | Combined communication, message routing, and affordance credit |
-| **`qmix`** | Monotonic Value Factorization | Off-policy joint value factorization ($Q_{\text{tot}}$) with hypernetwork mixer |
-| **`coma`** | Counterfactual Policy Gradient | Centralized critic $Q_i(s, \mathbf{a}_{-i}, a_i)$ with counterfactual baseline |
-| **`coma_cir`** | COMA + Non-Comm CIR | Causal Influence Routing via counterfactual action ablation ($Q_i$ sensitivity) |
-
-### 2x2 Factorial Design Matrix
-To rigorously isolate **communication message passing** from **causal advantage routing**:
-
-```
-                       Standard Credit Assignment      Causal Advantage Routing (CIR)
-                     ┌──────────────────────────────┬──────────────────────────────────┐
-  Communicating      │  comm                        │  comm_cir, comm_cir_car          │
-                     ├──────────────────────────────┼──────────────────────────────────┤
-  Non-Communicating  │  ippo, mappo, qmix, coma     │  mappo_cir, coma_cir             │
-                     └──────────────────────────────┴──────────────────────────────────┘
-```
+| **`ippo`** | Independent RL | Fully decentralized actor-critic per agent (baseline) |
+| **`mappo`** | Centralized Critic | Shared actor with centralized state-based $V(s)$ critic |
+| **`coma`** | Counterfactual Advantage | Centralized critic $Q_i(s, \mathbf{a}_{-i}, a_i)$ with counterfactual baseline |
+| **`comm`** | Differentiable Comm | TarMAC inter-agent attention-based message passing |
+| **`mappo_car`** | Affordance Shaping | Intrinsic affordance reward shaping for unlocking teammate actions |
+| **`mappo_cir`** | Advantage Routing | Causal Influence Routing via state feature ablation ($V(s)$ sensitivity) |
+| **`loo`** | Leave-One-Out (C3-Style) | Marginal counterfactual baseline isolating $i$-th agent's contribution |
+| **`ate`** | Average Treatment Effect | Contrastive advantage against explicit WAIT null action ($a_{\text{WAIT}} = 4$) |
+| **`macca`** | Dynamic Bayesian Graph | Dynamic Bayesian Network (DBN) factorizing global state transitions |
+| **`marc`** | **Novel Flagship Algorithm** | **Micro-Macro Asymmetric Retroactive Causal-chain** with failure shielding |
 
 ---
 
-## Benchmark Results (Stage 0, 1M Steps & Fast Validation)
+## The Flagship Novel Algorithm: MARC
 
-### 1,000,000-Step Campaign Benchmark (Stage 0)
+**MARC** (*Micro-Macro Asymmetric Retroactive Causal-chain*) solves Causal Credit Dilution by decomposing credit assignment into a multi-scale Micro-Macro structure:
 
-60-episode greedy rollouts across 3 random seeds on Stage 0 (11x11 grid, max steps 60):
-
-| Algorithm | Win Rate | Mean Return | Terminal Hack Rate | Loot Pickup Rate | Extraction Rate | Mean Alarm |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Scripted (BFS Baseline)** | **1.000** | **+11.48** | **100%** | **100%** | **100%** | 6.0 |
-| **`mappo_car` (MAPPO + CAR)** | **0.083** | **+1.534** | **93.3%** | **80.0%** | **80.0%** | **30.5** |
-| **`ippo`** | 0.050 | +1.210 | 98.3% | 81.7% | 81.7% | 33.1 |
-| **`mappo`** | 0.050 | +1.041 | 90.0% | 66.7% | 66.7% | 25.8 |
-| **`comm_cir_car`** | 0.000 | -0.465 | 3.3% | 3.3% | 3.3% | 3.7 |
-| **`comm_cir`** | 0.000 | -0.535 | 0.0% | 0.0% | 0.0% | 0.4 |
-| **`comm`** | 0.000 | -0.590 | 0.0% | 0.0% | 0.0% | 0.1 |
-| **`qmix`** | 0.000 | -0.440 | 0.0% | 0.0% | 0.0% | 6.8 |
+1. **Micro Credit ($\mu_{i, t}$):** Measures local action interaction impact using Action Affordance Deltas ($\Delta \text{Mask}_j(s_t, a_{i, t})$).
+2. **Macro Weighting ($\Omega_t$):** Multiplicatively scales micro credit by global alarm ($A_t$) and team outcome ($R_T$):
+   $$\Omega_t = \Phi_{\text{outcome}}(R_T) \cdot \exp\left( -\alpha_{\text{alarm}} \frac{A_t}{A_{\text{max}}} \right)$$
+3. **Asymmetric Failure Shielding:** On team failure, negative credit targets direct failure triggers while shielding upstream enabling actions ($\Omega_t = 1.0$ for enablers).
+4. **Backward Retroactive Causal Pass ($t = T \to 0$):** Propagates joint Micro-Macro advantages backward through time:
+   $$\hat{A}_{i, t}^{\text{MARC}} = \mu_{i, t} \cdot \Omega_t + \gamma_{\text{causal}} \hat{A}_{i, t+1}^{\text{MARC}}$$
 
 ---
 
@@ -105,7 +82,7 @@ cd heist
 uv sync --locked
 ```
 
-Run Pytest unit test suite (45 tests):
+Run Pytest unit test suite (55 tests):
 
 ```bash
 uv run pytest -v
@@ -114,62 +91,48 @@ uv run ruff check
 
 ---
 
-## Campaign Execution CLI (`train.zsh`)
+## Campaign Execution CLI (`scripts/train.zsh`)
 
-Use `train.zsh` to provision, sync, and launch training campaigns:
+Use `scripts/train.zsh` to provision, sync, and launch training campaigns:
 
 ```bash
-# Standard Stage 0 campaign across all models (RND enabled by default)
-./train.zsh --stages 0 --steps 300000
+# Standard Stage 0 campaign across all 10 models (RND enabled by default)
+./scripts/train.zsh --stages 0 --steps 300000
+
+# Fast turbo validation run (<15s)
+./scripts/train.zsh --turbo --stages 0 -j 1
+
+# Train specific models (e.g. MARC vs MAPPO)
+./scripts/train.zsh --models marc,mappo_cir,mappo --stages 0
 
 # Launch with Dynamic Side-Tasks enabled
-./train.zsh --side-tasks --stages 0,1
-
-# Fast validation test across specific models (10k steps)
-./train.zsh --fast --models ippo,coma,mappo_car
-
-# Run without RND exploration (for baseline ablation)
-./train.zsh --no-rnd --models ippo,mappo
-
-# Background daemon campaign across curriculum stages 0 and 1
-./train.zsh --stages 0,1 --parallel 4 --daemon
+./scripts/train.zsh --side-tasks --stages 0,1
 ```
-
-### CLI Flag Reference
-
-| Flag | Description | Default |
-| :--- | :--- | :--- |
-| `--stages STAGES` | Comma-separated curriculum stage indices (e.g. `0,1,2`) | `0` |
-| `--models MODELS` | Comma-separated algorithm names to train | All 10 models |
-| `--side-tasks` | Enables dynamic side-tasks (decoy ping, door override, wall breach, beacon calibration) | Disabled |
-| `--no-rnd` | Disables Random Network Distillation curiosity exploration | RND Enabled |
-| `--fast`, `--quick` | Fast local validation test (10k steps) | Disabled |
-| `--parallel`, `-j N` | Max concurrent model training jobs | `2` |
-| `--steps STEPS` | Training timesteps per model | `299,008` |
-| `--daemon` | Backgrounds campaign execution with `nohup`; logs to `log/launch.out` | Foreground |
 
 ---
 
 ## Codebase Layout
 
 ```
-train.zsh                     Multi-model campaign launcher & orchestrator
+scripts/train.zsh             Multi-model campaign launcher & orchestrator
 tools/status.py               Live training log and checkpoint monitor
 tools/assess_time.py          Hardware benchmark & throughput calculator
+tools/thermal_guard.py        Hardware thermal protection kill switch
 src/env.py                    PettingZoo parallel environment engine & reward logic
-src/curriculum.py             6-stage curriculum generator (11x11 to 50x50)
-src/vision.py                 Numba JIT raycasting & fog-of-war vision engine
+src/curriculum.py             Spatial step density scaling & curriculum specification
 src/model.py                  Neural network architectures (TarMAC, MAPPO, COMA)
-src/ppo_utils.py              Counterfactual advantage math & checkpoint serialization
-src/vec_env.py                Multiprocessing vectorized environment wrapper
+src/ppo_utils.py              Counterfactual, LOO, ATE advantage math & utils
 src/exploration.py            Random Network Distillation (RND) curiosity module
 src/eval_stage.py             Post-experiment evaluation & JSON summary merger
-src/scripted.py               Near-optimal BFS controller baseline
 src/train_ippo.py             Independent PPO trainer
 src/train_mappo.py            MAPPO trainer (with CAR and CIR support)
-src/train_coma.py             COMA trainer (with counterfactual & CIR support)
-src/train_comm.py             TarMAC trainer (with CIR and CAR support)
-src/train_qmix.py             QMIX trainer with value decomposition
-tests/                        Pytest unit test suite (45 tests)
+src/train_coma.py             COMA counterfactual trainer
+src/train_comm.py             TarMAC communication trainer
+src/train_loo.py              Leave-One-Out (C3-style) counterfactual trainer
+src/train_ate.py              Average Treatment Effect contrastive trainer
+src/train_macca.py            Dynamic Bayesian Network causal credit trainer
+src/train_marc.py             MARC flagship novel algorithm trainer
+paper/                        Quarkdown research paper documentation suite
+tests/                        Pytest unit test suite (55 PyTest cases)
 results/                      Run artifacts, JSON summaries, and benchmark logs
 ```
