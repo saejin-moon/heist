@@ -89,7 +89,12 @@ def parse_args():
     p.add_argument("--torch-deterministic", action="store_true", default=True)
     p.add_argument("--track", action="store_true")
     p.add_argument("--save-model", action="store_true", default=True)
-    p.add_argument("--no-save-model", action="store_true", help="disable checkpointing")
+    p.add_argument(
+        "--no-save-model",
+        action="store_false",
+        dest="save_model",
+        help="disable checkpointing",
+    )
     p.add_argument("--wandb-project-name", type=str, default=Args.wandb_project_name)
     p.add_argument("--wandb-entity", type=str, default=None)
     p.add_argument("--total-timesteps", type=int, default=Args.total_timesteps)
