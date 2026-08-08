@@ -62,29 +62,31 @@ class Args:
     from_stage: str = ""
 
 
-def parse_args():
+def parse_args() -> Args:
+    args = Args()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="ate")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--total-timesteps", type=int, default=300_000)
-    parser.add_argument("--learning-rate", type=float, default=2.5e-4)
-    parser.add_argument("--num-envs", type=int, default=8)
-    parser.add_argument("--num-steps", type=int, default=256)
-    parser.add_argument("--env-config", type=str, default="")
-    parser.add_argument(
-        "--no-save-model",
-        action="store_false",
-        dest="save_model",
-        default=True,
-    )
-    parser.add_argument("--cir-coef", type=float, default=0.0)
+    parser.add_argument("--exp-name", type=str, default=args.exp_name)
+    parser.add_argument("--seed", type=int, default=args.seed)
+    parser.add_argument("--total-timesteps", type=int, default=args.total_timesteps)
+    parser.add_argument("--learning-rate", type=float, default=args.learning_rate)
+    parser.add_argument("--num-envs", type=int, default=args.num_envs)
+    parser.add_argument("--num-steps", type=int, default=args.num_steps)
+    parser.add_argument("--env-config", type=str, default=args.env_config)
+    parser.add_argument("--eval-every", type=int, default=args.eval_every)
+    parser.add_argument("--cir-coef", type=float, default=args.cir_coef)
     parser.add_argument(
         "--no-rnd",
         action="store_false",
         dest="use_rnd",
         default=True,
     )
-    parser.add_argument("--rnd-coef", type=float, default=0.05)
+    parser.add_argument("--rnd-coef", type=float, default=args.rnd_coef)
+    parser.add_argument(
+        "--no-save-model",
+        action="store_false",
+        dest="save_model",
+        default=True,
+    )
     parser.add_argument(
         "--use-ckpt",
         action="store_true",
@@ -92,7 +94,11 @@ def parse_args():
         default=False,
     )
     parser.add_argument("--from-stage", type=str, default="")
-    return parser.parse_args()
+    parsed = parser.parse_args()
+    for k, v in vars(parsed).items():
+        if hasattr(args, k):
+            setattr(args, k, v)
+    return args
 
 
 def train(args):
@@ -101,16 +107,18 @@ def train(args):
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and getattr(args, "cuda", True) else "cpu"
+    )
 
     env_cfg = parse_env_config(args.env_config) if args.env_config else {}
-    vec_env = VectorEnv(num_envs=args.num_envs, env_config=env_cfg, seed=args.seed)
+    vec_env = VectorEnv(args.num_envs, config=env_cfg, base_seed=args.seed)
 
     dummy_env = vec_env.envs[0]
     dummy_obs, _ = dummy_env.reset()
     state_dim = dummy_env.state().shape[0]
 
-    policy = ComaAgent(state_dim=state_dim, hidden_dim=64, device=device).to(device)
+    policy = ComaAgent(state_dim=state_dim, hidden_dim=64).to(device)
     target_critic = ComaCritic(state_dim=state_dim, hidden_dim=64).to(device)
     target_critic.load_state_dict(policy.critic.state_dict())
 

@@ -34,14 +34,18 @@ RESULTS_DIR = REPO_ROOT / "results"
 MODEL_NAMES = [
     "ippo",
     "mappo",
+    "coma",
+    "comm",
+    "qmix",
     "mappo_car",
     "mappo_cir",
-    "comm",
-    "comm_cir",
-    "comm_cir_car",
-    "qmix",
-    "coma",
-    "coma_cir",
+    "loo",
+    "ate",
+    "macca",
+    "marc",
+    "marc_no_shielding",
+    "marc_no_macro",
+    "marc_no_affordance",
 ]
 
 

@@ -24,7 +24,7 @@ from constants import (
     OBSERVATION_SIZE,
 )
 from env import AGENTS, parse_env_config
-from model import HeistAgent, HeistCritic
+from model import MappoAgent
 from ppo_utils import (
     compute_gae,
     get_previous_stage_checkpoint,
@@ -56,9 +56,10 @@ class Args:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
     target_kl: float = None
-    env_config: str = ""
     save_model: bool = True
-    eval_every: int = 10
+    eval_episodes: int = 20
+    eval_every: int = 10000
+    env_config: str = ""
     macca_coef: float = 0.5
     use_rnd: bool = True
     rnd_coef: float = 0.05
@@ -66,29 +67,31 @@ class Args:
     from_stage: str = ""
 
 
-def parse_args():
+def parse_args() -> Args:
+    args = Args()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="macca")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--total-timesteps", type=int, default=300_000)
-    parser.add_argument("--learning-rate", type=float, default=2.5e-4)
-    parser.add_argument("--num-envs", type=int, default=8)
-    parser.add_argument("--num-steps", type=int, default=256)
-    parser.add_argument("--env-config", type=str, default="")
-    parser.add_argument(
-        "--no-save-model",
-        action="store_false",
-        dest="save_model",
-        default=True,
-    )
-    parser.add_argument("--macca-coef", type=float, default=0.5)
+    parser.add_argument("--exp-name", type=str, default=args.exp_name)
+    parser.add_argument("--seed", type=int, default=args.seed)
+    parser.add_argument("--total-timesteps", type=int, default=args.total_timesteps)
+    parser.add_argument("--learning-rate", type=float, default=args.learning_rate)
+    parser.add_argument("--num-envs", type=int, default=args.num_envs)
+    parser.add_argument("--num-steps", type=int, default=args.num_steps)
+    parser.add_argument("--env-config", type=str, default=args.env_config)
+    parser.add_argument("--eval-every", type=int, default=args.eval_every)
+    parser.add_argument("--macca-coef", type=float, default=args.macca_coef)
     parser.add_argument(
         "--no-rnd",
         action="store_false",
         dest="use_rnd",
         default=True,
     )
-    parser.add_argument("--rnd-coef", type=float, default=0.05)
+    parser.add_argument("--rnd-coef", type=float, default=args.rnd_coef)
+    parser.add_argument(
+        "--no-save-model",
+        action="store_false",
+        dest="save_model",
+        default=True,
+    )
     parser.add_argument(
         "--use-ckpt",
         action="store_true",
@@ -96,7 +99,11 @@ def parse_args():
         default=False,
     )
     parser.add_argument("--from-stage", type=str, default="")
-    return parser.parse_args()
+    parsed = parser.parse_args()
+    for k, v in vars(parsed).items():
+        if hasattr(args, k):
+            setattr(args, k, v)
+    return args
 
 
 def train(args):
@@ -105,27 +112,26 @@ def train(args):
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and getattr(args, "cuda", True) else "cpu"
+    )
 
     env_cfg = parse_env_config(args.env_config) if args.env_config else {}
-    vec_env = VectorEnv(num_envs=args.num_envs, env_config=env_cfg, seed=args.seed)
+    vec_env = VectorEnv(args.num_envs, config=env_cfg, base_seed=args.seed)
 
     dummy_env = vec_env.envs[0]
     dummy_obs, _ = dummy_env.reset()
     state_dim = dummy_env.state().shape[0]
 
-    policy = HeistAgent(hidden_dim=64, device=device).to(device)
-    critic = HeistCritic(state_dim=state_dim, hidden_dim=64).to(device)
+    policy = MappoAgent(state_dim).to(device)
 
     if args.use_ckpt:
         ckpt_dir = get_previous_stage_checkpoint(run_name, exp_name=args.exp_name)
         if ckpt_dir:
             ckpt_path = os.path.join(ckpt_dir, "policy.pt")
             load_matching_weights(policy, ckpt_path, device)
-            load_matching_weights(critic, ckpt_path, device)
 
-    params = list(policy.parameters()) + list(critic.parameters())
-    optimizer = torch.optim.Adam(params, lr=args.learning_rate, eps=1e-5)
+    optimizer = torch.optim.Adam(policy.parameters(), lr=args.learning_rate, eps=1e-5)
 
     rnd_module = None
     if args.use_rnd:
@@ -190,7 +196,7 @@ def train(args):
             buffer_states[step] = state_t
 
             with torch.no_grad():
-                val_t = critic(state_t).squeeze(-1)
+                val_t = policy.get_value(state_t).squeeze(-1)
 
             step_actions = {}
             with torch.no_grad():
@@ -210,7 +216,7 @@ def train(args):
                         dtype=torch.float32,
                         device=device,
                     )
-                    act, lp, _, _ = policy.get_action_and_probs(o_t, r_t, m_t)
+                    act, lp, _, _ = policy.get_action_and_value(o_t, r_t, m_t, state_t)
                     step_actions[a] = act
 
                     buffers[a]["obs"][step] = o_t
@@ -244,9 +250,9 @@ def train(args):
                             dtype=torch.float32,
                             device=device,
                         )
-                        buffers[a]["bootstraps"][step] = critic(next_state_t).squeeze(
-                            -1
-                        )
+                        buffers[a]["bootstraps"][step] = policy.get_value(
+                            next_state_t
+                        ).squeeze(-1)
 
             obs_dict = next_obs
 
@@ -257,7 +263,7 @@ def train(args):
                 dtype=torch.float32,
                 device=device,
             )
-            next_value_final = critic(next_state_final).squeeze(-1)
+            next_value_final = policy.get_value(next_state_final).squeeze(-1)
             next_dones_final = torch.tensor(
                 dones[AGENTS[0]], dtype=torch.float32, device=device
             )
@@ -291,7 +297,7 @@ def train(args):
             }
 
             # Apply MACCA Dynamic Bayesian Network Causal Advantage Scaling
-            inf_matrix = critic.get_influence_matrix(
+            inf_matrix = policy.get_influence_matrix(
                 buffer_states.reshape(-1, state_dim)
             )
             for i, a in enumerate(AGENTS):
@@ -318,7 +324,7 @@ def train(args):
                 tot_entropy_loss = 0.0
 
                 state_mb = b_states[mb]
-                new_value = critic(state_mb).squeeze(-1)
+                new_value = policy.get_value(state_mb).squeeze(-1)
 
                 for a in AGENTS:
                     obs_mb = b_obs[a][mb]
@@ -332,8 +338,8 @@ def train(args):
                     if args.norm_adv:
                         adv_mb = (adv_mb - adv_mb.mean()) / (adv_mb.std() + 1e-8)
 
-                    _, newlogprob, _, entropy = policy.get_action_and_probs(
-                        obs_mb, role_mb, mask_mb, action=act_mb
+                    _, newlogprob, entropy, _ = policy.get_action_and_value(
+                        obs_mb, role_mb, mask_mb, state_mb, action=act_mb
                     )
                     logratio = newlogprob - old_lp_mb
                     ratio = logratio.exp()
@@ -370,7 +376,7 @@ def train(args):
 
                 optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(params, args.max_grad_norm)
+                nn.utils.clip_grad_norm_(policy.parameters(), args.max_grad_norm)
                 optimizer.step()
 
                 if rnd_module is not None:
