@@ -74,6 +74,12 @@ class Args:
     # environment override (json path or inline python-ish dict)
     env_config: str = ""
 
+    save_model: bool = True
+    load_checkpoint: str = ""
+    no_cuda: bool = False
+    use_rnd: bool = False
+    rnd_coef: float = 0.05
+
 
 def parse_args():
     p = argparse.ArgumentParser()

@@ -62,6 +62,13 @@ class Args:
     eval_episodes: int = 20
     env_config: str = ""
 
+    cir_coef: float = 0.0
+    save_model: bool = True
+    load_checkpoint: str = ""
+    no_cuda: bool = False
+    use_rnd: bool = False
+    rnd_coef: float = 0.05
+
 
 def parse_args():
     p = argparse.ArgumentParser()
