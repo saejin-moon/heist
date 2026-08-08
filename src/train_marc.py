@@ -161,52 +161,42 @@ def compute_marc_advantages(
                 delta + gamma * gae_lambda * nonterminal * base_adv[:, step + 1]
             )
 
-    # 2. Micro-Macro Retroactive Backward Pass
-    for env_i in range(num_envs):
-        # A rollout contains a win if any agent received the positive team win reward (+10.0)
-        win = bool((rewards[:, :, env_i] > 5.0).any())
+    # 2. Vectorized Micro-Macro Retroactive Backward Pass
+    # Win condition per parallel env: True if any agent at any step received +10 win reward (>5.0)
+    win = (rewards > 5.0).any(dim=1).any(dim=0)  # [B]
 
-        # Backward accumulated retroactive advantage trace
-        retro_trace = torch.zeros(num_agents, device=rewards.device)
+    if no_macro:
+        omega_t = torch.ones_like(rewards)
+    else:
+        macro_alarm_factor = torch.exp(-alpha_alarm * (alarms / ALARM_MAX))  # [T, B]
+        macro_outcome = torch.where(win, 1.0, -0.5)  # [B]
 
-        for step in range(num_steps - 1, -1, -1):
-            alarm_t = alarms[step, env_i]
+        alarm_fac = macro_alarm_factor.unsqueeze(0)  # [1, T, B]
+        out_fac = macro_outcome.unsqueeze(0).unsqueeze(0)  # [1, 1, B]
+        unshielded_omega = out_fac * alarm_fac  # [1, T, B]
 
-            if no_macro:
-                macro_alarm_factor = 1.0
-                macro_outcome = 1.0
-            else:
-                # Macro Alarm Penalty Factor
-                macro_alarm_factor = torch.exp(-alpha_alarm * (alarm_t / ALARM_MAX))
+        if not no_shielding:
+            not_win = (~win).unsqueeze(0).unsqueeze(0)  # [1, 1, B]
+            shield_mask = not_win & car_events  # [N_AGENTS, T, B]
+            omega_t = torch.where(shield_mask, alarm_fac, unshielded_omega)
+        else:
+            omega_t = unshielded_omega
 
-                # Macro Outcome Factor & Asymmetric Failure Shielding
-                macro_outcome = 1.0 if win else -0.5
+    # Micro credit: Base GAE + Affordance boost
+    affordance_boost = (
+        car_events.float() * affordance_coef if affordance_coef > 0.0 else 0.0
+    )
+    micro_credit = base_adv + affordance_boost
+    immediate_marc = micro_credit * omega_t  # [N_AGENTS, T, B]
 
-            for agent_i in range(num_agents):
-                # Micro Credit: Base GAE + Affordance Delta Boost
-                micro_credit = base_adv[agent_i, step, env_i]
-                if car_events[agent_i, step, env_i] and affordance_coef > 0.0:
-                    micro_credit = micro_credit + affordance_coef
-
-                # Multiplicative Micro-Macro Weighting
-                if no_macro:
-                    omega_t = 1.0
-                elif not win and car_events[agent_i, step, env_i] and not no_shielding:
-                    # Asymmetric Shielding: Shield upstream enablers on team failure
-                    omega_t = macro_alarm_factor
-                else:
-                    omega_t = macro_outcome * macro_alarm_factor
-
-                immediate_marc = micro_credit * omega_t
-
-                # Backward Causal Trace Propagation
-                retro_trace[agent_i] = (
-                    immediate_marc
-                    + gamma_causal
-                    * (1.0 - dones[agent_i, step, env_i])
-                    * retro_trace[agent_i]
-                )
-                marc_adv[agent_i, step, env_i] = retro_trace[agent_i]
+    # Backward Causal Trace Propagation
+    retro_trace = torch.zeros(num_agents, num_envs, device=rewards.device)
+    for step in range(num_steps - 1, -1, -1):
+        retro_trace = (
+            immediate_marc[:, step]
+            + gamma_causal * (1.0 - dones[:, step]) * retro_trace
+        )
+        marc_adv[:, step] = retro_trace
 
     return marc_adv, marc_adv + values
 
