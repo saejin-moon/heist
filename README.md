@@ -56,10 +56,13 @@ HEIST evaluates a 9-baseline benchmark suite alongside our flagship novel algori
 | **`ate`** | Average Treatment Effect | Contrastive advantage against explicit WAIT null action ($a_{\text{WAIT}} = 4$) |
 | **`macca`** | Dynamic Bayesian Graph | Dynamic Bayesian Network (DBN) factorizing global state transitions |
 | **`marc`** | **Novel Flagship Algorithm** | **Micro-Macro Asymmetric Retroactive Causal-chain** with failure shielding |
+| **`marc_no_shielding`** | MARC Ablation | MARC without Asymmetric Failure Shielding |
+| **`marc_no_macro`** | MARC Ablation | MARC without Macro Weighting ($\Omega_t = 1.0$) |
+| **`marc_no_affordance`** | MARC Ablation | MARC without Micro Affordance Delta Boost |
 
 ---
 
-## The Flagship Novel Algorithm: MARC
+## The Flagship Novel Algorithm: MARC & Ablations
 
 **MARC** (*Micro-Macro Asymmetric Retroactive Causal-chain*) solves Causal Credit Dilution by decomposing credit assignment into a multi-scale Micro-Macro structure:
 
@@ -69,6 +72,11 @@ HEIST evaluates a 9-baseline benchmark suite alongside our flagship novel algori
 3. **Asymmetric Failure Shielding:** On team failure, negative credit targets direct failure triggers while shielding upstream enabling actions ($\Omega_t = 1.0$ for enablers).
 4. **Backward Retroactive Causal Pass ($t = T \to 0$):** Propagates joint Micro-Macro advantages backward through time:
    $$\hat{A}_{i, t}^{\text{MARC}} = \mu_{i, t} \cdot \Omega_t + \gamma_{\text{causal}} \hat{A}_{i, t+1}^{\text{MARC}}$$
+
+### MARC Component Ablations
+- **`marc_no_shielding`:** Disables enabler shielding on team failure (tests necessity of shielding enablers from penalty leakage).
+- **`marc_no_macro`:** Disables macro weighting ($\Omega_t = 1.0$) (tests necessity of global alarm and win/loss scaling).
+- **`marc_no_affordance`:** Disables micro affordance boost ($\beta_{\text{affordance}} = 0.0$) (tests necessity of action-mask expansion feedback).
 
 ---
 
@@ -82,7 +90,7 @@ cd heist
 uv sync --locked
 ```
 
-Run Pytest unit test suite (55 tests):
+Run Pytest unit test suite (57 tests):
 
 ```bash
 uv run pytest -v

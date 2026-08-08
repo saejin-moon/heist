@@ -79,11 +79,14 @@ The codebase supports 10 distinct algorithm configurations across 4 fundamental 
 | **`mappo_car`** | Reward Shaping | MAPPO + Causal Affordance Credit (CAR) |
 | **`mappo_cir`** | Advantage Routing | MAPPO + Causal Advantage Routing (CIR) |
 | **`comm`** | Differentiable Comm | TarMAC attention message passing ($\bar{m}_i \in \mathbb{R}^{32}$) |
-| **`comm_cir`** | Comm + Routing | TarMAC Communication + CIR Advantage Routing |
-| **`comm_cir_car`**| Unified Multi-Factor | TarMAC + CIR + CAR |
-| **`qmix`** | Value Factorization | Monotonic mixing network $Q_{\text{tot}}(s, \mathbf{a}) = f_{\text{mixing}}(Q_1, \dots, Q_4; s)$ |
 | **`coma`** | Counterfactual Baseline| Counterfactual Advantage $A_i = Q(s, \mathbf{a}) - \sum \pi_i Q(s, (a_i', \mathbf{a}_{-i}))$ |
-| **`coma_cir`** | Counterfactual + CIR | COMA + CIR Advantage Routing |
+| **`loo`** | Leave-One-Out (C3) | Marginal counterfactual baseline isolating $i$-th agent's contribution |
+| **`ate`** | Treatment Effect | Contrastive advantage against explicit WAIT null action |
+| **`macca`** | Dynamic Bayesian Graph| Dynamic Bayesian Network (DBN) factorizing global state transitions |
+| **`marc`** | **Novel Flagship** | **Micro-Macro Asymmetric Retroactive Causal-chain** with failure shielding |
+| **`marc_no_shielding`** | MARC Ablation | MARC without Asymmetric Failure Shielding |
+| **`marc_no_macro`** | MARC Ablation | MARC without Macro Weighting ($\Omega_t = 1.0$) |
+| **`marc_no_affordance`** | MARC Ablation | MARC without Micro Affordance Delta Boost |
 
 ---
 

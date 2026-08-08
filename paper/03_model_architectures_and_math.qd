@@ -119,6 +119,12 @@ MARC factorizes credit assignment into a multi-scale Micro-Macro structure:
 
    $ \hat{A}_{i, t}^{\text{MARC}} = \mu_{i, t} \cdot \Omega_t + \gamma_{\text{causal}} \hat{A}_{i, t+1}^{\text{MARC}} $
 
+### 3.10.1 Targeted Component Ablations
+To isolate the algorithmic contribution of each structural component in MARC, we evaluate three key ablations:
+- **`marc_no_shielding` (Minus Asymmetric Shielding):** Disables enabler shielding on team failure, applying negative outcome penalties indiscriminately to all agents.
+- **`marc_no_macro` (Minus Macro Weighting):** Sets $ \Omega_t = 1.0 $, removing global alarm penalty scaling and outcome factor weighting.
+- **`marc_no_affordance` (Minus Micro Affordance Boost):** Sets $ \beta_{\text{affordance}} = 0.0 $, disabling action-mask expansion feedback.
+
 ---
 
 ## 3.11 Theoretical Note: QMIX Monotonicity Limitation

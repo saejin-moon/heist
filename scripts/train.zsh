@@ -491,6 +491,21 @@ run_campaign() {
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;
+                marc_no_shielding)
+                    nohup .venv/bin/python -u src/train_marc.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --no-shielding --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
+                marc_no_macro)
+                    nohup .venv/bin/python -u src/train_marc.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --no-macro --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
+                marc_no_affordance)
+                    nohup .venv/bin/python -u src/train_marc.py --total-timesteps "$steps" --num-envs 8 --num-steps 256 --affordance-coef 0.0 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${rnd_flags[@]}" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
             esac
 
             local launched_pid="${task_pids[$next_t]}"

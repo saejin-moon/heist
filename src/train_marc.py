@@ -27,7 +27,6 @@ from constants import (
     OBSERVATION_SIZE,
 )
 from env import AGENTS, parse_env_config
-from model import HeistAgent, HeistCritic
 from ppo_utils import (
     get_previous_stage_checkpoint,
     load_matching_weights,
@@ -88,6 +87,18 @@ def parse_args():
     parser.add_argument("--gamma-causal", type=float, default=0.95)
     parser.add_argument("--affordance-coef", type=float, default=0.5)
     parser.add_argument(
+        "--no-shielding",
+        action="store_true",
+        dest="no_shielding",
+        default=False,
+    )
+    parser.add_argument(
+        "--no-macro",
+        action="store_true",
+        dest="no_macro",
+        default=False,
+    )
+    parser.add_argument(
         "--no-rnd",
         action="store_false",
         dest="use_rnd",
@@ -116,8 +127,10 @@ def compute_marc_advantages(
     alpha_alarm,
     gamma_causal,
     affordance_coef,
+    no_shielding=False,
+    no_macro=False,
 ):
-    """Computes Micro-Macro Asymmetric Retroactive Causal-chain (MARC) advantages.
+    r"""Computes Micro-Macro Asymmetric Retroactive Causal-chain (MARC) advantages.
 
     Args:
         rewards: [N_AGENTS, T, B]
@@ -126,6 +139,8 @@ def compute_marc_advantages(
         truncs: [N_AGENTS, T, B]
         alarms: [T, B] Alarm values A_t in [0, 100]
         car_events: [N_AGENTS, T, B] Boolean mask expansion indicators
+        no_shielding: If True, disables asymmetric failure shielding.
+        no_macro: If True, disables macro weighting (\Omega_t = 1.0).
     """
     num_agents, num_steps, num_envs = rewards.shape
     base_adv = torch.zeros_like(rewards)
@@ -156,22 +171,27 @@ def compute_marc_advantages(
 
         for step in range(num_steps - 1, -1, -1):
             alarm_t = alarms[step, env_i]
-            # Macro Alarm Penalty Factor
-            macro_alarm_factor = torch.exp(
-                -alpha_alarm * torch.tensor(alarm_t / ALARM_MAX, device=rewards.device)
-            )
 
-            # Macro Outcome Factor & Asymmetric Failure Shielding
-            macro_outcome = 1.0 if win else -0.5
+            if no_macro:
+                macro_alarm_factor = 1.0
+                macro_outcome = 1.0
+            else:
+                # Macro Alarm Penalty Factor
+                macro_alarm_factor = torch.exp(-alpha_alarm * (alarm_t / ALARM_MAX))
+
+                # Macro Outcome Factor & Asymmetric Failure Shielding
+                macro_outcome = 1.0 if win else -0.5
 
             for agent_i in range(num_agents):
                 # Micro Credit: Base GAE + Affordance Delta Boost
                 micro_credit = base_adv[agent_i, step, env_i]
-                if car_events[agent_i, step, env_i]:
+                if car_events[agent_i, step, env_i] and affordance_coef > 0.0:
                     micro_credit = micro_credit + affordance_coef
 
                 # Multiplicative Micro-Macro Weighting
-                if not win and not car_events[agent_i, step, env_i]:
+                if no_macro:
+                    omega_t = 1.0
+                elif not win and car_events[agent_i, step, env_i] and not no_shielding:
                     # Asymmetric Shielding: Shield upstream enablers on team failure
                     omega_t = macro_alarm_factor
                 else:
@@ -205,19 +225,17 @@ def train(args):
     dummy_env = vec_env.envs[0]
     dummy_obs, _ = dummy_env.reset()
     state_dim = dummy_env.state().shape[0]
+    from model import MappoAgent
 
-    policy = HeistAgent(hidden_dim=64, device=device).to(device)
-    critic = HeistCritic(state_dim=state_dim, hidden_dim=64).to(device)
+    policy = MappoAgent(state_dim).to(device)
 
     if args.use_ckpt:
         ckpt_dir = get_previous_stage_checkpoint(run_name, exp_name=args.exp_name)
         if ckpt_dir:
             ckpt_path = os.path.join(ckpt_dir, "policy.pt")
             load_matching_weights(policy, ckpt_path, device)
-            load_matching_weights(critic, ckpt_path, device)
 
-    params = list(policy.parameters()) + list(critic.parameters())
-    optimizer = torch.optim.Adam(params, lr=args.learning_rate, eps=1e-5)
+    optimizer = torch.optim.Adam(policy.parameters(), lr=args.learning_rate, eps=1e-5)
 
     rnd_module = None
     if args.use_rnd:
@@ -287,7 +305,7 @@ def train(args):
             buffer_states[step] = state_t
 
             with torch.no_grad():
-                val_t = critic(state_t).squeeze(-1)
+                val_t = policy.get_value(state_t).squeeze(-1)
 
             step_actions = {}
             with torch.no_grad():
@@ -307,7 +325,7 @@ def train(args):
                         dtype=torch.float32,
                         device=device,
                     )
-                    act, lp, _, _ = policy.get_action_and_probs(o_t, r_t, m_t)
+                    act, lp, _, _ = policy.get_action_and_value(o_t, r_t, m_t, state_t)
                     step_actions[a] = act
 
                     buffers[a]["obs"][step] = o_t
@@ -320,13 +338,15 @@ def train(args):
             joint_actions_np = {a: step_actions[a].cpu().numpy() for a in AGENTS}
             next_obs, rewards, dones, truncs, infos = vec_env.step(joint_actions_np)
 
-            # Store global alarm
-            alarms_step = [info_dict[a]["alarm"] for a in AGENTS if a in info_dict]
-            if not alarms_step and infos:
-                alarms_step = [infos[a]["alarm"] for a in AGENTS if a in infos]
-            alarm_val = alarms_step[0] if alarms_step else 0.0
+            # Store global alarm per parallel environment
+            alarms_step = [
+                infos[env_idx].get("scout", {}).get("alarm", 0.0)
+                if isinstance(infos, list) and env_idx < len(infos)
+                else 0.0
+                for env_idx in range(args.num_envs)
+            ]
             buffer_alarms[step] = torch.tensor(
-                alarm_val, dtype=torch.float32, device=device
+                alarms_step, dtype=torch.float32, device=device
             )
 
             for a in AGENTS:
@@ -344,7 +364,10 @@ def train(args):
                 )
 
                 car_flags = [
-                    infos[a].get("car_unlocked", False) for _ in range(args.num_envs)
+                    infos[env_idx].get(a, {}).get("car_unlocked", False)
+                    if isinstance(infos, list) and env_idx < len(infos)
+                    else False
+                    for env_idx in range(args.num_envs)
                 ]
                 buffers[a]["car_unlocked"][step] = torch.tensor(
                     car_flags, dtype=torch.bool, device=device
@@ -372,6 +395,8 @@ def train(args):
                 args.alpha_alarm,
                 args.gamma_causal,
                 args.affordance_coef,
+                no_shielding=args.no_shielding,
+                no_macro=args.no_macro,
             )
 
             b_advs = {a: stacked_adv[i].reshape(-1) for i, a in enumerate(AGENTS)}
@@ -399,7 +424,7 @@ def train(args):
                 tot_entropy_loss = 0.0
 
                 state_mb = b_states[mb]
-                new_value = critic(state_mb).squeeze(-1)
+                new_value = policy.get_value(state_mb).squeeze(-1)
 
                 for a in AGENTS:
                     obs_mb = b_obs[a][mb]
@@ -413,8 +438,8 @@ def train(args):
                     if args.norm_adv:
                         adv_mb = (adv_mb - adv_mb.mean()) / (adv_mb.std() + 1e-8)
 
-                    _, newlogprob, _, entropy = policy.get_action_and_probs(
-                        obs_mb, role_mb, mask_mb, action=act_mb
+                    _, newlogprob, entropy, _ = policy.get_action_and_value(
+                        obs_mb, role_mb, mask_mb, state_mb, action=act_mb
                     )
                     logratio = newlogprob - old_lp_mb
                     ratio = logratio.exp()
@@ -451,7 +476,7 @@ def train(args):
 
                 optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(params, args.max_grad_norm)
+                nn.utils.clip_grad_norm_(policy.parameters(), args.max_grad_norm)
                 optimizer.step()
 
                 if rnd_module is not None:
