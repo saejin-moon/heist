@@ -327,7 +327,10 @@ def check_models_status(
                                 parsed_step *= 8
                             step_str = str(parsed_step)
                         if sps_str == "-" and m_prog.group(2):
-                            sps_str = m_prog.group(2)
+                            parsed_sps = int(m_prog.group(2))
+                            if log_path.name.startswith(affected_models):
+                                parsed_sps *= 8
+                            sps_str = str(parsed_sps)
                         if reward_str == "-" and m_prog.group(3):
                             reward_str = f"{float(m_prog.group(3)):.3f}"
                     m_done = re.search(
