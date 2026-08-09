@@ -305,7 +305,7 @@ def train(args: Args):
             (args.num_steps, args.num_envs, N_AGENTS, N_AGENTS), device=device
         )
         for step in range(args.num_steps):
-            global_step += 1
+            global_step += args.num_envs
             state_t = torch.as_tensor(next_state, device=device)
             state_buffer[step] = state_t
             if getattr(args, "cir_coef", 0.0) > 0.0:

@@ -361,7 +361,7 @@ def train(args: Args):
 
         # ---------------- rollout ----------------
         for step in range(args.num_steps):
-            global_step += 1
+            global_step += args.num_envs
             actions_dict = {}
             stacked = next_obs["_stacked"]
             obs_all = torch.as_tensor(stacked["observation"], device=device)

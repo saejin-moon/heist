@@ -228,7 +228,7 @@ if __name__ == "__main__":
 
         # ---------------- rollout ----------------
         for step in range(args.num_steps):
-            global_step += 1
+            global_step += args.num_envs
             state_t = torch.as_tensor(next_state, device=device)
             if args.centralized:
                 buf_state[step] = state_t

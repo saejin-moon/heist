@@ -321,16 +321,9 @@ def check_models_status(
                     )
                     if m_prog and m_prog.group(1):
                         if step_str == "-":
-                            parsed_step = int(m_prog.group(1))
-                            affected_models = ("ippo", "mappo", "coma", "mappo_car", "mappo_cir")
-                            if log_path.name.startswith(affected_models):
-                                parsed_step *= 8
-                            step_str = str(parsed_step)
+                            step_str = m_prog.group(1)
                         if sps_str == "-" and m_prog.group(2):
-                            parsed_sps = int(m_prog.group(2))
-                            if log_path.name.startswith(affected_models):
-                                parsed_sps *= 8
-                            sps_str = str(parsed_sps)
+                            sps_str = m_prog.group(2)
                         if reward_str == "-" and m_prog.group(3):
                             reward_str = f"{float(m_prog.group(3)):.3f}"
                     m_done = re.search(
