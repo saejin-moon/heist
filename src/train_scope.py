@@ -155,14 +155,14 @@ def main():
                 )
 
                 # Check for spawning
-                max_conf = torch.max(value)
+                min_conf = torch.min(value)
                 if (
-                    max_conf < args.tau_spawn
+                    min_conf < args.tau_spawn
                     and active_experts < args.max_experts
                     and not args.ablation_fixed
                 ):
                     active_experts += 1
-                    print(f"Spawning Expert {active_experts} at step {global_step}!")
+                    print(f"Spawning Expert {active_experts} at step {global_step} (min_conf={min_conf.item():.3f})!")
 
                 actions_t[step] = action.view(N_AGENTS, args.num_envs)
                 logprobs_t[step] = logprob.view(N_AGENTS, args.num_envs)
@@ -179,9 +179,26 @@ def main():
                             print(f"Pruning Expert {k} at step {global_step} (unused for {global_step - expert_last_used[k]} steps)!")
 
                             if k < active_experts - 1:
-                                agent.experts[k].load_state_dict(agent.experts[active_experts - 1].state_dict())
-                                expert_last_used[k] = expert_last_used[active_experts - 1]
-                                expert_idx_t[expert_idx_t == (active_experts - 1)] = k
+                                # Shift weights and optimizer state to keep active experts contiguous
+                                src = active_experts - 1
+                                agent.experts[k].load_state_dict(agent.experts[src].state_dict())
+
+                                for p_target, p_source in zip(agent.experts[k].parameters(), agent.experts[src].parameters(), strict=False):
+                                    if p_source in optimizer.state:
+                                        state_src = optimizer.state[p_source]
+                                        optimizer.state[p_target] = {
+                                            'step': state_src.get('step', torch.tensor(0.0)),
+                                            'exp_avg': state_src['exp_avg'].clone(),
+                                            'exp_avg_sq': state_src['exp_avg_sq'].clone()
+                                        }
+                                        if 'max_exp_avg_sq' in state_src:
+                                            optimizer.state[p_target]['max_exp_avg_sq'] = state_src['max_exp_avg_sq'].clone()
+                                    else:
+                                        if p_target in optimizer.state:
+                                            del optimizer.state[p_target]
+
+                                expert_last_used[k] = expert_last_used[src]
+                                expert_idx_t[expert_idx_t == src] = k
 
                             active_experts -= 1
 
