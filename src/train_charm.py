@@ -134,7 +134,7 @@ def main():
                 stacked["action_mask"], dtype=torch.float32, device=device
             )
 
-            w_obs[step] = obs_all
+            w_obs[step] = obs_all.flatten(2)
             w_roles[step] = role_all
             w_masks[step] = mask_all
             w_states[step] = state_t
@@ -143,7 +143,7 @@ def main():
             # 1. Manager Step
             if step % args.macro_step == 0:
                 m_step = step // args.macro_step
-                m_obs[m_step] = obs_all
+                m_obs[m_step] = obs_all.flatten(2)
                 m_roles[m_step] = role_all
                 m_states[m_step] = state_t
                 m_dones[m_step] = next_done

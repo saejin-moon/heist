@@ -154,7 +154,7 @@ def main():
                 stacked["action_mask"], dtype=torch.float32, device=device
             )
 
-            obs_t[step] = obs_all
+            obs_t[step] = obs_all.flatten(2)
             roles_t[step] = role_all
             masks_t[step] = mask_all
             states_t[step] = state_t
