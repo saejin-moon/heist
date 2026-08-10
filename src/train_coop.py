@@ -123,9 +123,13 @@ def main():
         (args.num_steps, N_AGENTS, args.num_envs), dtype=torch.long
     ).to(device)
     alarms_t = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    car_unlocked_t = torch.zeros((args.num_steps, N_AGENTS, args.num_envs), dtype=torch.bool).to(device)
+    car_unlocked_t = torch.zeros(
+        (args.num_steps, N_AGENTS, args.num_envs), dtype=torch.bool
+    ).to(device)
 
-    expert_last_used_episode = torch.zeros(args.max_experts, dtype=torch.long, device=device)
+    expert_last_used_episode = torch.zeros(
+        args.max_experts, dtype=torch.long, device=device
+    )
 
     global_step = 0
     global_episode_count = 0
@@ -191,7 +195,8 @@ def main():
                     for k in range(active_experts - 1, -1, -1):
                         if (
                             active_experts > 1
-                            and (global_episode_count - expert_last_used_episode[k]) > args.prune_episodes
+                            and (global_episode_count - expert_last_used_episode[k])
+                            > args.prune_episodes
                         ):
                             print(
                                 f"Pruning Expert {k} at episode {global_episode_count} (unused for {global_episode_count - expert_last_used_episode[k]} episodes)!"
@@ -228,7 +233,9 @@ def main():
                                         if p_target in optimizer.state:
                                             del optimizer.state[p_target]
 
-                                expert_last_used_episode[k] = expert_last_used_episode[src]
+                                expert_last_used_episode[k] = expert_last_used_episode[
+                                    src
+                                ]
                                 expert_idx_t[expert_idx_t == src] = k
 
                             active_experts -= 1
@@ -241,17 +248,23 @@ def main():
                 actions_list.append(act_dict)
 
             # Structural Affordance Detection (Pre-step state)
-            old_mask_sum = mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM).sum(dim=(1, 2))
+            old_mask_sum = mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM).sum(
+                dim=(1, 2)
+            )
 
             next_obs, rewards, terminations, truncations, infos = envs.step(
                 actions_list
             )
-            
+
             alarms_step = [
-                infos[e].get("scout", {}).get("alarm", 0.0) if isinstance(infos, list) and e < len(infos) else 0.0
+                infos[e].get("scout", {}).get("alarm", 0.0)
+                if isinstance(infos, list) and e < len(infos)
+                else 0.0
                 for e in range(args.num_envs)
             ]
-            alarms_t[step] = torch.tensor(alarms_step, dtype=torch.float32, device=device)
+            alarms_t[step] = torch.tensor(
+                alarms_step, dtype=torch.float32, device=device
+            )
 
             next_state = envs.state
             next_done = torch.logical_or(
@@ -261,8 +274,12 @@ def main():
             global_episode_count += int(next_done.sum().item())
 
             # Structural Affordance Detection (Post-step state)
-            new_mask_all = torch.as_tensor(next_obs["_stacked"]["action_mask"], dtype=torch.float32, device=device)
-            new_mask_sum = new_mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM).sum(dim=(1, 2))
+            new_mask_all = torch.as_tensor(
+                next_obs["_stacked"]["action_mask"], dtype=torch.float32, device=device
+            )
+            new_mask_sum = new_mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM).sum(
+                dim=(1, 2)
+            )
             affordance_triggered = new_mask_sum > old_mask_sum  # [num_envs]
 
             # Assign CAR structurally
@@ -270,13 +287,13 @@ def main():
                 for i, a in enumerate(AGENTS):
                     base_reward = rewards[e][a]
                     # The affordance was triggered globally, and THIS agent took the INTERACT action (5)
-                    is_unlocked = affordance_triggered[e].item() and int(actions_t[step, i, e].item()) == 5
+                    is_unlocked = (
+                        affordance_triggered[e].item()
+                        and int(actions_t[step, i, e].item()) == 5
+                    )
                     car_unlocked_t[step, i, e] = is_unlocked
                     car_reward = 0.0
-                    if (
-                        is_unlocked
-                        and not args.ablation_no_car
-                    ):
+                    if is_unlocked and not args.ablation_no_car:
                         car_reward = 1.0  # Dense causal affordance routing reward to the winning expert
                     rewards_t[step, i, e] = (
                         base_reward
@@ -303,27 +320,27 @@ def main():
                 active_experts,
             )
             next_value = next_value.view(N_AGENTS, args.num_envs)
-            
+
             # Apply Asymmetric Failure Shielding & Macro Weighting from MARC
             win = (rewards_t > 5.0).any(dim=1).any(dim=0)  # [B]
             macro_alarm_factor = torch.exp(-1.5 * (alarms_t / 100.0))  # [T, B]
             macro_outcome = torch.where(win, 1.0, -0.5)  # [B]
-            
+
             alarm_fac = macro_alarm_factor.unsqueeze(1)  # [T, 1, B]
             out_fac = macro_outcome.unsqueeze(0).unsqueeze(0)  # [1, 1, B]
             unshielded_omega = out_fac * alarm_fac  # [T, 1, B]
-            
+
             not_win = (~win).unsqueeze(0).unsqueeze(0)  # [1, 1, B]
             shield_mask = not_win & car_unlocked_t  # [T, N_AGENTS, B]
-            
+
             unshielded_omega = unshielded_omega.expand(-1, N_AGENTS, -1)
             alarm_fac = alarm_fac.expand(-1, N_AGENTS, -1)
-            
+
             omega_t = torch.where(shield_mask, alarm_fac, unshielded_omega)
-            
+
             # Permute from [T, N_AGENTS, B] to [T, N_AGENTS, B] -> rewards_t is [T, N_AGENTS, B]
             rewards_t = rewards_t * omega_t
-            
+
             advantages, returns = compute_gae_simple(
                 rewards_t, values_t, next_value, dones_t, args.gamma, args.gae_lambda
             )

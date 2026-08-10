@@ -93,9 +93,27 @@ def test_default_algos_keys_and_classes():
         "marc_no_shielding",
         "marc_no_macro",
         "marc_no_affordance",
+        "charm",
+        "mahiro",
+        "roma",
+        "lrs",
+        "coop",
+        "coop_fixed",
+        "coop_no_car",
+        "coop_top_down",
     ]
 
-    valid_classes = {"ippo", "mappo", "coma", "comm", "qmix"}
+    valid_classes = {
+        "ippo",
+        "mappo",
+        "coma",
+        "comm",
+        "qmix",
+        "charm",
+        "roma",
+        "coop",
+        "coop_top_down",
+    }
 
     for m in expected_models:
         assert m in DEFAULT_ALGOS, f"Model {m} is missing from DEFAULT_ALGOS"

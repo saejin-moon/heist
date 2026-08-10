@@ -31,14 +31,15 @@ from evaluate import (
 from model import (
     ComaAgent,
     CommAgent,
+    ContinuousHierarchicalAgent,
+    CoopAgent,
+    CoopTopDownAgent,
+    DiscreteHierarchicalAgent,
     HeistAgent,
     MappoAgent,
     QNetwork,
-    ContinuousHierarchicalAgent,
-    DiscreteHierarchicalAgent,
-    CoopAgent,
-    CoopTopDownAgent,
 )
+
 
 def load_policies(algo, run_dir, state_dim, device):
     policies = {}
@@ -94,26 +95,34 @@ def load_policies(algo, run_dir, state_dim, device):
     if algo in ["charm", "mahiro"]:
         p = ContinuousHierarchicalAgent(state_dim=state_dim)
         filename = f"{algo}.pt"
-        sd = torch.load(os.path.join(run_dir, filename), map_location=device, weights_only=True)
+        sd = torch.load(
+            os.path.join(run_dir, filename), map_location=device, weights_only=True
+        )
         p.load_state_dict(sd)
         p.to(device).eval()
         return {a: p for a in AGENTS}
     if algo in ["roma", "lrs"]:
         p = DiscreteHierarchicalAgent(state_dim=state_dim)
         filename = f"{algo}.pt"
-        sd = torch.load(os.path.join(run_dir, filename), map_location=device, weights_only=True)
+        sd = torch.load(
+            os.path.join(run_dir, filename), map_location=device, weights_only=True
+        )
         p.load_state_dict(sd)
         p.to(device).eval()
         return {a: p for a in AGENTS}
     if algo in ["coop", "coop_fixed", "coop_no_car"]:
         p = CoopAgent(state_dim=state_dim)
-        sd = torch.load(os.path.join(run_dir, "coop.pt"), map_location=device, weights_only=True)
+        sd = torch.load(
+            os.path.join(run_dir, "coop.pt"), map_location=device, weights_only=True
+        )
         p.load_state_dict(sd)
         p.to(device).eval()
         return {a: p for a in AGENTS}
     if algo == "coop_top_down":
         p = CoopTopDownAgent(state_dim=state_dim)
-        sd = torch.load(os.path.join(run_dir, "coop.pt"), map_location=device, weights_only=True)
+        sd = torch.load(
+            os.path.join(run_dir, "coop.pt"), map_location=device, weights_only=True
+        )
         p.load_state_dict(sd)
         p.to(device).eval()
         return {a: p for a in AGENTS}

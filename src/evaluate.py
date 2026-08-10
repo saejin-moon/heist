@@ -101,31 +101,47 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
             mask = obs[a]["action_mask"]
             policy = policies[a]
             p_type = type(policy).__name__
-            
-            if p_type in ["ContinuousHierarchicalAgent", "DiscreteHierarchicalAgent", "CoopAgent", "CoopTopDownAgent"]:
-                obs_t = torch.as_tensor(obs[a]["observation"], dtype=torch.float32, device=device).unsqueeze(0)
-                role_t = torch.as_tensor(obs[a]["role_id"], dtype=torch.float32, device=device).unsqueeze(0)
-                mask_t = torch.as_tensor(mask, dtype=torch.int64, device=device).unsqueeze(0)
-                state_t = torch.as_tensor(env.state(), dtype=torch.float32, device=device).unsqueeze(0)
-                
+
+            if p_type in [
+                "ContinuousHierarchicalAgent",
+                "DiscreteHierarchicalAgent",
+                "CoopAgent",
+                "CoopTopDownAgent",
+            ]:
+                obs_t = torch.as_tensor(
+                    obs[a]["observation"], dtype=torch.float32, device=device
+                ).unsqueeze(0)
+                role_t = torch.as_tensor(
+                    obs[a]["role_id"], dtype=torch.float32, device=device
+                ).unsqueeze(0)
+                mask_t = torch.as_tensor(
+                    mask, dtype=torch.int64, device=device
+                ).unsqueeze(0)
+                state_t = torch.as_tensor(
+                    env.state(), dtype=torch.float32, device=device
+                ).unsqueeze(0)
+
                 with torch.no_grad():
-                    if p_type == "ContinuousHierarchicalAgent":
+                    if (
+                        p_type == "ContinuousHierarchicalAgent"
+                        or p_type == "DiscreteHierarchicalAgent"
+                    ):
                         if step_idx % 10 == 0 or current_goals[a] is None:
-                            g, _, _, _ = policy.get_manager_action_and_value(obs_t, state_t, role_t)
+                            g, _, _, _ = policy.get_manager_action_and_value(
+                                obs_t, state_t, role_t
+                            )
                             current_goals[a] = g
-                        action, _, _, _ = policy.get_worker_action_and_value(obs_t, state_t, role_t, current_goals[a], mask_t)
-                        actions[a] = int(action.item())
-                    elif p_type == "DiscreteHierarchicalAgent":
-                        if step_idx % 10 == 0 or current_goals[a] is None:
-                            g, _, _, _ = policy.get_manager_action_and_value(obs_t, state_t, role_t)
-                            current_goals[a] = g
-                        action, _, _, _ = policy.get_worker_action_and_value(obs_t, state_t, role_t, current_goals[a], mask_t)
+                        action, _, _, _ = policy.get_worker_action_and_value(
+                            obs_t, state_t, role_t, current_goals[a], mask_t
+                        )
                         actions[a] = int(action.item())
                     elif p_type in ["CoopAgent", "CoopTopDownAgent"]:
-                        action, _, _, _, _ = policy.get_action_and_value(obs_t, state_t, role_t, mask_t, active_experts)
+                        action, _, _, _, _ = policy.get_action_and_value(
+                            obs_t, state_t, role_t, mask_t, active_experts
+                        )
                         actions[a] = int(action.item())
                 continue
-            
+
             legal = np.argwhere(mask == 1).ravel()
             if greedy and len(legal) > 0:
                 actions[a] = _select_action(
