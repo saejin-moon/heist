@@ -287,6 +287,7 @@ run_campaign() {
 
     local total_tasks=${#task_stages[@]}
     log "Starting training campaign for stages: ${STAGE_LIST[*]}"
+    log "Models: ${model_names[*]}"
     log "Total campaign tasks: $total_tasks models across ${#STAGE_LIST[@]} stages (max $CONCURRENT_JOBS parallel jobs)"
 
     local all_done=0

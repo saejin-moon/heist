@@ -103,7 +103,6 @@ def get_active_campaign_info() -> dict:
     launch_mtime = launch_file.stat().st_mtime if launch_file.is_file() else 0
     launch_run_id = None
     launch_stages = set()
-
     if launch_file.is_file():
         try:
             content = launch_file.read_text(errors="replace")
@@ -119,6 +118,10 @@ def get_active_campaign_info() -> dict:
             m_stages = re.findall(r"Starting training for stage (\d+)", content)
             if m_stages:
                 launch_stages = {int(s) for s in m_stages}
+                
+            models_m = re.findall(r"Models:\s*(.+)", content)
+            if models_m:
+                info["models"] = models_m[-1].split()
         except Exception:
             pass
 
@@ -238,48 +241,40 @@ def check_models_status(
     running_pids: set[int],
     active_run_start: float = 0.0,
     run_id: str = "N/A",
+    models_to_show: list[str] = None,
 ) -> list[dict]:
-    """Gather status across all 10 models for the active stage, ignoring stale checkpoints."""
+    """Gather status across models dynamically, finding their current stage."""
     results = []
-    active_stage = max(active_stages) if active_stages else 0
+    
+    # Use parsed models if available, otherwise fallback to all models
+    models_list = models_to_show if models_to_show else MODEL_NAMES
 
-    for name in MODEL_NAMES:
+    for name in models_list:
         possible_candidates = []
         if run_id and run_id != "N/A":
             possible_candidates.extend(
-                [
-                    LOG_DIR / run_id / f"{name}_st_s{active_stage}.log",
-                    LOG_DIR / run_id / f"{name}_s{active_stage}.log",
-                ]
+                list((LOG_DIR / run_id).glob(f"{name}_st_s*.log")) +
+                list((LOG_DIR / run_id).glob(f"{name}_s*.log"))
             )
-        possible_candidates.extend(
-            [
-                LOG_DIR / f"{name}_st_s{active_stage}.log",
-                LOG_DIR / f"{name}_s{active_stage}.log",
-            ]
-        )
+        if LOG_DIR.is_dir():
+            possible_candidates.extend(
+                list(LOG_DIR.glob(f"{name}_st_s*.log")) +
+                list(LOG_DIR.glob(f"{name}_s*.log"))
+            )
+        
         log_path = None
         log_mtime = 0.0
-        for candidate in possible_candidates:
-            if candidate.is_file():
-                log_path = candidate
-                log_mtime = candidate.stat().st_mtime
-                break
-
-        if log_path is None and LOG_DIR.is_dir():
-            matching = [
-                p
-                for p in LOG_DIR.rglob("*.log")
-                if not p.name.startswith("eval_")
-                and (
-                    p.name == f"{name}_s{active_stage}.log"
-                    or p.name == f"{name}_st_s{active_stage}.log"
-                )
-            ]
-            if matching:
-                log_path = sorted(matching, key=lambda x: x.stat().st_mtime)[-1]
+        active_stage = 0
+        
+        if possible_candidates:
+            # Sort by modification time to find the most recent stage log for this model
+            candidates_sorted = sorted([p for p in possible_candidates if p.is_file()], key=lambda x: x.stat().st_mtime)
+            if candidates_sorted:
+                log_path = candidates_sorted[-1]
                 log_mtime = log_path.stat().st_mtime
-
+                m_stg = re.search(r"_s(\d+)\.log$", log_path.name)
+                if m_stg:
+                    active_stage = int(m_stg.group(1))
         is_log_fresh = log_path is not None and (
             active_run_start == 0.0
             or log_mtime >= active_run_start - 60
@@ -314,6 +309,7 @@ def check_models_status(
 
         step_str = "-"
         sps_str = "-"
+        win_rate_str = "-"
         reward_str = "-"
         runtime_str = "-"
         status = "QUEUED"
@@ -324,7 +320,7 @@ def check_models_status(
             if lines:
                 for line_str in reversed(lines):
                     m_prog = re.search(
-                        r"step=(\d+)(?:.*?\bsps=(\d+))?(?:.*?\b(?:mean_reward|ep_reward)=([-\d.]+))?",
+                        r"step=(\d+)(?:.*?\bsps=(\d+))?(?:.*?\bwin_rate=([-\d.]+))?(?:.*?\b(?:mean_reward|ep_reward)=([-\d.]+))?",
                         line_str,
                     )
                     if m_prog and m_prog.group(1):
@@ -332,13 +328,31 @@ def check_models_status(
                             step_str = m_prog.group(1)
                         if sps_str == "-" and m_prog.group(2):
                             sps_str = m_prog.group(2)
-                        if reward_str == "-" and m_prog.group(3):
-                            reward_str = f"{float(m_prog.group(3)):.3f}"
+                        if win_rate_str == "-" and m_prog.group(3):
+                            win_rate_str = f"{float(m_prog.group(3)):.3f}"
+                        if reward_str == "-" and m_prog.group(4):
+                            reward_str = f"{float(m_prog.group(4)):.3f}"
                     m_done = re.search(
                         r"training done in ([\d.]+s|[\d.]+ min)", line_str
                     )
                     if m_done and runtime_str == "-":
                         runtime_str = m_done.group(1)
+                
+                if runtime_str == "-" and is_log_fresh:
+                    # Calculate active duration if running
+                    try:
+                        elapsed = time.time() - log_path.stat().st_mtime
+                        # Approximate creation by reading the first log line if we had timestamps, 
+                        # or just fallback to mtime if it hasn't finished. Actually ctime is better.
+                        elapsed = time.time() - log_path.stat().st_ctime
+                        mins = int(elapsed // 60)
+                        secs = int(elapsed % 60)
+                        if mins > 0:
+                            runtime_str = f"{mins}m {secs}s"
+                        else:
+                            runtime_str = f"{secs}s"
+                    except Exception:
+                        pass
 
             has_finished = lines and any(
                 "training done" in line_str for line_str in lines[-5:]
@@ -373,6 +387,7 @@ def check_models_status(
                 if status == "RUNNING" or completed_steps == "N/A"
                 else completed_steps,
                 "sps": sps_str if status == "RUNNING" else "-",
+                "win_rate": win_rate_str,
                 "mean_reward": reward_str,
                 "runtime": runtime_str,
                 "checkpoint": checkpoint_cell,
@@ -479,10 +494,10 @@ def make_dashboard_panel() -> Panel:
         pids,
         active_run_start=info.get("active_run_start", 0.0),
         run_id=info.get("run_id", "N/A"),
+        models_to_show=info.get("models"),
     )
     metrics = get_system_metrics()
 
-    active_stage = max(info["active_stages"]) if info["active_stages"] else 0
     st_text = (
         "[bold green]ENABLED[/bold green]"
         if info["side_tasks"]
@@ -494,7 +509,6 @@ def make_dashboard_panel() -> Panel:
     title_text = (
         f"[bold cyan]HEIST MARL DASHBOARD[/bold cyan]  |  "
         f"Run ID: [bold gold1]{info['run_id']}[/bold gold1]  |  "
-        f"Active Stage: [bold magenta]{active_stage}[/bold magenta]  |  "
         f"Side-Tasks: {st_text}  |  "
         f"Fast Mode: {fast_text}"
     )
@@ -552,6 +566,7 @@ def make_dashboard_panel() -> Panel:
     table.add_column("Execution Status", justify="center", no_wrap=True)
     table.add_column("Timesteps", justify="right", no_wrap=True)
     table.add_column("SPS", justify="right", no_wrap=True)
+    table.add_column("Win Rate", justify="right", no_wrap=True, style="bold green")
     table.add_column("Mean Reward", justify="right", no_wrap=True)
     table.add_column("Duration", justify="center", no_wrap=True)
     table.add_column("Checkpoint", justify="center", no_wrap=True)
@@ -573,6 +588,7 @@ def make_dashboard_panel() -> Panel:
             status_cell,
             m["steps"],
             m["sps"],
+            m["win_rate"],
             m["mean_reward"],
             m["runtime"],
             m["checkpoint"],

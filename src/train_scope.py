@@ -42,6 +42,7 @@ class Args:
     tau_spawn: float = -0.1
     max_experts: int = 6
     complexity_penalty: float = 0.01
+    prune_window: int = 10000
     env_config: str = ""
     save_model: bool = True
     load_checkpoint: str = ""
@@ -114,6 +115,8 @@ def main():
         (args.num_steps, N_AGENTS, args.num_envs), dtype=torch.long
     ).to(device)
 
+    expert_last_used = torch.zeros(args.max_experts, dtype=torch.long, device=device)
+
     global_step = 0
     num_updates = args.total_timesteps // (args.num_envs * args.num_steps)
 
@@ -165,6 +168,22 @@ def main():
                 logprobs_t[step] = logprob.view(N_AGENTS, args.num_envs)
                 values_t[step] = value.view(N_AGENTS, args.num_envs)
                 expert_idx_t[step] = chosen_expert.view(N_AGENTS, args.num_envs)
+
+                # Update expert usage and check for pruning
+                chosen_expert_unique = chosen_expert.unique()
+                expert_last_used[chosen_expert_unique] = global_step
+
+                if not args.ablation_fixed:
+                    for k in range(active_experts - 1, -1, -1):
+                        if active_experts > 1 and (global_step - expert_last_used[k]) > args.prune_window:
+                            print(f"Pruning Expert {k} at step {global_step} (unused for {global_step - expert_last_used[k]} steps)!")
+
+                            if k < active_experts - 1:
+                                agent.experts[k].load_state_dict(agent.experts[active_experts - 1].state_dict())
+                                expert_last_used[k] = expert_last_used[active_experts - 1]
+                                expert_idx_t[expert_idx_t == (active_experts - 1)] = k
+
+                            active_experts -= 1
 
             actions_list = []
             for e in range(args.num_envs):
@@ -279,8 +298,9 @@ def main():
         if update % 5 == 0 or update == num_updates:
             sps = int(global_step / (time.time() - start_time))
             mean_reward = rewards_t.sum(0).mean().item()
+            win_rate = (rewards_t[:, 0, :] > 5.0).any(dim=0).float().mean().item() if hasattr(rewards_t, "dim") else 0.0
             print(
-                f"[{run_name}] update={update} step={global_step} sps={sps} mean_reward={mean_reward:.3f} experts={active_experts}"
+                f"[{run_name}] update={update} step={global_step} sps={sps} win_rate={win_rate:.3f} mean_reward={mean_reward:.3f} experts={active_experts}"
             )
 
     if args.save_model:

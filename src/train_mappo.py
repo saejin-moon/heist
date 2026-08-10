@@ -492,12 +492,13 @@ def train(args: Args):
         # ---------------- logging ----------------
         sps = int(global_step / (time.time() - start_time))
         avg_reward = np.mean([buffers[a]["rewards"].mean().item() for a in AGENTS])
+        win_rate = (buffers[list(AGENTS)[0]]["rewards"] > 5.0).any(dim=0).float().mean().item() if hasattr(buffers[list(AGENTS)[0]]["rewards"], "dim") else 0.0
         writer.add_scalar("charts/global_step", global_step, global_step)
         writer.add_scalar("charts/sps", sps, global_step)
         writer.add_scalar("charts/mean_reward", avg_reward, global_step)
         writer.add_scalar("charts/lr", optimizer.param_groups[0]["lr"], global_step)
         print(
-            f"update={update} step={global_step} sps={sps} mean_reward={avg_reward:.4f}"
+            f"update={update} step={global_step} sps={sps} win_rate={win_rate:.3f} mean_reward={avg_reward:.4f}"
         )
 
         if update % args.eval_every == 0 or update == num_updates:
