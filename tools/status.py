@@ -118,7 +118,7 @@ def get_active_campaign_info() -> dict:
             m_stages = re.findall(r"Starting training for stage (\d+)", content)
             if m_stages:
                 launch_stages = {int(s) for s in m_stages}
-                
+
             models_m = re.findall(r"Models:\s*(.+)", content)
             if models_m:
                 info["models"] = models_m[-1].split()
@@ -245,7 +245,7 @@ def check_models_status(
 ) -> list[dict]:
     """Gather status across models dynamically, finding their current stage."""
     results = []
-    
+
     # Use parsed models if available, otherwise fallback to all models
     models_list = models_to_show if models_to_show else MODEL_NAMES
 
@@ -261,11 +261,11 @@ def check_models_status(
                 list(LOG_DIR.glob(f"{name}_st_s*.log")) +
                 list(LOG_DIR.glob(f"{name}_s*.log"))
             )
-        
+
         log_path = None
         log_mtime = 0.0
         active_stage = 0
-        
+
         if possible_candidates:
             # Sort by modification time to find the most recent stage log for this model
             candidates_sorted = sorted([p for p in possible_candidates if p.is_file()], key=lambda x: x.stat().st_mtime)
@@ -337,20 +337,17 @@ def check_models_status(
                     )
                     if m_done and runtime_str == "-":
                         runtime_str = m_done.group(1)
-                
+
                 if runtime_str == "-" and is_log_fresh:
                     # Calculate active duration if running
                     try:
                         elapsed = time.time() - log_path.stat().st_mtime
-                        # Approximate creation by reading the first log line if we had timestamps, 
+                        # Approximate creation by reading the first log line if we had timestamps,
                         # or just fallback to mtime if it hasn't finished. Actually ctime is better.
                         elapsed = time.time() - log_path.stat().st_ctime
                         mins = int(elapsed // 60)
                         secs = int(elapsed % 60)
-                        if mins > 0:
-                            runtime_str = f"{mins}m {secs}s"
-                        else:
-                            runtime_str = f"{secs}s"
+                        runtime_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
                     except Exception:
                         pass
 
