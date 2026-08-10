@@ -612,3 +612,357 @@ class ComaAgent(nn.Module):
 
         row_sums = influence_matrix.sum(dim=-1, keepdim=True) + 1e-8
         return influence_matrix / row_sums
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Hierarchical Agents (CHARM, MAHIRO, ROMA, LRS)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class ContinuousHierarchicalAgent(nn.Module):
+    """
+    Used by CHARM and MAHIRO.
+    Manager outputs a 2D continuous goal (x, y).
+    Worker outputs a discrete action conditioned on the goal.
+    """
+
+    def __init__(self, state_dim, hidden_dim=HIDDEN_DIM):
+        super().__init__()
+        # Manager networks
+        self.manager_critic = nn.Sequential(
+            layer_init(nn.Linear(state_dim + 4, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, 1), std=1.0),
+        )
+        self.manager_actor_mean = nn.Sequential(
+            layer_init(nn.Linear(LOCAL_INPUT_DIM, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, 2), std=0.01),
+        )
+        self.manager_actor_logstd = nn.Parameter(torch.zeros(1, 2))
+
+        # Worker networks
+        self.worker_critic = nn.Sequential(
+            layer_init(nn.Linear(state_dim + 4 + 2, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, 1), std=1.0),
+        )
+        self.worker_actor = nn.Sequential(
+            layer_init(nn.Linear(LOCAL_INPUT_DIM + 2, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, ACTION_DIM), std=0.01),
+        )
+
+    def get_manager_value(self, state, role_id):
+        return self.manager_critic(torch.cat([state, role_id], dim=1))
+
+    def get_manager_action_and_value(self, obs, state, role_id, action=None):
+        x = torch.cat([torch.flatten(obs, start_dim=1), role_id], dim=1)
+        action_mean = self.manager_actor_mean(x)
+        action_logstd = self.manager_actor_logstd.expand_as(action_mean)
+        action_std = torch.exp(action_logstd)
+        probs = torch.distributions.Normal(action_mean, action_std)
+        if action is None:
+            action = probs.sample()
+        return (
+            action,
+            probs.log_prob(action).sum(1),
+            probs.entropy().sum(1),
+            self.manager_critic(torch.cat([state, role_id], dim=1)),
+        )
+
+    def get_worker_value(self, state, role_id, goal):
+        return self.worker_critic(torch.cat([state, role_id, goal], dim=1))
+
+    def get_worker_action_and_value(
+        self, obs, state, role_id, goal, action_mask, action=None
+    ):
+        x = torch.cat([torch.flatten(obs, start_dim=1), role_id, goal], dim=1)
+        logits = self.worker_actor(x)
+        masked_logits = logits.masked_fill(action_mask != 1, -1e9)
+        probs = Categorical(logits=masked_logits)
+        if action is None:
+            action = probs.sample()
+        return (
+            action,
+            probs.log_prob(action),
+            probs.entropy(),
+            self.worker_critic(torch.cat([state, role_id, goal], dim=1)),
+        )
+
+
+class DiscreteHierarchicalAgent(nn.Module):
+    """
+    Used by ROMA and LRS.
+    Manager outputs a discrete role/phase (1 of K).
+    Worker outputs a discrete action conditioned on the role/phase.
+    """
+
+    def __init__(self, state_dim, num_roles=4, hidden_dim=HIDDEN_DIM):
+        super().__init__()
+        self.num_roles = num_roles
+
+        # Manager networks
+        self.manager_critic = nn.Sequential(
+            layer_init(nn.Linear(state_dim + 4, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, 1), std=1.0),
+        )
+        self.manager_actor = nn.Sequential(
+            layer_init(nn.Linear(LOCAL_INPUT_DIM, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, num_roles), std=0.01),
+        )
+
+        # Worker networks
+        self.worker_critic = nn.Sequential(
+            layer_init(nn.Linear(state_dim + 4 + num_roles, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, 1), std=1.0),
+        )
+        self.worker_actor = nn.Sequential(
+            layer_init(nn.Linear(LOCAL_INPUT_DIM + num_roles, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, ACTION_DIM), std=0.01),
+        )
+
+    def get_manager_value(self, state, role_id):
+        return self.manager_critic(torch.cat([state, role_id], dim=1))
+
+    def get_manager_action_and_value(self, obs, state, role_id, action=None):
+        x = torch.cat([torch.flatten(obs, start_dim=1), role_id], dim=1)
+        logits = self.manager_actor(x)
+        probs = Categorical(logits=logits)
+        if action is None:
+            action = probs.sample()
+        return (
+            action,
+            probs.log_prob(action),
+            probs.entropy(),
+            self.manager_critic(torch.cat([state, role_id], dim=1)),
+        )
+
+    def get_worker_value(self, state, role_id, goal_discrete):
+        goal_onehot = torch.nn.functional.one_hot(
+            goal_discrete, num_classes=self.num_roles
+        ).float()
+        return self.worker_critic(torch.cat([state, role_id, goal_onehot], dim=1))
+
+    def get_worker_action_and_value(
+        self, obs, state, role_id, goal_discrete, action_mask, action=None
+    ):
+        goal_onehot = torch.nn.functional.one_hot(
+            goal_discrete, num_classes=self.num_roles
+        ).float()
+        x = torch.cat([torch.flatten(obs, start_dim=1), role_id, goal_onehot], dim=1)
+        logits = self.worker_actor(x)
+        masked_logits = logits.masked_fill(action_mask != 1, -1e9)
+        probs = Categorical(logits=masked_logits)
+        if action is None:
+            action = probs.sample()
+        return (
+            action,
+            probs.log_prob(action),
+            probs.entropy(),
+            self.worker_critic(torch.cat([state, role_id, goal_onehot], dim=1)),
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# SCOPE Agent (Dynamic Skill-Pool Co-op)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class ScopeExpert(nn.Module):
+    def __init__(self, state_dim, hidden_dim=HIDDEN_DIM):
+        super().__init__()
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(LOCAL_INPUT_DIM, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, ACTION_DIM), std=0.01),
+        )
+        # Critic predicts value of state given this expert is acting
+        self.critic = nn.Sequential(
+            layer_init(nn.Linear(state_dim + 4, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, 1), std=1.0),
+        )
+
+
+class ScopeAgent(nn.Module):
+    """
+    SCOPE: Scalable Cooperative Option-Pool Evolution.
+    Instead of a Manager, Experts vote via their Critic values (Bottom-Up Routing).
+    """
+
+    def __init__(self, state_dim, max_experts=10, hidden_dim=HIDDEN_DIM):
+        super().__init__()
+        self.max_experts = max_experts
+        self.experts = nn.ModuleList(
+            [ScopeExpert(state_dim, hidden_dim) for _ in range(max_experts)]
+        )
+
+    def get_action_and_value(
+        self,
+        obs,
+        state,
+        role_id,
+        action_mask,
+        active_experts,
+        action=None,
+        expert_idx=None,
+    ):
+        """
+        active_experts: integer representing how many experts are currently spawned.
+        Returns: action, log_prob, entropy, value, chosen_expert
+        """
+        B = obs.shape[0]
+        x_actor = torch.cat(
+            [torch.flatten(obs, start_dim=1).float(), role_id.float()], dim=1
+        )
+        x_critic = torch.cat([state, role_id.float()], dim=1)
+
+        # Get outputs from all active experts
+        all_logits = []
+        all_values = []
+        for k in range(active_experts):
+            all_logits.append(self.experts[k].actor(x_actor))
+            all_values.append(self.experts[k].critic(x_critic))
+
+        # [B, active_experts, ACTION_DIM]
+        logits_stack = torch.stack(all_logits, dim=1)
+        # [B, active_experts]
+        values_stack = torch.stack(all_values, dim=1).squeeze(-1)
+
+        if expert_idx is None:
+            # Bottom-Up Routing: select expert with max value
+            chosen_expert = torch.argmax(values_stack, dim=1)  # [B]
+        else:
+            chosen_expert = expert_idx
+
+        # Gather chosen logits and values
+        batch_indices = torch.arange(B, device=obs.device)
+        chosen_logits = logits_stack[batch_indices, chosen_expert]  # [B, ACTION_DIM]
+        chosen_values = values_stack[batch_indices, chosen_expert].unsqueeze(
+            -1
+        )  # [B, 1]
+
+        masked_logits = chosen_logits.masked_fill(action_mask != 1, -1e9)
+        probs = Categorical(logits=masked_logits)
+
+        if action is None:
+            action = probs.sample()
+
+        return (
+            action,
+            probs.log_prob(action),
+            probs.entropy(),
+            chosen_values,
+            chosen_expert,
+        )
+
+
+class ScopeTopDownAgent(nn.Module):
+    """
+    SCOPE Ablation: Top-Down Router.
+    Uses a standard Manager network to pick the expert, rather than bottom-up voting.
+    """
+
+    def __init__(self, state_dim, max_experts=10, hidden_dim=HIDDEN_DIM):
+        super().__init__()
+        self.max_experts = max_experts
+
+        # Manager network
+        self.manager_actor = nn.Sequential(
+            layer_init(nn.Linear(state_dim + 4, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, max_experts), std=0.01),
+        )
+        self.manager_critic = nn.Sequential(
+            layer_init(nn.Linear(state_dim + 4, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_dim, 1), std=1.0),
+        )
+
+        self.experts = nn.ModuleList(
+            [ScopeExpert(state_dim, hidden_dim) for _ in range(max_experts)]
+        )
+
+    def get_action_and_value(
+        self,
+        obs,
+        state,
+        role_id,
+        action_mask,
+        active_experts,
+        action=None,
+        expert_idx=None,
+    ):
+        B = obs.shape[0]
+        x_actor = torch.cat(
+            [torch.flatten(obs, start_dim=1).float(), role_id.float()], dim=1
+        )
+        x_critic = torch.cat([state, role_id.float()], dim=1)
+
+        # Top-Down Manager routing
+        manager_logits = self.manager_actor(x_critic)  # [B, max_experts]
+
+        # Mask out inactive experts
+        mask = torch.ones(self.max_experts, device=obs.device).bool()
+        mask[:active_experts] = False
+        manager_logits = manager_logits.masked_fill(mask, -1e9)
+
+        manager_probs = Categorical(logits=manager_logits)
+
+        chosen_expert = manager_probs.sample() if expert_idx is None else expert_idx
+
+        manager_logprob = manager_probs.log_prob(chosen_expert)
+        manager_entropy = manager_probs.entropy()
+        manager_value = self.manager_critic(x_critic)
+
+        # Get outputs from all active experts
+        all_logits = []
+        for k in range(active_experts):
+            all_logits.append(self.experts[k].actor(x_actor))
+
+        logits_stack = torch.stack(all_logits, dim=1)
+
+        # Gather chosen expert's logits
+        batch_indices = torch.arange(B, device=obs.device)
+        chosen_logits = logits_stack[batch_indices, chosen_expert]
+
+        masked_logits = chosen_logits.masked_fill(action_mask != 1, -1e9)
+        probs = Categorical(logits=masked_logits)
+
+        if action is None:
+            action = probs.sample()
+
+        # Total logprob is logprob of manager + logprob of expert
+        total_logprob = manager_logprob + probs.log_prob(action)
+        total_entropy = manager_entropy + probs.entropy()
+
+        return action, total_logprob, total_entropy, manager_value, chosen_expert

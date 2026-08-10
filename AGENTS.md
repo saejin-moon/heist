@@ -43,8 +43,7 @@ heist/
 ├── tools/                      # Analytics & hardware protection CLI tools
 │   ├── thermal_guard.py        # Hardware safety kill switch (CPU max 85°C, GPU max 83°C)
 │   ├── status.py               # Terminal UI dashboard (Rich) for live campaign tracking
-│   ├── assess_time.py          # Empirical step/sec throughput benchmark
-│   └── evaluate_campaign.py    # Multi-stage evaluation exporter across checkpoints
+│   └── assess_time.py          # Empirical step/sec throughput benchmark
 ├── paper/                      # Research paper typesetting suite (Quarkdown .qd format)
 │   ├── main.qd                 # Main paper entrypoint
 │   ├── 01_abstract_and_introduction.qd

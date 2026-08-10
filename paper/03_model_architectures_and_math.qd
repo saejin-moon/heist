@@ -1,6 +1,6 @@
 # 3. Model Suite Architecture & Mathematical Formulations
 
-We evaluate a structured suite of 9 baseline algorithms spanning standard MARL paradigms, counterfactual advantage methods, differentiable communication, dynamic Bayesian causal graphs, and treatment effect contrastive learning.
+We evaluate a structured suite of 8 baseline algorithms spanning standard MARL paradigms, counterfactual advantage methods, dynamic Bayesian causal graphs, and treatment effect contrastive learning.
 
 ## 3.1 Model 1: IPPO (Independent PPO)
 
@@ -35,27 +35,7 @@ This marginalizes out agent $ i $'s action while keeping all teammate actions $ 
 
 ---
 
-## 3.4 Model 4: COMM (TarMAC Differentiable Communication)
-
-COMM equips agents with a differentiable attention-based communication channel (TarMAC):
-
-1. **Key/Query/Message Projection:**
-
-   $ q_i = W_q o_i, \quad k_i = W_k o_i, \quad m_i = W_m o_i \in \mathbb{R}^{32} $
-
-2. **Attention Weights:**
-
-   $ \alpha_{ij} = \frac{\exp(q_i^\top k_j / \sqrt{d_k})}{\sum_{l \neq i} \exp(q_i^\top k_l / \sqrt{d_k})} $
-
-3. **Attended Aggregated Message:**
-
-   $ \bar{m}_i = \sum_{j \neq i} \alpha_{ij} m_j \in \mathbb{R}^{32} $
-
-4. **Policy Input:** Policy $ \pi_{\theta}(a_i | [o_i, \bar{m}_i]) \in \mathbb{R}^{85} $.
-
----
-
-## 3.5 Model 5: MAPPO + CAR (Causal Affordance Credit)
+## 3.4 Model 4: MAPPO + CAR (Causal Affordance Credit)
 
 MAPPO_CAR injects action-mask affordance delta feedback into agent rewards:
 
@@ -65,7 +45,7 @@ where $ \Delta \text{Mask}_j(s_t, a_{t,i}) = |\text{Mask}_j(s_{t+1})| - |\text{M
 
 ---
 
-## 3.6 Model 6: MAPPO + CIR (Causal Advantage Routing)
+## 3.5 Model 5: MAPPO + CIR (Causal Advantage Routing)
 
 MAPPO_CIR routes advantage estimation based on causal contribution rather than uniform spatial sharing:
 
@@ -75,7 +55,7 @@ where $ \psi_i(s_t, \mathbf{a}_t) = \frac{\exp(\| \nabla_{a_i} Q(s_t, \mathbf{a}
 
 ---
 
-## 3.7 Model 7: LOO (Leave-One-Out Marginal Counterfactual)
+## 3.6 Model 6: LOO (Leave-One-Out Marginal Counterfactual)
 
 LOO implements a Leave-One-Out marginal counterfactual advantage (C3-style):
 
@@ -85,7 +65,7 @@ By isolating the marginal contribution without taking expectations over uncalibr
 
 ---
 
-## 3.8 Model 8: ATE (Average Treatment Effect Contrastive PPO)
+## 3.7 Model 7: ATE (Average Treatment Effect Contrastive PPO)
 
 ATE measures the direct treatment effect of executing an action $ a_i $ compared to the explicit null action ($ a_{\text{WAIT}} = 4 $):
 
@@ -93,7 +73,7 @@ $ A_i^{\text{ATE}}(s, a_i) = Q_i(s, a_{-i}, a_i) - Q_i(s, a_{-i}, a_{\text{WAIT}
 
 ---
 
-## 3.9 Model 9: MACCA (Multi-Agent Dynamic Bayesian Causal Graph)
+## 3.8 Model 8: MACCA (Multi-Agent Dynamic Bayesian Causal Graph)
 
 MACCA factorizes global state transitions into a Dynamic Bayesian Network (DBN) to measure inter-agent influence graphs:
 
@@ -101,7 +81,7 @@ $ \hat{A}_{t,i}^{\text{MACCA}} = \hat{A}_{t,i}^{\text{central}} \cdot \left[ 1 +
 
 ---
 
-## 3.10 Model 10: MARC (Micro-Macro Asymmetric Retroactive Causal-chain) — *Flagship Algorithm*
+## 3.9 Model 9: MARC (Micro-Macro Asymmetric Retroactive Causal-chain) — *Flagship Algorithm*
 
 MARC factorizes credit assignment into a multi-scale Micro-Macro structure:
 
@@ -119,18 +99,35 @@ MARC factorizes credit assignment into a multi-scale Micro-Macro structure:
 
    $ \hat{A}_{i, t}^{\text{MARC}} = \mu_{i, t} \cdot \Omega_t + \gamma_{\text{causal}} \hat{A}_{i, t+1}^{\text{MARC}} $
 
-### 3.10.1 Targeted Component Ablations
+### 3.9.1 Targeted Component Ablations
 To isolate the algorithmic contribution of each structural component in MARC, we evaluate three key ablations:
 - **`marc_no_shielding` (Minus Asymmetric Shielding):** Disables enabler shielding on team failure, applying negative outcome penalties indiscriminately to all agents.
 - **`marc_no_macro` (Minus Macro Weighting):** Sets $ \Omega_t = 1.0 $, removing global alarm penalty scaling and outcome factor weighting.
 - **`marc_no_affordance` (Minus Micro Affordance Boost):** Sets $ \beta_{\text{affordance}} = 0.0 $, disabling action-mask expansion feedback.
 
----
+## 3.10 Hierarchical MARL (H-MARL) Solutions to the Sparsity Wall
 
-## 3.11 Theoretical Note: QMIX Monotonicity Limitation
+To bridge the Causal Credit Dilution observed in Stage 4, we introduce **CHARM (Causal Hierarchical Asymmetric Routing & Messaging)** alongside three canonical H-MARL baselines. These architectures utilize a Manager operating at a macro-step frequency $ c $ and a Worker operating at the environment frequency.
 
-Value factorization methods like QMIX enforce monotonicity:
+### 3.10.1 CHARM (Causal Hierarchical Asymmetric Routing & Messaging)
+CHARM's Manager outputs a continuous spatial goal $ g \in \mathbb{R}^2 $. Instead of relying on distance-based intrinsic rewards, CHARM forces the Worker to learn from the sparse extrinsic reward $ R_{ext} $, but injects dense **Upward Affordance Routing** to the Manager:
+$$$
+R_{Manager} = R_{ext} + \lambda \cdot R_{affordance}
+$$$
+This prevents causal cycle traps while dense-ifying the macro-gradient.
 
-$ \frac{\partial Q_{\text{tot}}}{\partial Q_i} \ge 0 \quad \forall i \in \mathcal{N} $
+### 3.10.2 MAHIRO (Multi-Agent HIRO)
+MAHIRO serves as our continuous-goal baseline. The Manager outputs $ g \in \mathbb{R}^2 $. The Worker receives an intrinsic reward proportional to the negative L2 distance to the goal:
+$$$
+r^{in}_t = -|| s_{t} - g_c ||_2
+$$$
+The Manager receives only the raw extrinsic reward $ R_{ext} $.
 
-In HEIST, enabling actions (e.g. Scout tagging or Hacker terminal bypass) carry temporary step penalties or alarm surges, reducing individual $ Q_i $ while increasing expected joint team return $ Q_{\text{tot}} $. Monotonicity constraints strictly forbid this state-action relationship, resulting in total exploration collapse (0.00% across all metrics). QMIX is thus excluded from active multi-stage training runs due to this fundamental structural incompatibility.
+### 3.10.3 ROMA (Role-Oriented Multi-Agent RL)
+ROMA utilizes a discrete Manager that outputs a latent role $ z $. The Worker policy $ \pi(a | \tau, z) $ is conditioned on this role. A KL-divergence regularizer enforces role diversity:
+$$$
+L_{ROMA} = L_{PPO} + \alpha_{KL} \sum_{i,j} D_{KL}( \pi( \cdot | \tau_i, z_i ) || \pi( \cdot | \tau_j, z_j ) )
+$$$
+
+### 3.10.4 LRS (Logical Reward Shaping)
+LRS structurally matches ROMA by outputting a discrete state phase $ \phi $. The Worker is rewarded for transitioning the global state to satisfy the logical preconditions of $ \phi $, framing the problem as a progression through a Finite State Automaton.

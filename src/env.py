@@ -371,6 +371,7 @@ class HeistEnv(ParallelEnv):
                 "win": bool(win),
                 "lose": bool(lose),
                 "car_unlocked": (expansion_occurred and a in interact_actors),
+                "pos": self.agent_positions[a],
             }
             for a in self.agents
         }

@@ -44,6 +44,14 @@ MODEL_NAMES = [
     "marc_no_shielding",
     "marc_no_macro",
     "marc_no_affordance",
+    "charm",
+    "mahiro",
+    "roma",
+    "lrs",
+    "scope",
+    "scope_fixed",
+    "scope_no_car",
+    "scope_top_down",
 ]
 
 

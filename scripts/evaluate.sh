@@ -15,4 +15,4 @@ RUN_DIR="${1:-results/run001}"
 EPISODES="${2:-50}"
 
 echo "Running full evaluation suite on ${RUN_DIR} with ${EPISODES} episodes per stage ..."
-uv run python tools/evaluate_campaign.py --results-dir "$RUN_DIR" --eval-episodes "$EPISODES" "${@:3}"
+uv run python src/eval_stage.py --results-dir "$RUN_DIR" --eval-episodes "$EPISODES" "${@:3}"

@@ -69,3 +69,39 @@ def test_eval_one_checkpoint_skipping():
             "ippo", "ippo", 0, 0, env, env.state().shape[0], device, tmp_root, 5
         )
         assert res is None
+
+
+def test_default_algos_keys_and_classes():
+    """Verify that all standard algorithms are in DEFAULT_ALGOS and have a valid class mapped."""
+    from eval_stage import DEFAULT_ALGOS
+
+    expected_models = [
+        "ippo",
+        "mappo",
+        "mappo_car",
+        "mappo_cir",
+        "comm",
+        "comm_cir",
+        "comm_cir_car",
+        "qmix",
+        "coma",
+        "coma_cir",
+        "ate",
+        "loo",
+        "macca",
+        "marc",
+        "marc_no_shielding",
+        "marc_no_macro",
+        "marc_no_affordance",
+    ]
+
+    valid_classes = {"ippo", "mappo", "coma", "comm", "qmix"}
+
+    for m in expected_models:
+        assert m in DEFAULT_ALGOS, f"Model {m} is missing from DEFAULT_ALGOS"
+
+    for algo, info in DEFAULT_ALGOS.items():
+        assert "class" in info, f"Model {algo} missing 'class' key"
+        assert info["class"] in valid_classes, (
+            f"Model {algo} has invalid class {info['class']}"
+        )

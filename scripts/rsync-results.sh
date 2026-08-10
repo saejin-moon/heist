@@ -18,6 +18,7 @@ echo "Syncing results and checkpoints from ${TARGET_USER}@${TARGET_HOST}:${REMOT
 rsync -avzP \
     --include="results/***" \
     --include="checkpoints/***" \
+    --include="runs/***" \
     --include="log/***" \
     --exclude="*" \
     "${TARGET_USER}@${TARGET_HOST}:${REMOTE_PATH}/" \

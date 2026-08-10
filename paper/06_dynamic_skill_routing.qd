@@ -1,0 +1,32 @@
+# 6. Dynamic Expert Spawning and Bottom-Up Routing
+
+## 6.1 The Failure of Fixed-Capacity and Flat Architectures
+As demonstrated in Stage 4, flat MARL architectures suffer a catastrophic collapse at the Sparsity Wall due to temporal discount dilution ($ \gamma^{250} \approx 0.08 $). Even when augmented with Causal Affordance Routing (CAR) and Causal Advantage Routing (CIR), monolithic architectures fail because they lack temporal abstraction and modular capacity. Traditional H-MARL approaches (like ROMA or MAHIRO) introduce this abstraction but rely on fixed-capacity networks or rigid top-down Manager-Worker dichotomies, which are prone to non-stationarity and goal collapse.
+
+To address this, we introduce a novel decentralized paradigm: a **Dynamic Skill-Pool Co-op** architecture, tentatively referred to as **SCOPE (Scalable Cooperative Option-Pool Evolution)**.
+
+## 6.2 The SCOPE Architecture
+
+Unlike traditional MARL where an agent is strictly bound to a monolithic policy $ \pi_\theta(a|o) $, SCOPE decouples the physical agent (the "body") from the policy. The architecture consists of a dynamically expanding pool of **Expert Neural Networks** $ \mathcal{E} = \{E_1, E_2, \dots, E_K\} $.
+
+Any agent $ i $, regardless of its role (Scout, Hacker, Muscle, Extractor), can route its execution to any Expert in the pool. To maintain role-specific behavior, the agent's identity vector $ e_{\text{role}_i} $ is concatenated with the local observation $ o_i $ before being processed by the Expert.
+
+### 6.2.1 Bottom-Up Confidence Routing
+Rather than utilizing a separate "Manager" or "Router" network to assign experts (which is difficult to train under sparse rewards), SCOPE employs a **Bottom-Up Voting Mechanism**. 
+
+At step $ t $, the state $ s_t $ is passed to all $ K $ currently active Experts. Each Expert $ E_k $ outputs an action distribution $ \pi_k(a|s_t) $ and a Value prediction (Critic) $ V_k(s_t) $. The Value prediction serves as the Expert's **Confidence Score**. The global router simply selects the Expert with the highest confidence:
+$$$
+k^* = \arg\max_{k \in \{1 \dots K\}} V_k(s_t)
+$$$
+The agent then executes the action sampled from $ \pi_{k^*} $. Causal Affordance Credit (CAR) is routed directly to the winning Expert, providing dense supervision to the specific module responsible for unlocking a causal node.
+
+### 6.2.2 Dynamic Capacity Evolution (Spawning and Pruning)
+To align with the spatial curriculum (Stage 0 to Stage 4), SCOPE dynamically adjusts the size of the Expert pool $ K $. 
+
+**Spawning:** If an agent encounters a novel state space (e.g., transitioning from the empty rooms of Stage 0 to the complex corridors of Stage 1) and the maximum confidence across all experts drops below a critical threshold $ \tau_{spawn} $:
+$$$
+\max_{k} V_k(s_t) < \tau_{spawn}
+$$$
+the system instantiates a new Expert $ E_{K+1} $. This ensures the model's capacity grows precisely when environmental complexity exceeds current representations.
+
+**Pruning:** To prevent unbounded capacity growth and promote efficiency, a global complexity penalty $ -\lambda \cdot K $ is applied to the reward stream. Furthermore, if an Expert $ E_k $ is not selected by any agent for a continuous window of $ W $ steps, it is pruned from the pool.

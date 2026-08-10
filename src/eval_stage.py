@@ -44,6 +44,13 @@ DEFAULT_ALGOS = {
     "qmix": {"exp_name": "qmix", "class": "qmix"},
     "coma": {"exp_name": "coma", "class": "coma"},
     "coma_cir": {"exp_name": "coma_cir", "class": "coma"},
+    "ate": {"exp_name": "ate", "class": "coma"},
+    "loo": {"exp_name": "loo", "class": "coma"},
+    "macca": {"exp_name": "macca", "class": "mappo"},
+    "marc": {"exp_name": "marc", "class": "mappo"},
+    "marc_no_shielding": {"exp_name": "marc_no_shielding", "class": "mappo"},
+    "marc_no_macro": {"exp_name": "marc_no_macro", "class": "mappo"},
+    "marc_no_affordance": {"exp_name": "marc_no_affordance", "class": "mappo"},
 }
 
 
@@ -68,18 +75,23 @@ def eval_one(
     algo, exp_base, stage, seed, env, state_dim, device, checkpoint_root, episodes
 ):
     """Evaluate a single checkpoint. Returns a result dict or None if missing."""
-    # Check possible checkpoint naming formats: exp_s{stage}_s{seed} or exp_s{stage} or exp_s{seed}
+    import glob
+
     possible_names = [
         f"{exp_base}_s{stage}_s{seed}",
+        f"{exp_base}_s{stage}_{seed}_*",
         f"{exp_base}_s{stage}",
         f"{exp_base}_s{seed}",
         exp_base,
     ]
     run_dir = None
     for name in possible_names:
-        candidate = os.path.join(checkpoint_root, name)
-        if os.path.isdir(candidate) and os.listdir(candidate):
-            run_dir = candidate
+        matches = glob.glob(os.path.join(checkpoint_root, name))
+        for candidate in matches:
+            if os.path.isdir(candidate) and os.listdir(candidate):
+                run_dir = candidate
+                break
+        if run_dir:
             break
 
     if run_dir is None:

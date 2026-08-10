@@ -20,7 +20,7 @@ The semantics of Action 5 ($ \text{INTERACT} $) depend strictly on the role iden
 
   $ o_i = \text{Concat}(\text{Flatten}(\text{Crop}_{7 \times 7}(\text{Grid})), e_{\text{role}_i}) \in \mathbb{R}^{53} $
 
-- **Centralized State Tensor ($ s \in \mathbb{R}^{D} $):** Centralized critics (MAPPO, QMIX) consume the unmasked global grid layout, full agent position coordinates $ (r_i, c_i)_{i=1}^4 $, guard trajectory states, and the global alarm meter $ A_t \in [0, 100] $.
+- **Centralized State Tensor ($ s \in \mathbb{R}^{D} $):** Centralized critics (MAPPO) consume the unmasked global grid layout, full agent position coordinates $ (r_i, c_i)_{i=1}^4 $, guard trajectory states, and the global alarm meter $ A_t \in [0, 100] $.
 
 ## 2.3 Comprehensive Parameter Specification Table
 
@@ -53,7 +53,6 @@ Every hyperparameter and environment constant is strictly defined as follows:
 | $ \text{CONVERGE\_ALARM} $ | $ A_{\text{hunt}} $ | $ 50.0 $ | Alarm threshold above which guards switch to active Hunt mode |
 | $ \text{NEUTRALIZE\_TURNS} $ | $ K_{\text{neut}} $ | $ 8 $ | Turns a guard remains incapacitated |
 | $ \text{ALARM\_NEUTRALIZE\_DELAY} $ | $ K_{\text{delay}} $ | $ 15 $ | Delay turns before security command notices a missing guard |
-| $ \text{COMM\_MESSAGE\_DIM} $ | $ d_{\text{msg}} $ | $ 32 $ | Vector dimension of TarMAC communication messages |
 | $ \text{ALARM\_BREACH} $ | $ \delta A_{\text{breach}} $ | $ 30.00 $ | Instant global-alarm cost of a wall breach |
 | $ \text{BREACH\_RADIUS} $ | $ R_{\text{breach}} $ | $ 10 $ | Guards within this range repath to the breach |
 | $ \text{EXTRACTOR\_BURDEN\_TURNS} $ | $ K_{\text{burden}} $ | $ 2 $ | Loot-carrying extractor moves 1 tile per $ K $ turns |
