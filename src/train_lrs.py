@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from constants import ACTION_SPACE_SIZE as ACTION_DIM
-from constants import N_AGENTS
+from constants import N_AGENTS, OBSERVATION_SIZE
 from env import AGENTS, parse_env_config
 from model import DiscreteHierarchicalAgent
 from ppo_utils import compute_gae_simple, write_completion
@@ -76,7 +76,14 @@ def main():
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # Worker Buffers
-    w_obs = torch.zeros((args.num_steps, N_AGENTS, args.num_envs, 49)).to(device)
+    w_obs = torch.zeros(
+        (
+            args.num_steps,
+            N_AGENTS,
+            args.num_envs,
+            OBSERVATION_SIZE[0] * OBSERVATION_SIZE[1],
+        )
+    ).to(device)
     w_roles = torch.zeros((args.num_steps, N_AGENTS, args.num_envs, 4)).to(device)
     w_states = torch.zeros((args.num_steps, args.num_envs, state_dim)).to(device)
     w_masks = torch.zeros((args.num_steps, N_AGENTS, args.num_envs, ACTION_DIM)).to(
@@ -90,7 +97,9 @@ def main():
 
     # Manager Buffers
     m_steps = args.num_steps // args.macro_step
-    m_obs = torch.zeros((m_steps, N_AGENTS, args.num_envs, 49)).to(device)
+    m_obs = torch.zeros(
+        (m_steps, N_AGENTS, args.num_envs, OBSERVATION_SIZE[0] * OBSERVATION_SIZE[1])
+    ).to(device)
     m_roles = torch.zeros((m_steps, N_AGENTS, args.num_envs, 4)).to(device)
     m_states = torch.zeros((m_steps, args.num_envs, state_dim)).to(device)
     m_actions = torch.zeros((m_steps, N_AGENTS, args.num_envs)).to(

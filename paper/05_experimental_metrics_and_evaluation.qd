@@ -2,27 +2,27 @@
 
 ## 5.1 Causal Funnel Progression Metrics
 
-Rather than evaluating policy performance using a single scalar win rate, HEIST evaluates policies along the sequential causal chain:
+HEIST evaluates policies along the sequential causal chain. We measure five rates.
 
-1. **Scout Tag Rate ($ P_{\text{tag}} $):** $ \mathbb{E} \left[ \mathbb{I}(\text{len}(\text{tagged\_pois}) > 0) \right] $
-2. **Terminal Disable Rate ($ P_{\text{term}} $):** $ \mathbb{E} \left[ \mathbb{I}(\text{terminal\_disabled}) \right] $
-3. **Loot Acquisition Rate ($ P_{\text{loot}} $):** $ \mathbb{E} \left[ \mathbb{I}(\text{loot\_acquired}) \right] $
-4. **Extraction Call Rate ($ P_{\text{ext}} $):** $ \mathbb{E} \left[ \mathbb{I}(\text{extraction\_triggered}) \right] $
-5. **Team Win Rate ($ P_{\text{win}} $):** $ \mathbb{E} \left[ \mathbb{I}(\text{win}) \right] $
+1. Scout Tag Rate ($ P_{\text{tag}} $): $ \mathbb{E} \left[ \mathbb{I}(\text{len}(\text{tagged\_pois}) > 0) \right] $
+2. Terminal Disable Rate ($ P_{\text{term}} $): $ \mathbb{E} \left[ \mathbb{I}(\text{terminal\_disabled}) \right] $
+3. Loot Acquisition Rate ($ P_{\text{loot}} $): $ \mathbb{E} \left[ \mathbb{I}(\text{loot\_acquired}) \right] $
+4. Extraction Call Rate ($ P_{\text{ext}} $): $ \mathbb{E} \left[ \mathbb{I}(\text{extraction\_triggered}) \right] $
+5. Team Win Rate ($ P_{\text{win}} $): $ \mathbb{E} \left[ \mathbb{I}(\text{win}) \right] $
 
-A model suffers from *Causal Bottlenecking* at stage $ m $ if $ P_m > 0 $ but $ P_{m+1} \approx 0 $.
+A model suffers from causal bottlenecking at stage $ m $ if $ P_m > 0 $ but $ P_{m+1} \approx 0 $.
 
 ## 5.2 Credit Attribution Index (CAI)
 
-To quantify how effectively an algorithm attributes credit to upstream enablers versus downstream extractors, we define the **Credit Attribution Index (CAI)** for agent $ i $:
+We define the Credit Attribution Index (CAI) for agent $ i $. It quantifies how an algorithm attributes credit to upstream enablers versus downstream extractors:
 
 $ \text{CAI}_i = \text{Corr}\left( \sum_{t=1}^T r_{t,i}^{\text{shaped}}, \quad Y_{\text{terminal}} \right) $
 
-where $ Y_{\text{terminal}} \in \{+15, -10\} $ is the episode's shared outcome. High positive $ \text{CAI}_i $ for Scout and Hacker indicates that enabling contributions are correctly correlated with team success.
+The term $ Y_{\text{terminal}} \in \{+15, -10\} $ is the episode's shared outcome. High positive $ \text{CAI}_i $ for Scout and Hacker indicates that enabling contributions correlate with team success.
 
 ## 5.3 Loss Mode Cause Attribution
 
-Episode failures are classified into three disjoint loss modes using multiline TeX case math:
+Episode failures are classified into three disjoint loss modes. We use multiline TeX case math:
 
 $$$
 \text{Loss Cause} =
@@ -35,18 +35,17 @@ $$$
 
 ## 5.4 Hardware Protection Kill Switch (`tools/thermal_guard.py`)
 
-To prevent thermal degradation during long multi-stage campaign runs across all evaluated models, HEIST executes live thermal monitoring at every iteration:
+HEIST executes live thermal monitoring at every iteration. It prevents thermal degradation during long multi-stage campaign runs.
 
-- **CPU Threshold:** $ T_{\text{CPU}} < 85.0^\circ\text{C} $ (derived from Intel/AMD TjMax safety limits).
-- **GPU Threshold:** $ T_{\text{GPU}} < 83.0^\circ\text{C} $ (derived from NVIDIA GPU boost thermal throttling limits).
+The CPU threshold is $ T_{\text{CPU}} < 85.0^\circ\text{C} $. The GPU threshold is $ T_{\text{GPU}} < 83.0^\circ\text{C} $.
 
-If temperature exceeds limits, `thermal_guard.py` triggers an emergency `pkill` to gracefully stop python processes and protect hardware integrity.
+If temperature exceeds limits, `thermal_guard.py` triggers an emergency `pkill`. This stops python processes and protects hardware integrity.
 
 ## 5.5 Experimental Results: The Sparsity Wall
 
-The empirical evaluation of flat MARL models across the HEIST curriculum reveals a fundamental limitation in temporal credit assignment. While models like MAPPO, COMA, and our advanced causal variants (MAPPO-CAR, MARC) demonstrate learning capacity on dense, small maps, they consistently hit a "Sparsity Wall" as the curriculum scales to the large sparse maps in Stage 4 ($ 50 \times 50 $ grid).
+We empirically evaluated flat MARL models across the HEIST curriculum. MAPPO, COMA, MAPPO-CAR, and MARC learn on dense maps. They hit a Sparsity Wall in large sparse maps (Stage 4).
 
-In these large sparse environments, the time-delay between causal dependencies becomes exceedingly large. Consequently, the flat Generalized Advantage Estimation (GAE) signal decays to zero before upstream enabling actions can be properly credited. This causes the value gradient to collapse, forcing the models into exploration failure and resulting in a 0.000 win rate across all baselines in Stage 4.
+The time-delay between causal dependencies is large. Flat Generalized Advantage Estimation (GAE) signal decays to zero before upstream enabling actions receive credit. Value gradients collapse. The models fail to explore. They achieve a 0.000 win rate across all baselines in Stage 4.
 
 | Model | Stage 0 | Stage 1 | Stage 2 | Stage 3 | Stage 4 |
 |-------|---------|---------|---------|---------|---------|
@@ -64,10 +63,6 @@ In these large sparse environments, the time-delay between causal dependencies b
 | marc_no_macro | 0.000 / 0.000 / -0.60 | 0.017 / 0.817 / -8.71 | 0.000 / 0.633 / -9.19 | 0.000 / 0.133 / -10.73 | 0.000 / 0.000 / -10.34 |
 | marc_no_affordance | 0.000 / 0.000 / -0.60 | 0.000 / 0.000 / -6.17 | 0.000 / 0.000 / -9.43 | 0.000 / 0.000 / -10.24 | 0.000 / 0.000 / -10.08 |
 
-*(Format: Win Rate / Terminal Rate / Mean Return)*
+## 5.6 Hierarchical MARL (H-MARL)
 
-## 5.6 Conclusion: Hierarchical MARL (H-MARL)
-
-To overcome the Sparsity Wall induced by flat temporal credit decay, we conclude by proposing Hierarchical MARL (H-MARL) as the requisite structural solution. By abstracting extended temporal dependencies into high-level macro-actions or subgoals, H-MARL allows credit to bypass the low-level step-by-step decay of GAE.
-
-Specifically, we propose the **CHARM** architecture (Causal Hierarchical Advantage Routing Multi-agent). By isolating spatial and temporal dependencies into a two-tiered hierarchy, CHARM structurally bridges the causal delay between upstream enablers and downstream outcomes. We benchmark CHARM against state-of-the-art hierarchical baselines including MAHIRO, ROMA, and LRS, demonstrating that only a fully hierarchical causal approach can reliably solve the Stage 4 facility.
+Hierarchical MARL abstracts extended temporal dependencies into high-level macro-actions or subgoals. H-MARL allows credit to bypass the low-level step-by-step decay of GAE. We propose the CHARM architecture. It isolates spatial and temporal dependencies into a two-tiered hierarchy. CHARM bridges the causal delay between upstream enablers and downstream outcomes. We benchmark CHARM against MAHIRO, ROMA, and LRS. A hierarchical causal approach solves the Stage 4 facility.

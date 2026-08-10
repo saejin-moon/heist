@@ -48,10 +48,10 @@ MODEL_NAMES = [
     "mahiro",
     "roma",
     "lrs",
-    "scope",
-    "scope_fixed",
-    "scope_no_car",
-    "scope_top_down",
+    "coop",
+    "coop_fixed",
+    "coop_no_car",
+    "coop_top_down",
 ]
 
 
@@ -253,13 +253,13 @@ def check_models_status(
         possible_candidates = []
         if run_id and run_id != "N/A":
             possible_candidates.extend(
-                list((LOG_DIR / run_id).glob(f"{name}_st_s*.log")) +
-                list((LOG_DIR / run_id).glob(f"{name}_s*.log"))
+                list((LOG_DIR / run_id).glob(f"{name}_st_s*.log"))
+                + list((LOG_DIR / run_id).glob(f"{name}_s*.log"))
             )
         if LOG_DIR.is_dir():
             possible_candidates.extend(
-                list(LOG_DIR.glob(f"{name}_st_s*.log")) +
-                list(LOG_DIR.glob(f"{name}_s*.log"))
+                list(LOG_DIR.glob(f"{name}_st_s*.log"))
+                + list(LOG_DIR.glob(f"{name}_s*.log"))
             )
 
         log_path = None
@@ -268,7 +268,10 @@ def check_models_status(
 
         if possible_candidates:
             # Sort by modification time to find the most recent stage log for this model
-            candidates_sorted = sorted([p for p in possible_candidates if p.is_file()], key=lambda x: x.stat().st_mtime)
+            candidates_sorted = sorted(
+                [p for p in possible_candidates if p.is_file()],
+                key=lambda x: x.stat().st_mtime,
+            )
             if candidates_sorted:
                 log_path = candidates_sorted[-1]
                 log_mtime = log_path.stat().st_mtime

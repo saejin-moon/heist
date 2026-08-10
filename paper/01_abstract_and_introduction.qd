@@ -8,29 +8,31 @@
 
 # Abstract
 
-Cooperative Multi-Agent Reinforcement Learning (MARL) in partially observable environments frequently suffers from *Causal Credit Dilution*—a structural failure mode where upstream agents whose actions enable downstream success receive zero or negative immediate feedback, while downstream agents absorb the shared reward. In this paper, we formalize **HEIST** (Hierarchical Environment for Interdependent Sequential Tasks), a partially observable 4-agent cooperative benchmark featuring strict role specialization (*Scout*, *Hacker*, *Muscle*, *Extractor*) and non-linear causal dependency chains. We provide complete mathematical derivations for the environment's state transition dynamics, alarm mechanics, reward shaping, and a comprehensive suite of 8 MARL baselines spanning Independent Learning (IPPO), Centralized Critics (MAPPO), Counterfactual Advantage (COMA), Causal Advantage Routing (CIR), Causal Affordance Credit (CAR), Leave-One-Out (LOO), Average Treatment Effect (ATE), and Dynamic Bayesian Causal Graphs (MACCA). Furthermore, we establish an empirically grounded spatial-entity step scaling law $ \rho^* \approx 1,000 \text{ steps/tile} $ ensuring equal sample coverage across geometric curriculum stages up to a $ 50 \times 50 $ facility. We demonstrate that flat MARL models (MAPPO, COMA, and advanced causal variants like MAPPO-CAR and MARC) perform well on dense small maps but hit a "Sparsity Wall" in large sparse maps (Stage 4, $ 50 \times 50 $ grid). In Stage 4, flat Generalized Advantage Estimation (GAE) decays to zero because the time-delay between causal dependencies is too large, forcing the model to collapse. Finally, we propose Hierarchical MARL (H-MARL) as the structural solution to this Sparsity Wall, specifically introducing the CHARM architecture and benchmarking it against MAHIRO, ROMA, and LRS.
+Cooperative multi-agent reinforcement learning (MARL) in partially observable environments suffers from causal credit dilution. Upstream agents enable downstream success but receive zero or negative immediate feedback. Downstream agents absorb the shared reward. We formalize HEIST (Hierarchical Environment for Interdependent Sequential Tasks). It is a partially observable 4-agent cooperative benchmark with strict role specialization and non-linear causal dependency chains. The agents are a Scout, Hacker, Muscle, and Extractor. We provide mathematical derivations for the state transition dynamics, alarm mechanics, and reward shaping. We evaluate 8 MARL baselines. These include independent learning (IPPO), centralized critics (MAPPO), and counterfactual advantage (COMA). They also cover causal advantage routing (CIR), causal affordance credit (CAR), leave-one-out (LOO), average treatment effect (ATE), and dynamic bayesian causal graphs (MACCA). 
+
+We establish an empirically grounded spatial-entity step scaling law $ \rho^* \approx 1,000 \text{ steps/tile} $. This guarantees equal sample coverage across geometric curriculum stages up to a $ 50 \times 50 $ facility. Flat MARL models perform well on dense small maps. They fail in large sparse maps (Stage 4, $ 50 \times 50 $ grid). Flat Generalized Advantage Estimation (GAE) decays to zero because the time-delay between causal dependencies is large. The model collapses. We propose Hierarchical MARL (H-MARL) as the structural solution. We introduce the CHARM architecture and benchmark it against MAHIRO, ROMA, and LRS.
 
 ---
 
 # 1. Introduction & Formal Problem Statement
 
-In multi-agent reinforcement learning (MARL), a team of $ N $ agents must learn a joint policy $ \boldsymbol{\pi}(\mathbf{a}|\mathbf{o}) = \prod_{i=1}^N \pi_i(a_i|o_i) $ to maximize cumulative discounted return in a Decentralized Partially Observable Markov Decision Process (Dec-POMDP).
+In MARL, a team of $ N $ agents learns a joint policy $ \boldsymbol{\pi}(\mathbf{a}|\mathbf{o}) = \prod_{i=1}^N \pi_i(a_i|o_i) $ to maximize cumulative discounted return in a Decentralized Partially Observable Markov Decision Process (Dec-POMDP).
 
 ## 1.1 Dec-POMDP Formalism
 
-A Dec-POMDP is formally defined by the tuple $ \mathcal{M} = \langle \mathcal{N}, \mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \Omega, \mathcal{O}, \gamma \rangle $:
+A Dec-POMDP relies on the tuple $ \mathcal{M} = \langle \mathcal{N}, \mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \Omega, \mathcal{O}, \gamma \rangle $:
 
 - $ \mathcal{N} = \{1, 2, \dots, N\} $ is the set of $ N=4 $ specialized agents.
-- $ \mathcal{S} $ is the global environment state space.
-- $ \mathcal{A} = \mathcal{A}_1 \times \dots \times \mathcal{A}_N $ is the joint action space, where $ |\mathcal{A}_i| = 6 $ for all $ i \in \mathcal{N} $.
-- $ \mathcal{P}(s' | s, \mathbf{a}): \mathcal{S} \times \mathcal{A} \times \mathcal{S} \to [0, 1] $ is the state transition probability distribution.
-- $ \mathcal{R}(s, \mathbf{a}): \mathcal{S} \times \mathcal{A} \to \mathbb{R}^N $ is the reward vector function.
+- $ \mathcal{S} $ defines the global environment state space.
+- $ \mathcal{A} = \mathcal{A}_1 \times \dots \times \mathcal{A}_N $ forms the joint action space, and $ |\mathcal{A}_i| = 6 $ for all $ i \in \mathcal{N} $.
+- $ \mathcal{P}(s' | s, \mathbf{a}): \mathcal{S} \times \mathcal{A} \times \mathcal{S} \to [0, 1] $ represents the state transition probability distribution.
+- $ \mathcal{R}(s, \mathbf{a}): \mathcal{S} \times \mathcal{A} \to \mathbb{R}^N $ outputs the reward vector.
 - $ \Omega = \Omega_1 \times \dots \times \Omega_N $ is the joint observation space.
-- $ \mathcal{O}(s, \mathbf{a}): \mathcal{S} \times \mathcal{A} \to \Delta(\Omega) $ is the observation probability distribution.
-- $ \gamma \in [0, 1) $ is the discount factor ($ \gamma = 0.99 $).
+- $ \mathcal{O}(s, \mathbf{a}): \mathcal{S} \times \mathcal{A} \to \Delta(\Omega) $ gives the observation probability distribution.
+- $ \gamma \in [0, 1) $ acts as the discount factor ($ \gamma = 0.99 $).
 
 ## 1.2 The Causal Credit Dilution Problem
 
-In standard Dec-POMDPs, agents receive a shared global reward $ r_t = \frac{1}{N} \sum_{i=1}^N r_t^i $. When task execution is sequential—meaning Agent 1 (*Scout*) must discover a target at $ t_1 $, Agent 2 (*Hacker*) must disable security at $ t_2 $, and Agent 4 (*Extractor*) secures the loot at $ t_3 $—the immediate return $ r_{t_1} $ for Agent 1 is 0 (or negative due to time bleed). Standard credit assignment methods (e.g., GAE, Temporal Difference learning) exponentially decay credit over time $ \gamma^{t_3 - t_1} $, causing value gradient collapse for upstream enabling actions.
+Agents receive a shared global reward $ r_t = \frac{1}{N} \sum_{i=1}^N r_t^i $. Sequential task execution breaks this mechanism. Agent 1 (Scout) discovers a target at $ t_1 $. Agent 2 (Hacker) disables security at $ t_2 $. Agent 4 (Extractor) secures the loot at $ t_3 $. The immediate return $ r_{t_1} $ for Agent 1 is 0. Time bleed can make it negative. Standard credit assignment methods exponentially decay credit over time $ \gamma^{t_3 - t_1} $. Value gradients collapse for upstream enabling actions.
 
-HEIST evaluates algorithmic solutions to Causal Credit Dilution across an 8-baseline benchmark taxonomy alongside a novel algorithmic contribution.
+HEIST evaluates algorithmic solutions to causal credit dilution across an 8-baseline benchmark taxonomy alongside a structural algorithmic solution.

@@ -1,37 +1,34 @@
 # 3. Model Suite Architecture & Mathematical Formulations
 
-We evaluate a structured suite of 8 baseline algorithms spanning standard MARL paradigms, counterfactual advantage methods, dynamic Bayesian causal graphs, and treatment effect contrastive learning.
+We evaluate 8 baseline algorithms. These span standard MARL paradigms, counterfactual advantage methods, dynamic Bayesian causal graphs, and treatment effect contrastive learning.
 
 ## 3.1 Model 1: IPPO (Independent PPO)
 
-IPPO treats each agent $ i \in \mathcal{N} $ as an independent learning agent, ignoring non-stationarity:
+IPPO treats each agent $ i \in \mathcal{N} $ as an independent learning agent. It ignores non-stationarity. The policy network $ \pi_{\theta_i}(a_i|o_i) $ maps local obs $ o_i \in \mathbb{R}^{53} $ to action logits over $ \mathcal{A}_i $. The value network $ V_{\phi_i}(o_i) $ acts as a local critic. It estimates state value from $ o_i $.
 
-- **Policy Network $ \pi_{\theta_i}(a_i|o_i) $:** Parameterized by $ \theta_i $, maps local obs $ o_i \in \mathbb{R}^{53} $ to action logits over $ \mathcal{A}_i $.
-- **Value Network $ V_{\phi_i}(o_i) $:** Local critic estimating state value from $ o_i $.
-- **PPO Clipped Objective:**
+The PPO clipped objective is:
 
-  $ L_i^{\text{CLIP}}(\theta_i) = \hat{\mathbb{E}}_t \left[ \min \left( r_{t,i}(\theta_i) \hat{A}_{t,i}, \text{clip}(r_{t,i}(\theta_i), 1-\epsilon, 1+\epsilon) \hat{A}_{t,i} \right) \right] $
+$ L_i^{\text{CLIP}}(\theta_i) = \hat{\mathbb{E}}_t \left[ \min \left( r_{t,i}(\theta_i) \hat{A}_{t,i}, \text{clip}(r_{t,i}(\theta_i), 1-\epsilon, 1+\epsilon) \hat{A}_{t,i} \right) \right] $
 
-  where $ r_{t,i}(\theta_i) = \frac{\pi_{\theta_i}(a_{t,i}|o_{t,i})}{\pi_{\theta_i}^{\text{old}}(a_{t,i}|o_{t,i})} $ and $ \hat{A}_{t,i} $ is computed via GAE($ \lambda = 0.95 $).
+We calculate $ r_{t,i}(\theta_i) = \frac{\pi_{\theta_i}(a_{t,i}|o_{t,i})}{\pi_{\theta_i}^{\text{old}}(a_{t,i}|o_{t,i})} $. We compute $ \hat{A}_{t,i} $ via GAE($ \lambda = 0.95 $).
 
 ---
 
 ## 3.2 Model 2: MAPPO (Multi-Agent PPO with Centralized Critic)
 
-MAPPO replaces individual local critics with a centralized critic $ V_{\Phi}(s_t) $ that consumes the global state $ s_t $:
+MAPPO replaces individual local critics with a centralized critic $ V_{\Phi}(s_t) $. It consumes the global state $ s_t $. The joint policy decouples actors $ \pi_{\theta_i}(a_i|o_i) $ for decentralized execution.
 
-- **Joint Policy:** Decoupled actors $ \pi_{\theta_i}(a_i|o_i) $ for decentralized execution.
-- **Centralized Advantage:** $ \hat{A}_t^{\text{central}} = \sum_{l=0}^{\infty} (\gamma \lambda)^l \delta_{t+l}^{V} $, where $ \delta_t^V = r_t + \gamma V_{\Phi}(s_{t+1}) - V_{\Phi}(s_t) $.
+We define centralized advantage: $ \hat{A}_t^{\text{central}} = \sum_{l=0}^{\infty} (\gamma \lambda)^l \delta_{t+l}^{V} $. The temporal difference error is $ \delta_t^V = r_t + \gamma V_{\Phi}(s_{t+1}) - V_{\Phi}(s_t) $.
 
 ---
 
 ## 3.3 Model 3: COMA (Counterfactual Multi-Agent Policy Gradients)
 
-COMA uses a centralized critic $ Q(s, \mathbf{a}) $ and computes a counterfactual advantage baseline for agent $ i $:
+COMA computes a counterfactual advantage baseline for agent $ i $ using a centralized critic $ Q(s, \mathbf{a}) $:
 
 $ A_i^{\text{COMA}}(s, \mathbf{a}) = Q(s, \mathbf{a}) - \sum_{a_i' \in \mathcal{A}_i} \pi_i(a_i' | o_i) Q(s, (a_i', \mathbf{a}_{-i})) $
 
-This marginalizes out agent $ i $'s action while keeping all teammate actions $ \mathbf{a}_{-i} $ fixed.
+This marginalizes out agent $ i $'s action. Teammate actions $ \mathbf{a}_{-i} $ remain fixed.
 
 ---
 
@@ -41,33 +38,33 @@ MAPPO_CAR injects action-mask affordance delta feedback into agent rewards:
 
 $ r_{t,i}^{\text{CAR}} = r_{t,i} + \beta_{\text{CAR}} \sum_{j \neq i} \Delta \text{Mask}_j(s_t, a_{t,i}) $
 
-where $ \Delta \text{Mask}_j(s_t, a_{t,i}) = |\text{Mask}_j(s_{t+1})| - |\text{Mask}_j(s_t)| $ measures how agent $ i $'s action expanded available action affordances for teammate $ j $.
+The function $ \Delta \text{Mask}_j(s_t, a_{t,i}) = |\text{Mask}_j(s_{t+1})| - |\text{Mask}_j(s_t)| $ measures how agent $ i $'s action expanded available action affordances for teammate $ j $.
 
 ---
 
 ## 3.5 Model 5: MAPPO + CIR (Causal Advantage Routing)
 
-MAPPO_CIR routes advantage estimation based on causal contribution rather than uniform spatial sharing:
+MAPPO_CIR routes advantage estimation based on causal contribution. It does not use uniform spatial sharing:
 
 $ \hat{A}_{t,i}^{\text{CIR}} = \hat{A}_t^{\text{central}} \cdot \psi_i(s_t, \mathbf{a}_t) $
 
-where $ \psi_i(s_t, \mathbf{a}_t) = \frac{\exp(\| \nabla_{a_i} Q(s_t, \mathbf{a}_t) \|)}{\sum_{j} \exp(\| \nabla_{a_j} Q(s_t, \mathbf{a}_t) \|)} $ measures the local Jacobian sensitivity of the joint state-value with respect to agent $ i $'s action vector.
+The routing function $ \psi_i(s_t, \mathbf{a}_t) = \frac{\exp(\| \nabla_{a_i} Q(s_t, \mathbf{a}_t) \|)}{\sum_{j} \exp(\| \nabla_{a_j} Q(s_t, \mathbf{a}_t) \|)} $ measures the local Jacobian sensitivity of the joint state-value.
 
 ---
 
 ## 3.6 Model 6: LOO (Leave-One-Out Marginal Counterfactual)
 
-LOO implements a Leave-One-Out marginal counterfactual advantage (C3-style):
+LOO implements a Leave-One-Out marginal counterfactual advantage:
 
 $ A_i^{\text{LOO}}(s, \mathbf{a}) = Q_i(s, a_{-i}, a_i) - \frac{1}{|\mathcal{A}_{\text{legal}}|-1} \sum_{a' \neq a_i} Q_i(s, a_{-i}, a') $
 
-By isolating the marginal contribution without taking expectations over uncalibrated policy distributions $ \pi_i(a_i'|o_i) $, LOO reduces counterfactual variance compared to COMA.
+LOO isolates the marginal contribution without taking expectations over uncalibrated policy distributions $ \pi_i(a_i'|o_i) $. It reduces counterfactual variance compared to COMA.
 
 ---
 
 ## 3.7 Model 7: ATE (Average Treatment Effect Contrastive PPO)
 
-ATE measures the direct treatment effect of executing an action $ a_i $ compared to the explicit null action ($ a_{\text{WAIT}} = 4 $):
+ATE measures the direct treatment effect of executing an action $ a_i $. It compares it to the explicit null action ($ a_{\text{WAIT}} = 4 $):
 
 $ A_i^{\text{ATE}}(s, a_i) = Q_i(s, a_{-i}, a_i) - Q_i(s, a_{-i}, a_{\text{WAIT}}) $
 
@@ -75,59 +72,59 @@ $ A_i^{\text{ATE}}(s, a_i) = Q_i(s, a_{-i}, a_i) - Q_i(s, a_{-i}, a_{\text{WAIT}
 
 ## 3.8 Model 8: MACCA (Multi-Agent Dynamic Bayesian Causal Graph)
 
-MACCA factorizes global state transitions into a Dynamic Bayesian Network (DBN) to measure inter-agent influence graphs:
+MACCA factorizes global state transitions into a Dynamic Bayesian Network (DBN). It measures inter-agent influence graphs:
 
 $ \hat{A}_{t,i}^{\text{MACCA}} = \hat{A}_{t,i}^{\text{central}} \cdot \left[ 1 + \eta_{\text{MACCA}} \sum_{j \neq i} P_{\text{DBN}}(s_{j, t+1} \mid s_t, a_{i, t}) \right] $
 
 ---
 
-## 3.9 Model 9: MARC (Micro-Macro Asymmetric Retroactive Causal-chain) — *Flagship Algorithm*
+## 3.9 Model 9: MARC (Micro-Macro Asymmetric Retroactive Causal-chain)
 
-MARC factorizes credit assignment into a multi-scale Micro-Macro structure:
+MARC factorizes credit assignment into a multi-scale Micro-Macro structure.
 
-1. **Micro Credit ($ \mu_{i, t} $):** Evaluates local interaction impact via action affordance deltas:
+Micro Credit ($ \mu_{i, t} $) evaluates local interaction impact via action affordance deltas:
 
-   $ \mu_{i, t} = \hat{A}_{i, t}^{\text{base}} + \beta_{\text{affordance}} \sum_{j \neq i} \Delta \text{Mask}_j(s_t, a_{i, t}) $
+$ \mu_{i, t} = \hat{A}_{i, t}^{\text{base}} + \beta_{\text{affordance}} \sum_{j \neq i} \Delta \text{Mask}_j(s_t, a_{i, t}) $
 
-2. **Macro Weighting ($ \Omega_t $):** Multiplicatively scales micro credit by global alarm ($ A_t $) and team outcome ($ R_T $):
+Macro Weighting ($ \Omega_t $) scales micro credit by global alarm ($ A_t $) and team outcome ($ R_T $):
 
-   $ \Omega_t = \Phi_{\text{outcome}}(R_T) \cdot \exp\left( -\alpha_{\text{alarm}} \frac{A_t}{A_{\text{max}}} \right) $
+$ \Omega_t = \Phi_{\text{outcome}}(R_T) \cdot \exp\left( -\alpha_{\text{alarm}} \frac{A_t}{A_{\text{max}}} \right) $
 
-3. **Asymmetric Failure Shielding:** On team failure, negative credit targets direct failure triggers while shielding upstream enabling actions ($ \Omega_t = 1.0 $ for enablers).
+Asymmetric Failure Shielding protects enablers. On team failure, negative credit targets direct failure triggers. It shields upstream enabling actions ($ \Omega_t = 1.0 $ for enablers).
 
-4. **Backward Retroactive Pass ($ t = T \to 0 $):** Propagates joint Micro-Macro advantages backward through time:
+The Backward Retroactive Pass ($ t = T \to 0 $) propagates joint Micro-Macro advantages backward through time:
 
-   $ \hat{A}_{i, t}^{\text{MARC}} = \mu_{i, t} \cdot \Omega_t + \gamma_{\text{causal}} \hat{A}_{i, t+1}^{\text{MARC}} $
+$ \hat{A}_{i, t}^{\text{MARC}} = \mu_{i, t} \cdot \Omega_t + \gamma_{\text{causal}} \hat{A}_{i, t+1}^{\text{MARC}} $
 
 ### 3.9.1 Targeted Component Ablations
-To isolate the algorithmic contribution of each structural component in MARC, we evaluate three key ablations:
-- **`marc_no_shielding` (Minus Asymmetric Shielding):** Disables enabler shielding on team failure, applying negative outcome penalties indiscriminately to all agents.
-- **`marc_no_macro` (Minus Macro Weighting):** Sets $ \Omega_t = 1.0 $, removing global alarm penalty scaling and outcome factor weighting.
-- **`marc_no_affordance` (Minus Micro Affordance Boost):** Sets $ \beta_{\text{affordance}} = 0.0 $, disabling action-mask expansion feedback.
+We evaluate three ablations for MARC.
+The `marc_no_shielding` ablation disables enabler shielding on team failure. It applies negative outcome penalties to all agents.
+The `marc_no_macro` ablation sets $ \Omega_t = 1.0 $. It removes global alarm penalty scaling and outcome factor weighting.
+The `marc_no_affordance` ablation sets $ \beta_{\text{affordance}} = 0.0 $. It disables action-mask expansion feedback.
 
 ## 3.10 Hierarchical MARL (H-MARL) Solutions to the Sparsity Wall
 
-To bridge the Causal Credit Dilution observed in Stage 4, we introduce **CHARM (Causal Hierarchical Asymmetric Routing & Messaging)** alongside three canonical H-MARL baselines. These architectures utilize a Manager operating at a macro-step frequency $ c $ and a Worker operating at the environment frequency.
+We introduce CHARM (Causal Hierarchical Asymmetric Routing & Messaging) alongside three canonical H-MARL baselines. These architectures utilize a Manager operating at a macro-step frequency $ c $ and a Worker operating at the environment frequency.
 
 ### 3.10.1 CHARM (Causal Hierarchical Asymmetric Routing & Messaging)
-CHARM's Manager outputs a continuous spatial goal $ g \in \mathbb{R}^2 $. Instead of relying on distance-based intrinsic rewards, CHARM forces the Worker to learn from the sparse extrinsic reward $ R_{ext} $, but injects dense **Upward Affordance Routing** to the Manager:
+CHARM's Manager outputs a continuous spatial goal $ g \in \mathbb{R}^2 $. The Worker learns from the sparse extrinsic reward $ R_{ext} $. We inject dense upward affordance routing to the Manager:
 $$$
 R_{Manager} = R_{ext} + \lambda \cdot R_{affordance}
 $$$
-This prevents causal cycle traps while dense-ifying the macro-gradient.
+This prevents causal cycle traps. It densifies the macro-gradient.
 
 ### 3.10.2 MAHIRO (Multi-Agent HIRO)
-MAHIRO serves as our continuous-goal baseline. The Manager outputs $ g \in \mathbb{R}^2 $. The Worker receives an intrinsic reward proportional to the negative L2 distance to the goal:
+MAHIRO acts as our continuous-goal baseline. The Manager outputs $ g \in \mathbb{R}^2 $. The Worker receives an intrinsic reward proportional to the negative L2 distance to the goal:
 $$$
 r^{in}_t = -|| s_{t} - g_c ||_2
 $$$
 The Manager receives only the raw extrinsic reward $ R_{ext} $.
 
 ### 3.10.3 ROMA (Role-Oriented Multi-Agent RL)
-ROMA utilizes a discrete Manager that outputs a latent role $ z $. The Worker policy $ \pi(a | \tau, z) $ is conditioned on this role. A KL-divergence regularizer enforces role diversity:
+ROMA utilizes a discrete Manager that outputs a latent role $ z $. The Worker policy $ \pi(a | \tau, z) $ depends on this role. A KL-divergence regularizer enforces role diversity:
 $$$
 L_{ROMA} = L_{PPO} + \alpha_{KL} \sum_{i,j} D_{KL}( \pi( \cdot | \tau_i, z_i ) || \pi( \cdot | \tau_j, z_j ) )
 $$$
 
 ### 3.10.4 LRS (Logical Reward Shaping)
-LRS structurally matches ROMA by outputting a discrete state phase $ \phi $. The Worker is rewarded for transitioning the global state to satisfy the logical preconditions of $ \phi $, framing the problem as a progression through a Finite State Automaton.
+LRS structurally matches ROMA by outputting a discrete state phase $ \phi $. The Worker is rewarded for transitioning the global state to satisfy the logical preconditions of $ \phi $. It frames the problem as a progression through a Finite State Automaton.

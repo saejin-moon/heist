@@ -785,11 +785,11 @@ class DiscreteHierarchicalAgent(nn.Module):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# SCOPE Agent (Dynamic Skill-Pool Co-op)
+# CO-OP Agent (Dynamic Skill-Pool Co-op)
 # ──────────────────────────────────────────────────────────────────────
 
 
-class ScopeExpert(nn.Module):
+class CoopExpert(nn.Module):
     def __init__(self, state_dim, hidden_dim=HIDDEN_DIM):
         super().__init__()
         self.actor = nn.Sequential(
@@ -805,13 +805,13 @@ class ScopeExpert(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.Tanh(),
-            layer_init(nn.Linear(hidden_dim, 1), std=1.0),
+            layer_init(nn.Linear(hidden_dim, 1), std=1e-5),
         )
 
 
-class ScopeAgent(nn.Module):
+class CoopAgent(nn.Module):
     """
-    SCOPE: Scalable Cooperative Option-Pool Evolution.
+    CO-OP: Scalable Cooperative Option-Pool Evolution.
     Instead of a Manager, Experts vote via their Critic values (Bottom-Up Routing).
     """
 
@@ -819,7 +819,7 @@ class ScopeAgent(nn.Module):
         super().__init__()
         self.max_experts = max_experts
         self.experts = nn.ModuleList(
-            [ScopeExpert(state_dim, hidden_dim) for _ in range(max_experts)]
+            [CoopExpert(state_dim, hidden_dim) for _ in range(max_experts)]
         )
 
     def get_action_and_value(
@@ -882,9 +882,9 @@ class ScopeAgent(nn.Module):
         )
 
 
-class ScopeTopDownAgent(nn.Module):
+class CoopTopDownAgent(nn.Module):
     """
-    SCOPE Ablation: Top-Down Router.
+    CO-OP Ablation: Top-Down Router.
     Uses a standard Manager network to pick the expert, rather than bottom-up voting.
     """
 
@@ -909,7 +909,7 @@ class ScopeTopDownAgent(nn.Module):
         )
 
         self.experts = nn.ModuleList(
-            [ScopeExpert(state_dim, hidden_dim) for _ in range(max_experts)]
+            [CoopExpert(state_dim, hidden_dim) for _ in range(max_experts)]
         )
 
     def get_action_and_value(

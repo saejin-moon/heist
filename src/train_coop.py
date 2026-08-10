@@ -1,5 +1,5 @@
 """
-SCOPE: Scalable Cooperative Option-Pool Evolution.
+CO-OP: Scalable Cooperative Option-Pool Evolution.
 Implements a dynamic Bottom-Up Confidence Routing mechanism.
 """
 
@@ -14,16 +14,16 @@ import torch.nn as nn
 import torch.optim as optim
 
 from constants import ACTION_SPACE_SIZE as ACTION_DIM
-from constants import N_AGENTS
+from constants import N_AGENTS, OBSERVATION_SIZE
 from env import AGENTS, parse_env_config
-from model import ScopeAgent, ScopeTopDownAgent
+from model import CoopAgent, CoopTopDownAgent
 from ppo_utils import compute_gae_simple, write_completion
 from vec_env import VectorEnv
 
 
 @dataclass
 class Args:
-    exp_name: str = "scope"
+    exp_name: str = "coop"
     seed: int = 0
     torch_deterministic: bool = True
     cuda: bool = True
@@ -41,8 +41,9 @@ class Args:
     max_grad_norm: float = 0.5
     tau_spawn: float = -0.1
     max_experts: int = 6
+    burn_in_steps: int = 500_000
     complexity_penalty: float = 0.01
-    prune_window: int = 10000
+    prune_episodes: int = 50
     env_config: str = ""
     save_model: bool = True
     load_checkpoint: str = ""
@@ -83,14 +84,14 @@ def main():
     state_dim = envs.state_dim
 
     if args.ablation_top_down:
-        agent = ScopeTopDownAgent(state_dim, max_experts=args.max_experts).to(device)
+        agent = CoopTopDownAgent(state_dim, max_experts=args.max_experts).to(device)
     else:
-        agent = ScopeAgent(state_dim, max_experts=args.max_experts).to(device)
+        agent = CoopAgent(state_dim, max_experts=args.max_experts).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    if args.load_checkpoint and os.path.exists(f"{args.load_checkpoint}/scope.pt"):
+    if args.load_checkpoint and os.path.exists(f"{args.load_checkpoint}/coop.pt"):
         agent.load_state_dict(
-            torch.load(f"{args.load_checkpoint}/scope.pt", map_location=device)
+            torch.load(f"{args.load_checkpoint}/coop.pt", map_location=device)
         )
         print(f"Loaded checkpoint from {args.load_checkpoint}")
 
@@ -99,7 +100,14 @@ def main():
     )  # Start with 2 experts unless fixed
 
     # Buffers
-    obs_t = torch.zeros((args.num_steps, N_AGENTS, args.num_envs, 49)).to(device)
+    obs_t = torch.zeros(
+        (
+            args.num_steps,
+            N_AGENTS,
+            args.num_envs,
+            OBSERVATION_SIZE[0] * OBSERVATION_SIZE[1],
+        )
+    ).to(device)
     roles_t = torch.zeros((args.num_steps, N_AGENTS, args.num_envs, 4)).to(device)
     states_t = torch.zeros((args.num_steps, args.num_envs, state_dim)).to(device)
     masks_t = torch.zeros((args.num_steps, N_AGENTS, args.num_envs, ACTION_DIM)).to(
@@ -114,10 +122,13 @@ def main():
     expert_idx_t = torch.zeros(
         (args.num_steps, N_AGENTS, args.num_envs), dtype=torch.long
     ).to(device)
+    alarms_t = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    car_unlocked_t = torch.zeros((args.num_steps, N_AGENTS, args.num_envs), dtype=torch.bool).to(device)
 
-    expert_last_used = torch.zeros(args.max_experts, dtype=torch.long, device=device)
+    expert_last_used_episode = torch.zeros(args.max_experts, dtype=torch.long, device=device)
 
     global_step = 0
+    global_episode_count = 0
     num_updates = args.total_timesteps // (args.num_envs * args.num_steps)
 
     next_done = torch.zeros(args.num_envs).to(device)
@@ -155,15 +166,16 @@ def main():
                 )
 
                 # Check for spawning
-                min_conf = torch.min(value)
+                max_conf = torch.max(value)
                 if (
-                    min_conf < args.tau_spawn
+                    max_conf < args.tau_spawn
                     and active_experts < args.max_experts
                     and not args.ablation_fixed
+                    and global_step >= args.burn_in_steps
                 ):
                     active_experts += 1
                     print(
-                        f"Spawning Expert {active_experts} at step {global_step} (min_conf={min_conf.item():.3f})!"
+                        f"Spawning Expert {active_experts} at step {global_step} (min_conf={max_conf.item():.3f})!"
                     )
 
                 actions_t[step] = action.view(N_AGENTS, args.num_envs)
@@ -173,16 +185,16 @@ def main():
 
                 # Update expert usage and check for pruning
                 chosen_expert_unique = chosen_expert.unique()
-                expert_last_used[chosen_expert_unique] = global_step
+                expert_last_used_episode[chosen_expert_unique] = global_episode_count
 
                 if not args.ablation_fixed:
                     for k in range(active_experts - 1, -1, -1):
                         if (
                             active_experts > 1
-                            and (global_step - expert_last_used[k]) > args.prune_window
+                            and (global_episode_count - expert_last_used_episode[k]) > args.prune_episodes
                         ):
                             print(
-                                f"Pruning Expert {k} at step {global_step} (unused for {global_step - expert_last_used[k]} steps)!"
+                                f"Pruning Expert {k} at episode {global_episode_count} (unused for {global_episode_count - expert_last_used_episode[k]} episodes)!"
                             )
 
                             if k < active_experts - 1:
@@ -216,7 +228,7 @@ def main():
                                         if p_target in optimizer.state:
                                             del optimizer.state[p_target]
 
-                                expert_last_used[k] = expert_last_used[src]
+                                expert_last_used_episode[k] = expert_last_used_episode[src]
                                 expert_idx_t[expert_idx_t == src] = k
 
                             active_experts -= 1
@@ -228,22 +240,41 @@ def main():
                 }
                 actions_list.append(act_dict)
 
+            # Structural Affordance Detection (Pre-step state)
+            old_mask_sum = mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM).sum(dim=(1, 2))
+
             next_obs, rewards, terminations, truncations, infos = envs.step(
                 actions_list
             )
+            
+            alarms_step = [
+                infos[e].get("scout", {}).get("alarm", 0.0) if isinstance(infos, list) and e < len(infos) else 0.0
+                for e in range(args.num_envs)
+            ]
+            alarms_t[step] = torch.tensor(alarms_step, dtype=torch.float32, device=device)
+
             next_state = envs.state
             next_done = torch.logical_or(
                 torch.tensor(terminations, dtype=torch.float32),
                 torch.tensor(truncations, dtype=torch.float32),
             ).to(device)
+            global_episode_count += int(next_done.sum().item())
 
-            # Assign CAR explicitly
+            # Structural Affordance Detection (Post-step state)
+            new_mask_all = torch.as_tensor(next_obs["_stacked"]["action_mask"], dtype=torch.float32, device=device)
+            new_mask_sum = new_mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM).sum(dim=(1, 2))
+            affordance_triggered = new_mask_sum > old_mask_sum  # [num_envs]
+
+            # Assign CAR structurally
             for e in range(args.num_envs):
                 for i, a in enumerate(AGENTS):
                     base_reward = rewards[e][a]
+                    # The affordance was triggered globally, and THIS agent took the INTERACT action (5)
+                    is_unlocked = affordance_triggered[e].item() and int(actions_t[step, i, e].item()) == 5
+                    car_unlocked_t[step, i, e] = is_unlocked
                     car_reward = 0.0
                     if (
-                        infos[e][a].get("car_unlocked", False)
+                        is_unlocked
                         and not args.ablation_no_car
                     ):
                         car_reward = 1.0  # Dense causal affordance routing reward to the winning expert
@@ -272,6 +303,27 @@ def main():
                 active_experts,
             )
             next_value = next_value.view(N_AGENTS, args.num_envs)
+            
+            # Apply Asymmetric Failure Shielding & Macro Weighting from MARC
+            win = (rewards_t > 5.0).any(dim=1).any(dim=0)  # [B]
+            macro_alarm_factor = torch.exp(-1.5 * (alarms_t / 100.0))  # [T, B]
+            macro_outcome = torch.where(win, 1.0, -0.5)  # [B]
+            
+            alarm_fac = macro_alarm_factor.unsqueeze(1)  # [T, 1, B]
+            out_fac = macro_outcome.unsqueeze(0).unsqueeze(0)  # [1, 1, B]
+            unshielded_omega = out_fac * alarm_fac  # [T, 1, B]
+            
+            not_win = (~win).unsqueeze(0).unsqueeze(0)  # [1, 1, B]
+            shield_mask = not_win & car_unlocked_t  # [T, N_AGENTS, B]
+            
+            unshielded_omega = unshielded_omega.expand(-1, N_AGENTS, -1)
+            alarm_fac = alarm_fac.expand(-1, N_AGENTS, -1)
+            
+            omega_t = torch.where(shield_mask, alarm_fac, unshielded_omega)
+            
+            # Permute from [T, N_AGENTS, B] to [T, N_AGENTS, B] -> rewards_t is [T, N_AGENTS, B]
+            rewards_t = rewards_t * omega_t
+            
             advantages, returns = compute_gae_simple(
                 rewards_t, values_t, next_value, dones_t, args.gamma, args.gae_lambda
             )
@@ -344,7 +396,7 @@ def main():
 
     if args.save_model:
         os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
-        torch.save(agent.state_dict(), f"checkpoints/{run_name}/scope.pt")
+        torch.save(agent.state_dict(), f"checkpoints/{run_name}/coop.pt")
         write_completion(f"checkpoints/{run_name}", args)
 
 

@@ -1,1 +1,0 @@
-scripts/assess-time.zsh

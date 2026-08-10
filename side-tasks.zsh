@@ -1,1 +1,0 @@
-scripts/side-tasks.zsh

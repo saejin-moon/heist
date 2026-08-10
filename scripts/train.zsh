@@ -233,7 +233,7 @@ run_campaign() {
     if [ -n "$MODELS" ]; then
         IFS=',' read -A model_names <<< "$MODELS"
     else
-        model_names=("ippo" "mappo" "coma" "mappo_car" "mappo_cir" "loo" "ate" "macca" "marc" "charm" "mahiro" "roma" "lrs" "scope")
+        model_names=("ippo" "mappo" "coma" "mappo_car" "mappo_cir" "loo" "ate" "macca" "marc" "charm" "mahiro" "roma" "lrs" "coop")
     fi
 
     local -a rnd_flags=()
@@ -512,23 +512,23 @@ run_campaign() {
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;
-                scope)
-                    nohup .venv/bin/python -u src/train_scope.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                coop)
+                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;
-                scope_fixed)
-                    nohup .venv/bin/python -u src/train_scope.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ablation-fixed "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                coop_fixed)
+                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ablation-fixed "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;
-                scope_no_car)
-                    nohup .venv/bin/python -u src/train_scope.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ablation-no-car "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                coop_no_car)
+                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ablation-no-car "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;
-                scope_top_down)
-                    nohup .venv/bin/python -u src/train_scope.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ablation-top-down "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                coop_top_down)
+                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ablation-top-down "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;
