@@ -51,6 +51,14 @@ DEFAULT_ALGOS = {
     "marc_no_shielding": {"exp_name": "marc_no_shielding", "class": "mappo"},
     "marc_no_macro": {"exp_name": "marc_no_macro", "class": "mappo"},
     "marc_no_affordance": {"exp_name": "marc_no_affordance", "class": "mappo"},
+    "charm": {"exp_name": "charm", "class": "charm"},
+    "mahiro": {"exp_name": "mahiro", "class": "charm"},
+    "roma": {"exp_name": "roma", "class": "roma"},
+    "lrs": {"exp_name": "lrs", "class": "roma"},
+    "coop": {"exp_name": "coop", "class": "coop"},
+    "coop_fixed": {"exp_name": "coop_fixed", "class": "coop"},
+    "coop_no_car": {"exp_name": "coop_no_car", "class": "coop"},
+    "coop_top_down": {"exp_name": "coop_top_down", "class": "coop_top_down"},
 }
 
 

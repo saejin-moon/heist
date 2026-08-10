@@ -89,13 +89,43 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
     terminal_reward = 0.0
     win = False
 
-    for _ in range(env.config["max_steps"]):
+    current_goals = {a: None for a in AGENTS}
+    active_experts = 6  # max_experts for CO-OP during eval
+
+    for step_idx in range(env.config["max_steps"]):
         actions = {}
         for a in AGENTS:
             if noop_agent == a:
                 actions[a] = WAIT
                 continue
             mask = obs[a]["action_mask"]
+            policy = policies[a]
+            p_type = type(policy).__name__
+            
+            if p_type in ["ContinuousHierarchicalAgent", "DiscreteHierarchicalAgent", "CoopAgent", "CoopTopDownAgent"]:
+                obs_t = torch.as_tensor(obs[a]["observation"], dtype=torch.float32, device=device).unsqueeze(0)
+                role_t = torch.as_tensor(obs[a]["role_id"], dtype=torch.float32, device=device).unsqueeze(0)
+                mask_t = torch.as_tensor(mask, dtype=torch.int64, device=device).unsqueeze(0)
+                state_t = torch.as_tensor(env.state(), dtype=torch.float32, device=device).unsqueeze(0)
+                
+                with torch.no_grad():
+                    if p_type == "ContinuousHierarchicalAgent":
+                        if step_idx % 10 == 0 or current_goals[a] is None:
+                            g, _, _, _ = policy.get_manager_action_and_value(obs_t, state_t, role_t)
+                            current_goals[a] = g
+                        action, _, _, _ = policy.get_worker_action_and_value(obs_t, state_t, role_t, current_goals[a], mask_t)
+                        actions[a] = int(action.item())
+                    elif p_type == "DiscreteHierarchicalAgent":
+                        if step_idx % 10 == 0 or current_goals[a] is None:
+                            g, _, _, _ = policy.get_manager_action_and_value(obs_t, state_t, role_t)
+                            current_goals[a] = g
+                        action, _, _, _ = policy.get_worker_action_and_value(obs_t, state_t, role_t, current_goals[a], mask_t)
+                        actions[a] = int(action.item())
+                    elif p_type in ["CoopAgent", "CoopTopDownAgent"]:
+                        action, _, _, _, _ = policy.get_action_and_value(obs_t, state_t, role_t, mask_t, active_experts)
+                        actions[a] = int(action.item())
+                continue
+            
             legal = np.argwhere(mask == 1).ravel()
             if greedy and len(legal) > 0:
                 actions[a] = _select_action(
