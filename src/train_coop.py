@@ -63,6 +63,7 @@ def parse_args():
     p.add_argument("--ablation-fixed", action="store_true")
     p.add_argument("--ablation-no-car", action="store_true")
     p.add_argument("--ablation-top-down", action="store_true")
+    p.add_argument("--tau-spawn", type=float, default=Args.tau_spawn)
     args, _ = p.parse_known_args()
     return Args(**vars(args))
 
