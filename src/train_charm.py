@@ -15,7 +15,7 @@ from constants import ACTION_SPACE_SIZE as ACTION_DIM
 from constants import N_AGENTS
 from env import AGENTS, parse_env_config
 from model import ContinuousHierarchicalAgent
-from ppo_utils import compute_gae, write_completion
+from ppo_utils import compute_gae_simple, write_completion
 from vec_env import VectorEnv
 
 
@@ -214,35 +214,21 @@ def main():
                 g,
             )
             next_w_value = next_w_value.view(N_AGENTS, args.num_envs)
-            w_advantages = compute_gae(
-
+            w_advantages, w_returns = compute_gae_simple(
                 w_rewards, w_values, next_w_value, w_dones, args.gamma, args.gae_lambda
-
             )
 
-            w_returns = w_advantages + w_values
-
-
             _, _, _, next_m_value = agent.get_manager_action_and_value(
-
                 next_obs_all.flatten(0, 1),
-
                 next_state_t.repeat(N_AGENTS, 1),
-
                 next_role_all.flatten(0, 1),
-
             )
 
             next_m_value = next_m_value.view(N_AGENTS, args.num_envs)
 
-            m_advantages = compute_gae(
-
+            m_advantages, m_returns = compute_gae_simple(
                 m_rewards, m_values, next_m_value, m_dones, args.gamma, args.gae_lambda
-
             )
-
-            m_returns = m_advantages + m_values
-
 
             # Flatten Worker Batch
 
@@ -262,8 +248,9 @@ def main():
 
             b_w_returns = w_returns.flatten(0, 2)
 
-            b_current_goals = m_actions.repeat_interleave(args.macro_step, dim=0).flatten(0, 2)
-
+            b_current_goals = m_actions.repeat_interleave(
+                args.macro_step, dim=0
+            ).flatten(0, 2)
 
             # Flatten Manager Batch
 
@@ -281,7 +268,6 @@ def main():
 
             b_m_returns = m_returns.flatten(0, 2)
 
-
             # Worker Optimization
 
             w_inds = np.arange(args.num_envs * args.num_steps * N_AGENTS)
@@ -289,19 +275,22 @@ def main():
             w_minibatch_size = len(w_inds) // 4
 
             for _ in range(4):
-
                 np.random.shuffle(w_inds)
 
                 for start in range(0, len(w_inds), w_minibatch_size):
-
                     end = start + w_minibatch_size
 
                     mb = w_inds[start:end]
 
-                    _, newlogprob, entropy, newvalue = agent.get_worker_action_and_value(
-
-                        b_w_obs[mb], b_w_states[mb], b_w_roles[mb], b_current_goals[mb], b_w_masks[mb], action=b_w_actions[mb]
-
+                    _, newlogprob, entropy, newvalue = (
+                        agent.get_worker_action_and_value(
+                            b_w_obs[mb],
+                            b_w_states[mb],
+                            b_w_roles[mb],
+                            b_current_goals[mb],
+                            b_w_masks[mb],
+                            action=b_w_actions[mb],
+                        )
                     )
 
                     logratio = newlogprob - b_w_logprobs[mb]
@@ -312,7 +301,9 @@ def main():
 
                     mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
 
-                    pg_loss = torch.max(-mb_adv * ratio, -mb_adv * torch.clamp(ratio, 0.8, 1.2)).mean()
+                    pg_loss = torch.max(
+                        -mb_adv * ratio, -mb_adv * torch.clamp(ratio, 0.8, 1.2)
+                    ).mean()
 
                     v_loss = 0.5 * ((newvalue - b_w_returns[mb]) ** 2).mean()
 
@@ -326,29 +317,30 @@ def main():
 
                     optimizer.step()
 
-
             # Manager Optimization
 
-            m_inds = np.arange(args.num_envs * (args.num_steps // args.macro_step) * N_AGENTS)
+            m_inds = np.arange(
+                args.num_envs * (args.num_steps // args.macro_step) * N_AGENTS
+            )
 
             if len(m_inds) > 0:
-
                 m_minibatch_size = max(1, len(m_inds) // 4)
 
                 for _ in range(4):
-
                     np.random.shuffle(m_inds)
 
                     for start in range(0, len(m_inds), m_minibatch_size):
-
                         end = start + m_minibatch_size
 
                         mb = m_inds[start:end]
 
-                        _, newlogprob, entropy, newvalue = agent.get_manager_action_and_value(
-
-                            b_m_obs[mb], b_m_states[mb], b_m_roles[mb], action=b_m_actions[mb]
-
+                        _, newlogprob, entropy, newvalue = (
+                            agent.get_manager_action_and_value(
+                                b_m_obs[mb],
+                                b_m_states[mb],
+                                b_m_roles[mb],
+                                action=b_m_actions[mb],
+                            )
                         )
 
                         logratio = newlogprob - b_m_logprobs[mb]
@@ -359,7 +351,9 @@ def main():
 
                         mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
 
-                        pg_loss = torch.max(-mb_adv * ratio, -mb_adv * torch.clamp(ratio, 0.8, 1.2)).mean()
+                        pg_loss = torch.max(
+                            -mb_adv * ratio, -mb_adv * torch.clamp(ratio, 0.8, 1.2)
+                        ).mean()
 
                         v_loss = 0.5 * ((newvalue - b_m_returns[mb]) ** 2).mean()
 
@@ -372,7 +366,6 @@ def main():
                         torch.nn.utils.clip_grad_norm_(agent.parameters(), 0.5)
 
                         optimizer.step()
-
 
         if update % args.eval_every == 0 or update == num_updates:
             print(f"[{run_name}] Update {update}/{num_updates}")

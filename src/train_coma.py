@@ -571,7 +571,11 @@ def train(args: Args):  # noqa: C901
         # ---------------- logging ----------------
         sps = int(global_step / (time.time() - start_time))
         avg_reward = np.mean([buffers[a]["rewards"].mean().item() for a in AGENTS])
-        win_rate = (buffers[list(AGENTS)[0]]["rewards"] > 5.0).any(dim=0).float().mean().item() if hasattr(buffers[list(AGENTS)[0]]["rewards"], "dim") else 0.0
+        win_rate = (
+            (buffers[list(AGENTS)[0]]["rewards"] > 5.0).any(dim=0).float().mean().item()
+            if hasattr(buffers[list(AGENTS)[0]]["rewards"], "dim")
+            else 0.0
+        )
         writer.add_scalar("charts/global_step", global_step, global_step)
         writer.add_scalar("charts/sps", sps, global_step)
         writer.add_scalar("charts/mean_reward", avg_reward, global_step)

@@ -383,7 +383,11 @@ def train(args):
 
         sps = int(global_step / (time.time() - start_time))
         avg_reward = np.mean([buffers[a]["rewards"].mean().item() for a in AGENTS])
-        win_rate = (buffers[list(AGENTS)[0]]["rewards"] > 5.0).any(dim=0).float().mean().item() if hasattr(buffers[list(AGENTS)[0]]["rewards"], "dim") else 0.0
+        win_rate = (
+            (buffers[list(AGENTS)[0]]["rewards"] > 5.0).any(dim=0).float().mean().item()
+            if hasattr(buffers[list(AGENTS)[0]]["rewards"], "dim")
+            else 0.0
+        )
         print(
             f"update={update} step={global_step} sps={sps} win_rate={win_rate:.3f} mean_reward={avg_reward:.4f}"
         )

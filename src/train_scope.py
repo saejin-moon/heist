@@ -17,7 +17,7 @@ from constants import ACTION_SPACE_SIZE as ACTION_DIM
 from constants import N_AGENTS
 from env import AGENTS, parse_env_config
 from model import ScopeAgent, ScopeTopDownAgent
-from ppo_utils import compute_gae, write_completion
+from ppo_utils import compute_gae_simple, write_completion
 from vec_env import VectorEnv
 
 
@@ -162,7 +162,9 @@ def main():
                     and not args.ablation_fixed
                 ):
                     active_experts += 1
-                    print(f"Spawning Expert {active_experts} at step {global_step} (min_conf={min_conf.item():.3f})!")
+                    print(
+                        f"Spawning Expert {active_experts} at step {global_step} (min_conf={min_conf.item():.3f})!"
+                    )
 
                 actions_t[step] = action.view(N_AGENTS, args.num_envs)
                 logprobs_t[step] = logprob.view(N_AGENTS, args.num_envs)
@@ -175,24 +177,41 @@ def main():
 
                 if not args.ablation_fixed:
                     for k in range(active_experts - 1, -1, -1):
-                        if active_experts > 1 and (global_step - expert_last_used[k]) > args.prune_window:
-                            print(f"Pruning Expert {k} at step {global_step} (unused for {global_step - expert_last_used[k]} steps)!")
+                        if (
+                            active_experts > 1
+                            and (global_step - expert_last_used[k]) > args.prune_window
+                        ):
+                            print(
+                                f"Pruning Expert {k} at step {global_step} (unused for {global_step - expert_last_used[k]} steps)!"
+                            )
 
                             if k < active_experts - 1:
                                 # Shift weights and optimizer state to keep active experts contiguous
                                 src = active_experts - 1
-                                agent.experts[k].load_state_dict(agent.experts[src].state_dict())
+                                agent.experts[k].load_state_dict(
+                                    agent.experts[src].state_dict()
+                                )
 
-                                for p_target, p_source in zip(agent.experts[k].parameters(), agent.experts[src].parameters(), strict=False):
+                                for p_target, p_source in zip(
+                                    agent.experts[k].parameters(),
+                                    agent.experts[src].parameters(),
+                                    strict=False,
+                                ):
                                     if p_source in optimizer.state:
                                         state_src = optimizer.state[p_source]
                                         optimizer.state[p_target] = {
-                                            'step': state_src.get('step', torch.tensor(0.0)),
-                                            'exp_avg': state_src['exp_avg'].clone(),
-                                            'exp_avg_sq': state_src['exp_avg_sq'].clone()
+                                            "step": state_src.get(
+                                                "step", torch.tensor(0.0)
+                                            ),
+                                            "exp_avg": state_src["exp_avg"].clone(),
+                                            "exp_avg_sq": state_src[
+                                                "exp_avg_sq"
+                                            ].clone(),
                                         }
-                                        if 'max_exp_avg_sq' in state_src:
-                                            optimizer.state[p_target]['max_exp_avg_sq'] = state_src['max_exp_avg_sq'].clone()
+                                        if "max_exp_avg_sq" in state_src:
+                                            optimizer.state[p_target][
+                                                "max_exp_avg_sq"
+                                            ] = state_src["max_exp_avg_sq"].clone()
                                     else:
                                         if p_target in optimizer.state:
                                             del optimizer.state[p_target]
@@ -253,10 +272,9 @@ def main():
                 active_experts,
             )
             next_value = next_value.view(N_AGENTS, args.num_envs)
-            advantages = compute_gae(
+            advantages, returns = compute_gae_simple(
                 rewards_t, values_t, next_value, dones_t, args.gamma, args.gae_lambda
             )
-            returns = advantages + values_t
 
         # Flatten the batch
         b_obs = obs_t.flatten(0, 2)
@@ -315,7 +333,11 @@ def main():
         if update % 5 == 0 or update == num_updates:
             sps = int(global_step / (time.time() - start_time))
             mean_reward = rewards_t.sum(0).mean().item()
-            win_rate = (rewards_t[:, 0, :] > 5.0).any(dim=0).float().mean().item() if hasattr(rewards_t, "dim") else 0.0
+            win_rate = (
+                (rewards_t[:, 0, :] > 5.0).any(dim=0).float().mean().item()
+                if hasattr(rewards_t, "dim")
+                else 0.0
+            )
             print(
                 f"[{run_name}] update={update} step={global_step} sps={sps} win_rate={win_rate:.3f} mean_reward={mean_reward:.3f} experts={active_experts}"
             )
