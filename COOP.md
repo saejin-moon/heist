@@ -33,10 +33,10 @@ CO-OP shields upstream agents from downstream failures, but it detects these suc
 The base rewards are then multiplied by a macro weighting factor $\Omega_t$:
 $$$
 \Omega_t = \begin{cases} 
-\exp(-\alpha C_t) & \text{if Expert } k^* \text{ triggered an affordance (Shielded)} \\
-O \cdot \exp(-\alpha C_t) & \text{otherwise (Unshielded)}
+\exp\left(-\alpha \frac{C_t}{C_{max}}\right) & \text{if Expert } k^* \text{ triggered an affordance (Shielded)} \\
+O \cdot \exp\left(-\alpha \frac{C_t}{C_{max}}\right) & \text{otherwise (Unshielded)}
 \end{cases}
 $$$
-Here $O$ is the terminal outcome ($1.0$ or $-0.5$) and $C_t$ is a continuous global environment cost or penalty.
+Here $O$ is the terminal outcome ($1.0$ or $-0.5$) and $C_t$ is a continuous global environment cost or penalty, normalized by $C_{max}$.
 
 By multiplying the immediate rewards by this factor before calculating the generalized advantage estimate (GAE), the $\gamma \cdot \lambda$ trace naturally propagates the failure shielding backward through time. Competent experts are insulated from incompetent teammates.

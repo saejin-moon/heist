@@ -41,7 +41,7 @@ class Args:
     car_coef: float = 0.5
     env_config: str = ""
     save_model: bool = True
-
+    eval_every: int = 10
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -51,6 +51,7 @@ def parse_args():
     p.add_argument("--env-config", type=str, default=Args.env_config)
     p.add_argument("--car-coef", type=float, default=Args.car_coef)
     p.add_argument("--macro-step", type=int, default=Args.macro_step)
+    p.add_argument("--eval-every", type=int, default=Args.eval_every)
     p.add_argument("--no-save-model", action="store_false", dest="save_model")
     args, _ = p.parse_known_args()
     return Args(**vars(args))
@@ -74,6 +75,12 @@ def main():
 
     agent = ContinuousHierarchicalAgent(state_dim).to(device)
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+
+    from ppo_utils import get_previous_stage_checkpoint, load_matching_weights
+    prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
+    if prev_ckpt:
+        print(f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}")
+        load_matching_weights(agent, os.path.join(prev_ckpt, "charm.pt"), device)
 
     # Worker Buffers
     w_obs = torch.zeros(

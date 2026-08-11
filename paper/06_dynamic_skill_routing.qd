@@ -28,11 +28,11 @@ CO-OP integrates MARC's Asymmetric Failure Shielding and Macro Weighting.
 The base rewards for the active experts are modulated by a macro weighting factor $ \Omega_t $:
 $$$
 \Omega_t = \begin{cases} 
-\exp(-\alpha A_t) & \text{if Expert } k \text{ triggered an affordance} \\
-O \cdot \exp(-\alpha A_t) & \text{otherwise}
+\exp\left(-\alpha \frac{A_t}{A_{max}}\right) & \text{if Expert } k \text{ triggered an affordance} \\
+O \cdot \exp\left(-\alpha \frac{A_t}{A_{max}}\right) & \text{otherwise}
 \end{cases}
 $$$
-Here, $ O \in \{1.0, -0.5\} $ is the binary terminal outcome of the episode, and $ A_t $ is the global alarm level. CO-OP multiplies the immediate rewards by $ \Omega_t $ before calculating the Generalized Advantage Estimate. It shields competent upstream experts from downstream incompetence. The decentralized router accurately assesses confidence.
+Here, $ O \in \{1.0, -0.5\} $ is the binary terminal outcome of the episode, and $ A_t $ is the global alarm level, normalized by $ A_{max} $. CO-OP multiplies the immediate rewards by $ \Omega_t $ before calculating the Generalized Advantage Estimate. It shields competent upstream experts from downstream incompetence. The decentralized router accurately assesses confidence.
 
 ### 6.2.3 Dynamic Capacity Evolution (Spawning and Pruning)
 CO-OP dynamically adjusts the size of the Expert pool $ K $. 

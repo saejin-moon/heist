@@ -48,6 +48,7 @@ class Args:
     prune_episodes: int = 50
     env_config: str = ""
     save_model: bool = True
+    eval_every: int = 10
     load_checkpoint: str = ""
     ablation_fixed: bool = False
     ablation_no_car: bool = False
@@ -61,6 +62,7 @@ def parse_args():
     p.add_argument("--total-timesteps", type=int, default=Args.total_timesteps)
     p.add_argument("--env-config", type=str, default=Args.env_config)
     p.add_argument("--no-save-model", action="store_false", dest="save_model")
+    p.add_argument("--eval-every", type=int, default=Args.eval_every)
     p.add_argument("--load-checkpoint", type=str, default="")
     p.add_argument("--ablation-fixed", action="store_true")
     p.add_argument("--ablation-no-car", action="store_true")
@@ -96,9 +98,15 @@ def main():
 
     if args.load_checkpoint and os.path.exists(f"{args.load_checkpoint}/coop.pt"):
         agent.load_state_dict(
-            torch.load(f"{args.load_checkpoint}/coop.pt", map_location=device)
+            torch.load(f"{args.load_checkpoint}/coop.pt", map_location=device, weights_only=True)
         )
         print(f"Loaded checkpoint from {args.load_checkpoint}")
+
+    from ppo_utils import get_previous_stage_checkpoint, load_matching_weights
+    prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
+    if prev_ckpt:
+        print(f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}")
+        load_matching_weights(agent, os.path.join(prev_ckpt, "coop.pt"), device)
 
     active_experts = (
         args.max_experts if args.ablation_fixed else 2

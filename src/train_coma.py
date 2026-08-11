@@ -360,21 +360,19 @@ def train(args: Args):  # noqa: C901
 
             # CAR intrinsic reward bonus
             if getattr(args, "car_coef", 0.0) > 0.0:
-                with torch.no_grad():
-                    next_state_t = torch.as_tensor(vec_env.state, device=device)
-                    v_s_next = target_critic(
-                        next_state_t,
-                        torch.zeros(
-                            args.num_envs, (N_AGENTS - 1) * ACTION_DIM, device=device
-                        ),
-                    ).max(dim=-1)[0]
+                new_masks = next_obs["_stacked"]["action_mask"]
+                old_masks = mask_all.cpu().numpy()
+                delta_masks = new_masks.sum(axis=-1) - old_masks.sum(axis=-1)
                 for env_idx in range(args.num_envs):
-                    for a in AGENTS:
+                    for idx_a, a in enumerate(AGENTS):
                         if infos[env_idx].get(a, {}).get("car_unlocked", False):
-                            bonus = args.car_coef * max(
-                                0.0, float(v_s_next[env_idx].item())
-                            )
-                            rewards[a][env_idx] += bonus
+                            bonus = 0.0
+                            for idx_j in range(len(AGENTS)):
+                                if idx_j != idx_a:
+                                    bonus += max(
+                                        0.0, float(delta_masks[idx_j, env_idx])
+                                    )
+                            rewards[a][env_idx] += args.car_coef * bonus
 
             r_int_tensor = None
             if rnd_module is not None:

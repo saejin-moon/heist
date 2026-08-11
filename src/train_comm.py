@@ -265,23 +265,19 @@ if __name__ == "__main__":
 
             # --- CAR: Counterfactual Affordance Reward ---
             if args.car_coef > 0.0:
-                with torch.no_grad():
-                    next_state_t = (
-                        torch.as_tensor(next_state, device=device)
-                        if args.centralized
-                        else None
-                    )
-                    next_obs_l, next_role_l, _ = _stack_obs(next_obs)
-                    v_s_next = policy.get_value(
-                        next_obs_l, next_role_l, state=next_state_t
-                    )  # [num_envs, n]
+                new_masks = next_obs["_stacked"]["action_mask"]
+                old_masks = mask_list.cpu().numpy()
+                delta_masks = new_masks.sum(axis=-1) - old_masks.sum(axis=-1)
                 for env_idx in range(args.num_envs):
-                    for i, a in enumerate(AGENTS):
+                    for idx_a, a in enumerate(AGENTS):
                         if infos[env_idx].get(a, {}).get("car_unlocked", False):
-                            bonus = args.car_coef * max(
-                                0.0, float(v_s_next[env_idx, i].item())
-                            )
-                            rewards[a][env_idx] += bonus
+                            bonus = 0.0
+                            for idx_j in range(len(AGENTS)):
+                                if idx_j != idx_a:
+                                    bonus += max(
+                                        0.0, float(delta_masks[idx_j, env_idx])
+                                    )
+                            rewards[a][env_idx] += args.car_coef * bonus
 
             next_terminations = torch.as_tensor(
                 terminations["scout"], device=device

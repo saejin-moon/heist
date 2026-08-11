@@ -95,7 +95,7 @@ def load_matching_weights(model, filepath, device):
     if not filepath or not os.path.isfile(filepath):
         return False
     try:
-        sd = torch.load(filepath, map_location=device)
+        sd = torch.load(filepath, map_location=device, weights_only=True)
         model_sd = model.state_dict()
         filtered_sd = {}
         for k, v in sd.items():
