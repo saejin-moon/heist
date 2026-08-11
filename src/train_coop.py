@@ -245,12 +245,9 @@ def main():
 
                             active_experts -= 1
 
-            actions_list = []
-            for e in range(args.num_envs):
-                act_dict = {
-                    a: int(actions_t[step, i, e].item()) for i, a in enumerate(AGENTS)
-                }
-                actions_list.append(act_dict)
+            actions_dict = {
+                a: actions_t[step, i].cpu().numpy() for i, a in enumerate(AGENTS)
+            }
 
             # Structural Affordance Detection (Pre-step state)
             old_mask_sum = mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM).sum(
@@ -258,7 +255,7 @@ def main():
             )
 
             next_obs, rewards, terminations, truncations, infos = envs.step(
-                actions_list
+                actions_dict
             )
 
             alarms_step = [

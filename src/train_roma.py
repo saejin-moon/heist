@@ -179,15 +179,12 @@ def main():
                 w_values[step] = w_value.view(N_AGENTS, args.num_envs)
 
             # 3. Environment Step
-            actions_list = []
-            for e in range(args.num_envs):
-                act_dict = {
-                    a: int(w_actions[step, i, e].item()) for i, a in enumerate(AGENTS)
-                }
-                actions_list.append(act_dict)
+            actions_dict = {
+                a: w_actions[step, i].cpu().numpy() for i, a in enumerate(AGENTS)
+            }
 
             next_obs, rewards, terminations, truncations, infos = envs.step(
-                actions_list
+                actions_dict
             )
             next_state = envs.state
             next_done = torch.logical_or(
