@@ -192,8 +192,8 @@ def main():
             )
             next_state = envs.state
             next_done = torch.logical_or(
-                torch.tensor(terminations, dtype=torch.float32),
-                torch.tensor(truncations, dtype=torch.float32),
+                torch.tensor(terminations["scout"], dtype=torch.float32),
+                torch.tensor(truncations["scout"], dtype=torch.float32),
             ).to(device)
 
             for e in range(args.num_envs):
