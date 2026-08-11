@@ -78,6 +78,7 @@ def main():
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     from ppo_utils import get_previous_stage_checkpoint, load_matching_weights
+
     prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
     if prev_ckpt:
         print(f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}")

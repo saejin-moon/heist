@@ -98,11 +98,16 @@ def main():
 
     if args.load_checkpoint and os.path.exists(f"{args.load_checkpoint}/coop.pt"):
         agent.load_state_dict(
-            torch.load(f"{args.load_checkpoint}/coop.pt", map_location=device, weights_only=True)
+            torch.load(
+                f"{args.load_checkpoint}/coop.pt",
+                map_location=device,
+                weights_only=True,
+            )
         )
         print(f"Loaded checkpoint from {args.load_checkpoint}")
 
     from ppo_utils import get_previous_stage_checkpoint, load_matching_weights
+
     prev_ckpt = get_previous_stage_checkpoint(run_name, args.exp_name)
     if prev_ckpt:
         print(f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}")
