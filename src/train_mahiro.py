@@ -198,7 +198,7 @@ def main():
 
             for e in range(args.num_envs):
                 for i, a in enumerate(AGENTS):
-                    base_reward = rewards[e][a]
+                    base_reward = rewards[a][e]
                     pos = infos[e][a].get("pos", (0, 0))
 
                     # MAHIRO Intrinsic Reward Calculation (scaled to map bounds)

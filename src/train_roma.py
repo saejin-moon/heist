@@ -203,7 +203,7 @@ def main():
 
             for e in range(args.num_envs):
                 for i, a in enumerate(AGENTS):
-                    base_reward = rewards[e][a]
+                    base_reward = rewards[a][e]
                     w_rewards[step, i, e] = base_reward
                     macro_reward_acc[i, e] += base_reward
 

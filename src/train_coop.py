@@ -300,7 +300,7 @@ def main():
             # Assign CAR structurally
             for e in range(args.num_envs):
                 for i, a in enumerate(AGENTS):
-                    base_reward = rewards[e][a]
+                    base_reward = rewards[a][e]
                     # The affordance was triggered globally, and THIS agent took the INTERACT action (5)
                     is_unlocked = (
                         affordance_triggered[e].item()

@@ -202,8 +202,8 @@ def main():
 
             for e in range(args.num_envs):
                 for i, a in enumerate(AGENTS):
-                    w_rewards[step, i, e] = rewards[e][a]
-                    base_reward = rewards[e][a]
+                    w_rewards[step, i, e] = rewards[a][e]
+                    base_reward = rewards[a][e]
                     affordance_bonus = (
                         args.car_coef if infos[e][a].get("car_unlocked", False) else 0.0
                     )
