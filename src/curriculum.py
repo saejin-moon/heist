@@ -69,49 +69,6 @@ CURRICULUM = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Automatic curriculum driver
-# ---------------------------------------------------------------------------
-class Curriculum:
-    """Advances the env config dynamically using the Spatial-Entity Step Scaling Law.
-
-    Usage:
-        curriculum = Curriculum(stages=CURRICULUM)
-        config = curriculum.config_for_step(global_step)
-    """
-
-    def __init__(self, stages=None):
-        self.stages = stages if stages is not None else CURRICULUM
-        self.T_0_conv = 120_000
-        self.base_area = 11 * 11  # 121
-        self.kappa = 0.10
-
-        self.cumulative_thresholds = []
-        cumulative_steps = 0
-        for stage in self.stages:
-            W, H = stage["map_size"]
-            A_k = W * H
-            g_k = stage.get("guard_count", 0)
-            c_k = stage.get("camera_count", 0)
-            d_k = stage.get("door_count", 0)
-            E_k = g_k + c_k + d_k
-            mu_k = 1.0 + self.kappa * E_k
-
-            T_k = int(self.T_0_conv * (A_k / self.base_area) * mu_k)
-            cumulative_steps += T_k
-            self.cumulative_thresholds.append(cumulative_steps)
-
-    def config_for_step(self, global_step):
-        stage_idx = self.stage_for_step(global_step)
-        return self.stages[stage_idx]
-
-    def stage_for_step(self, global_step):
-        for idx, threshold in enumerate(self.cumulative_thresholds):
-            if global_step < threshold:
-                return idx
-        return len(self.stages) - 1
-
-
 def env_config_str(config: dict) -> str:
     """Serialize a stage dict into the --env-config JSON string format.
 

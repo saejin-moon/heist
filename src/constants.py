@@ -63,7 +63,6 @@ AGENT_CHAR = {"scout": "S", "hacker": "H", "muscle": "M", "extractor": "E"}
 # shared policies (IPPO --shared, MAPPO, and the learned-communication agents)
 N_AGENTS = len(AGENTS)
 
-ROLE_IDS = {a: i for i, a in enumerate(AGENTS)}
 ROLE_ONEHOT = {
     a: [1 if i == j else 0 for j in range(N_AGENTS)] for i, a in enumerate(AGENTS)
 }
@@ -72,12 +71,7 @@ ROLE_ONEHOT_ARRAYS = {a: np.array(ROLE_ONEHOT[a], dtype=np.int8) for a in AGENTS
 
 # What each agent's INTERACT (action 5) does.  This is the per-role
 # specialization that replaces the monolithic "interact" of the prototype.
-ROLE_ACTIONS = {
-    "scout": "tag_tile",  # reveal + broadcast a point of interest
-    "hacker": "hack_terminal",  # multi-turn terminal hack / bypass doors
-    "muscle": "neutralize",  # temporarily remove a nearby guard
-    "extractor": "call_extract",  # trigger the final extraction countdown
-}
+
 
 # ---------------------------------------------------------------------------
 # Observation / layout dimensions
@@ -134,7 +128,6 @@ CAMERA_RANGE = 12  # max line-of-sight distance for cameras
 # (REVISION_PLAN.md §6).  Per-agent obs no longer carries this vector;
 # centralized critics (MAPPO/QMIX) still read env.state() which has its own
 # shape.  Kept here for backward compat with any downstream consumers.
-GLOBAL_STATE_DIM = 4 + 3 * 2
 
 # ---------------------------------------------------------------------------
 # Guard behavior

@@ -237,7 +237,6 @@ def get_active_campaign_info() -> dict:
 
 
 def check_models_status(
-    active_stages: set[int],
     running_pids: set[int],
     active_run_start: float = 0.0,
     run_id: str = "N/A",
@@ -490,11 +489,10 @@ def make_dashboard_panel() -> Panel:
     info = get_active_campaign_info()
     pids = get_running_pids()
     models = check_models_status(
-        info["active_stages"],
         pids,
         active_run_start=info.get("active_run_start", 0.0),
         run_id=info.get("run_id", "N/A"),
-        models_to_show=info.get("models"),
+        models_to_show=info.get("models_to_show"),
     )
     metrics = get_system_metrics()
 

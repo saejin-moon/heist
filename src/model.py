@@ -152,20 +152,24 @@ class MappoAgent(nn.Module):
                 break
 
         agent_pos_start = 6 + grid_len
-        influence_matrix = torch.zeros((B, N_AGENTS, N_AGENTS), device=state.device)
 
+        # Vectorized CFA: repeat state for all agents
+        state_alt = state.unsqueeze(1).repeat(
+            1, N_AGENTS, 1
+        )  # [B, N_AGENTS, state_dim]
         for j in range(N_AGENTS):
-            state_alt = state.clone()
             pos_col = agent_pos_start + 2 * j
-            state_alt[:, pos_col : pos_col + 2] = 0.0
+            state_alt[:, j, pos_col : pos_col + 2] = 0.0
 
-            v_alt = self.critic(state_alt).squeeze(-1)  # [B]
-            diff_j = torch.abs(v_base - v_alt)  # [B]
+        state_alt_flat = state_alt.view(B * N_AGENTS, state_dim)
+        v_alt_flat = self.critic(state_alt_flat).squeeze(-1)
+        v_alt = v_alt_flat.view(B, N_AGENTS)
 
-            for i in range(N_AGENTS):
-                if i != j:
-                    influence_matrix[:, i, j] = diff_j
+        diff = torch.abs(v_base.unsqueeze(1) - v_alt)  # [B, N_AGENTS]
 
+        influence_matrix = diff.unsqueeze(1).repeat(
+            1, N_AGENTS, 1
+        )  # [B, N_AGENTS, N_AGENTS]
         mask = torch.eye(N_AGENTS, device=state.device).bool()
         influence_matrix.masked_fill_(mask, 0.0)
 
@@ -592,20 +596,31 @@ class ComaAgent(nn.Module):
             q_base_all = self.critic(state, other_oh_base)
             q_base = q_base_all.gather(1, actions_tensor[i].unsqueeze(1)).squeeze(1)
 
+            other_oh_alts = other_oh_base.unsqueeze(0).repeat(N_AGENTS - 1, 1, 1)
+            for idx in range(N_AGENTS - 1):
+                start_col = idx * ACTION_DIM
+                end_col = start_col + ACTION_DIM
+                other_oh_alts[idx, :, start_col:end_col] = 0.0
+
+            state_repeated = (
+                state.unsqueeze(0).repeat(N_AGENTS - 1, 1, 1).view(-1, state.shape[1])
+            )
+            other_oh_alts_flat = other_oh_alts.view(-1, other_oh_base.shape[1])
+
+            q_alt_all_flat = self.critic(state_repeated, other_oh_alts_flat)
+            actions_i_repeated = actions_tensor[i].repeat(N_AGENTS - 1)
+            q_alt_flat = q_alt_all_flat.gather(
+                1, actions_i_repeated.unsqueeze(1)
+            ).squeeze(1)
+
+            q_alt = q_alt_flat.view(N_AGENTS - 1, B)
+
+            idx = 0
             for j in range(N_AGENTS):
                 if j == i:
                     continue
-                sender_idx = j if j < i else j - 1
-                start_col = sender_idx * ACTION_DIM
-                end_col = start_col + ACTION_DIM
-
-                other_oh_alt = other_oh_base.clone()
-                other_oh_alt[:, start_col:end_col] = 0.0
-
-                q_alt_all = self.critic(state, other_oh_alt)
-                q_alt = q_alt_all.gather(1, actions_tensor[i].unsqueeze(1)).squeeze(1)
-
-                influence_matrix[:, i, j] = torch.abs(q_base - q_alt)
+                influence_matrix[:, i, j] = torch.abs(q_base - q_alt[idx])
+                idx += 1
 
         mask = torch.eye(N_AGENTS, device=state.device).bool()
         influence_matrix.masked_fill_(mask, 0.0)

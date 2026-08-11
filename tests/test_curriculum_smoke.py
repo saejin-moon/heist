@@ -35,33 +35,3 @@ def test_stage_four_converge_moves_guards_along_walkable_paths():
         assert 0 <= new[0] < env.map_h and 0 <= new[1] < env.map_w
         assert env.grid[new] not in (WALL, DOOR)
         assert np.abs(np.subtract(new, old)).sum() <= 1
-
-
-def test_curriculum_scaling_law_mathematics():
-    from curriculum import Curriculum
-
-    c = Curriculum()
-    assert c.T_0_conv == 120_000
-    assert c.base_area == 121
-
-    assert c.cumulative_thresholds[0] == 120_000
-    assert c.cumulative_thresholds[1] == 463_933
-    assert c.cumulative_thresholds[2] == 1_393_685
-    assert c.cumulative_thresholds[3] == 3_580_461
-    assert c.cumulative_thresholds[4] == 8_787_072
-
-
-def test_dynamic_stage_transitions():
-    from curriculum import Curriculum
-
-    c = Curriculum()
-    assert c.stage_for_step(0) == 0
-    assert c.stage_for_step(119_999) == 0
-    assert c.stage_for_step(120_000) == 1
-    assert c.stage_for_step(463_932) == 1
-    assert c.stage_for_step(463_933) == 2
-    assert c.stage_for_step(1_393_684) == 2
-    assert c.stage_for_step(1_393_685) == 3
-    assert c.stage_for_step(3_580_460) == 3
-    assert c.stage_for_step(3_580_461) == 4
-    assert c.stage_for_step(10_000_000) == 4

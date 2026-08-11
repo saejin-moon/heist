@@ -40,6 +40,8 @@ class Args:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
     tau_spawn: float = -0.1
+    alpha_alarm: float = 1.5
+    car_coef: float = 1.0
     max_experts: int = 6
     burn_in_steps: int = 500_000
     complexity_penalty: float = 0.01
@@ -64,6 +66,8 @@ def parse_args():
     p.add_argument("--ablation-no-car", action="store_true")
     p.add_argument("--ablation-top-down", action="store_true")
     p.add_argument("--tau-spawn", type=float, default=Args.tau_spawn)
+    p.add_argument("--alpha-alarm", type=float, default=Args.alpha_alarm)
+    p.add_argument("--car-coef", type=float, default=Args.car_coef)
     args, _ = p.parse_known_args()
     return Args(**vars(args))
 
@@ -295,7 +299,8 @@ def main():
                     car_unlocked_t[step, i, e] = is_unlocked
                     car_reward = 0.0
                     if is_unlocked and not args.ablation_no_car:
-                        car_reward = 1.0  # Dense causal affordance routing reward to the winning expert
+                        # Base structural CAR reward to the winning expert
+                        car_reward = args.car_coef  # Dense causal affordance routing reward to the winning expert
                     rewards_t[step, i, e] = (
                         base_reward
                         + car_reward
@@ -324,7 +329,10 @@ def main():
 
             # Apply Asymmetric Failure Shielding & Macro Weighting from MARC
             win = (rewards_t > 5.0).any(dim=1).any(dim=0)  # [B]
-            macro_alarm_factor = torch.exp(-1.5 * (alarms_t / 100.0))  # [T, B]
+            # Macro Weighting scales the baseline advantage by the alarm level.
+            macro_alarm_factor = torch.exp(
+                -args.alpha_alarm * (alarms_t / 100.0)
+            )  # [T, B]
             macro_outcome = torch.where(win, 1.0, -0.5)  # [B]
 
             alarm_fac = macro_alarm_factor.unsqueeze(1)  # [T, 1, B]

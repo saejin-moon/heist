@@ -124,7 +124,7 @@ def test_stale_checkpoints_and_logs_ignored_in_new_run(tmp_path):
         patch.object(status, "CKPT_DIR", ckpt_dir),
     ):
         models = status.check_models_status(
-            active_stages={0}, running_pids={1234}, active_run_start=current_start
+            running_pids={1234}, active_run_start=current_start
         )
         coma_status = next(m for m in models if m["model"] == "coma")
         assert coma_status["status"] == "QUEUED"
@@ -144,9 +144,7 @@ def test_marc_log_parsing_and_subfolder_discovery(tmp_path):
         patch.object(status, "LOG_DIR", log_dir),
         patch.object(status, "CKPT_DIR", tmp_path / "checkpoints"),
     ):
-        models = status.check_models_status(
-            active_stages={0}, running_pids={1234}, run_id="run021"
-        )
+        models = status.check_models_status(running_pids={1234}, run_id="run021")
         marc_status = next(m for m in models if m["model"] == "marc")
         assert marc_status["status"] == "RUNNING"
         assert marc_status["steps"] == "50000"

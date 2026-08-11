@@ -320,7 +320,9 @@ def main():
 
                     loss.backward()
 
-                    torch.nn.utils.clip_grad_norm_(agent.parameters(), 0.5)
+                    torch.nn.utils.clip_grad_norm_(
+                        agent.parameters(), args.max_grad_norm
+                    )
 
                     optimizer.step()
 
@@ -370,7 +372,9 @@ def main():
 
                         loss.backward()
 
-                        torch.nn.utils.clip_grad_norm_(agent.parameters(), 0.5)
+                        torch.nn.utils.clip_grad_norm_(
+                            agent.parameters(), args.max_grad_norm
+                        )
 
                         optimizer.step()
 

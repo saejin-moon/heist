@@ -319,45 +319,6 @@ def counterfactual_importance(policies, env, episodes=30, seed=0, device="cpu"):
     return {"baseline_win_rate": base_win, "importance": importance}
 
 
-def summarize(policies, env, episodes=50, seed=0, device="cpu"):
-    """Print a full evaluation report with CAI diagnostics."""
-    print("=" * 64)
-    print("HEIST evaluation")
-    print("=" * 64)
-    metrics = evaluate_policies(
-        policies, env, episodes=episodes, seed=seed, device=device
-    )
-    print(f"win_rate          : {metrics['win_rate']:.3f}")
-    print(f"mean_return       : {metrics['mean_return']:.3f}")
-    print(f"mean_length       : {metrics['mean_length']:.1f}")
-    print(f"mean_alarm        : {metrics['mean_alarm']:.1f}")
-    print(f"terminal_rate     : {metrics['terminal_rate']:.3f}")
-    print(f"loot_rate         : {metrics['loot_rate']:.3f}")
-    print(f"extraction_rate   : {metrics['extraction_rate']:.3f}")
-    print(f"mean_hack_progress: {metrics['mean_hack_progress']:.2f}")
-    print("-" * 64)
-    print("Credit Attribution Index (corr credit vs outcome):")
-    cai = credit_attribution_index(
-        policies, env, episodes=episodes, seed=seed, device=device
-    )
-    for a in AGENTS:
-        print(f"  {a:>9}: {cai[a]:+.3f}")
-    print("-" * 64)
-    print("Counterfactual importance (baseline - no-op win rate):")
-    imp = counterfactual_importance(
-        policies,
-        env,
-        episodes=max(episodes // 2, 10),
-        seed=seed + 10_000,
-        device=device,
-    )
-    print(f"  baseline win rate: {imp['baseline_win_rate']:.3f}")
-    for a in AGENTS:
-        print(f"  {a:>9}: {imp['importance'][a]:+.3f}")
-    print("=" * 64)
-    return metrics
-
-
 # ---------------------------------------------------------------------------
 # REV-7 (REVISION_PLAN.md §6) Phase B/C: communication-aware evaluation
 # ---------------------------------------------------------------------------

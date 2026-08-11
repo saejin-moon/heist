@@ -187,7 +187,6 @@ class HeistEnv(ParallelEnv):
         self._rewarded_breached_walls = set()
 
         # REV-5: breach coordinate (set when Muscle breaks a wall)
-        self.breach_pos = None
 
         # REV-6: extractor burden start step
         self._burden_start_step = -1
@@ -222,7 +221,6 @@ class HeistEnv(ParallelEnv):
         self.agents = self.possible_agents[:]
         self.explored_map = np.zeros((self.map_h, self.map_w), dtype=bool)
         # REV-5/6/9/8: clear milestone state on every reset
-        self.breach_pos = None
         self._burden_start_step = -1
         self._pending_events = []
         self._neutralized_pos = {}

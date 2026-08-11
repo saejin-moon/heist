@@ -29,7 +29,6 @@ from evaluate import (
 )
 from run_eval import load_policies
 
-EVAL_EPISODES = 60
 EVAL_SEED = 555
 CHECKPOINT_ROOT = "checkpoints"
 
