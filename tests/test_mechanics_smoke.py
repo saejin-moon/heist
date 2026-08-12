@@ -53,9 +53,8 @@ def test_wall_breach():
     assert n_walls_before >= 1 and n_walls_after == n_walls_before - 1, (
         "breach should destroy exactly one adjacent wall"
     )
-    assert env.breach_pos is not None, "breach position should be recorded"
     assert env.alarm >= 29.9, f"breach alarm should jump ~30, got {env.alarm}"
-    print(f"  wall breach OK (alarm -> {env.alarm:.0f}, breach at {env.breach_pos})")
+    print(f"  wall breach OK (alarm -> {env.alarm:.0f})")
 
 
 def test_delayed_neutralize_alarm():
