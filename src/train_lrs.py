@@ -202,7 +202,7 @@ def main():
 
             for e in range(args.num_envs):
                 for i, a in enumerate(AGENTS):
-                    base_reward = rewards[a][e]
+                    base_reward = float(rewards[a][e])
                     w_rewards[step, i, e] = (
                         base_reward
                         + 0.1
@@ -223,97 +223,149 @@ def main():
             next_state_t = torch.as_tensor(
                 next_state, dtype=torch.float32, device=device
             )
+            next_mask_all = torch.as_tensor(
+                next_obs["_stacked"]["action_mask"], dtype=torch.float32, device=device
+            )
             _, _, _, next_w_value = agent.get_worker_action_and_value(
                 next_obs_all.flatten(0, 1),
                 next_state_t.repeat(N_AGENTS, 1),
                 next_role_all.flatten(0, 1),
                 g,
+                next_mask_all.flatten(0, 1),
             )
             next_w_value = next_w_value.view(N_AGENTS, args.num_envs)
-            w_advantages, w_returns = compute_gae_simple(
-                w_rewards, w_values, next_w_value, w_dones, args.gamma, args.gae_lambda
-            )
+        w_advantages, w_returns = compute_gae_simple(
+            w_rewards, w_values, next_w_value, w_dones, args.gamma, args.gae_lambda
+        )
 
-            _, _, _, next_m_value = agent.get_manager_action_and_value(
-                next_obs_all.flatten(0, 1),
-                next_state_t.repeat(N_AGENTS, 1),
-                next_role_all.flatten(0, 1),
-            )
+        _, _, _, next_m_value = agent.get_manager_action_and_value(
+            next_obs_all.flatten(0, 1),
+            next_state_t.repeat(N_AGENTS, 1),
+            next_role_all.flatten(0, 1),
+        )
 
-            next_m_value = next_m_value.view(N_AGENTS, args.num_envs)
+        next_m_value = next_m_value.view(N_AGENTS, args.num_envs)
 
-            m_advantages, m_returns = compute_gae_simple(
-                m_rewards, m_values, next_m_value, m_dones, args.gamma, args.gae_lambda
-            )
+        m_advantages, m_returns = compute_gae_simple(
+            m_rewards, m_values, next_m_value, m_dones, args.gamma, args.gae_lambda
+        )
 
-            # Flatten Worker Batch
+        # Flatten Worker Batch
 
-            b_w_obs = w_obs.flatten(0, 2)
+        b_w_obs = w_obs.flatten(0, 2)
 
-            b_w_roles = w_roles.flatten(0, 2)
+        b_w_roles = w_roles.flatten(0, 2)
 
-            b_w_states = w_states.unsqueeze(1).repeat(1, N_AGENTS, 1, 1).flatten(0, 2)
+        b_w_states = w_states.unsqueeze(1).repeat(1, N_AGENTS, 1, 1).flatten(0, 2)
 
-            b_w_masks = w_masks.flatten(0, 2)
+        b_w_masks = w_masks.flatten(0, 2)
 
-            b_w_actions = w_actions.flatten(0, 2)
+        b_w_actions = w_actions.flatten(0, 2)
 
-            b_w_logprobs = w_logprobs.flatten(0, 2)
+        b_w_logprobs = w_logprobs.flatten(0, 2)
 
-            b_w_advantages = w_advantages.flatten(0, 2)
+        b_w_advantages = w_advantages.flatten(0, 2)
 
-            b_w_returns = w_returns.flatten(0, 2)
+        b_w_returns = w_returns.flatten(0, 2)
 
-            b_current_goals = (
-                m_actions.repeat_interleave(args.macro_step, dim=0).flatten(0, 2).long()
-            )
+        b_current_goals = (
+            m_actions.repeat_interleave(args.macro_step, dim=0).flatten(0, 2).long()
+        )
 
-            # Flatten Manager Batch
+        # Flatten Manager Batch
 
-            b_m_obs = m_obs.flatten(0, 2)
+        b_m_obs = m_obs.flatten(0, 2)
 
-            b_m_roles = m_roles.flatten(0, 2)
+        b_m_roles = m_roles.flatten(0, 2)
 
-            b_m_states = m_states.unsqueeze(1).repeat(1, N_AGENTS, 1, 1).flatten(0, 2)
+        b_m_states = m_states.unsqueeze(1).repeat(1, N_AGENTS, 1, 1).flatten(0, 2)
 
-            b_m_actions = m_actions.flatten(0, 2)
+        b_m_actions = m_actions.flatten(0, 2)
 
-            b_m_logprobs = m_logprobs.flatten(0, 2)
+        b_m_logprobs = m_logprobs.flatten(0, 2)
 
-            b_m_advantages = m_advantages.flatten(0, 2)
+        b_m_advantages = m_advantages.flatten(0, 2)
 
-            b_m_returns = m_returns.flatten(0, 2)
+        b_m_returns = m_returns.flatten(0, 2)
 
-            # Worker Optimization
+        # Worker Optimization
 
-            w_inds = np.arange(args.num_envs * args.num_steps * N_AGENTS)
+        w_inds = np.arange(args.num_envs * args.num_steps * N_AGENTS)
 
-            w_minibatch_size = len(w_inds) // 4
+        w_minibatch_size = len(w_inds) // 4
+
+        for _ in range(4):
+            np.random.shuffle(w_inds)
+
+            for start in range(0, len(w_inds), w_minibatch_size):
+                end = start + w_minibatch_size
+
+                mb = w_inds[start:end]
+
+                _, newlogprob, entropy, newvalue = agent.get_worker_action_and_value(
+                    b_w_obs[mb],
+                    b_w_states[mb],
+                    b_w_roles[mb],
+                    b_current_goals[mb],
+                    b_w_masks[mb],
+                    action=b_w_actions[mb],
+                )
+
+                logratio = newlogprob - b_w_logprobs[mb]
+
+                ratio = logratio.exp()
+
+                mb_adv = b_w_advantages[mb]
+
+                mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
+
+                pg_loss = torch.max(
+                    -mb_adv * ratio, -mb_adv * torch.clamp(ratio, 0.8, 1.2)
+                ).mean()
+
+                v_loss = 0.5 * ((newvalue - b_w_returns[mb]) ** 2).mean()
+
+                loss = pg_loss - 0.01 * entropy.mean() + 0.5 * v_loss
+
+                optimizer.zero_grad()
+
+                loss.backward()
+
+                torch.nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+
+                optimizer.step()
+
+        # Manager Optimization
+
+        m_inds = np.arange(
+            args.num_envs * (args.num_steps // args.macro_step) * N_AGENTS
+        )
+
+        if len(m_inds) > 0:
+            m_minibatch_size = max(1, len(m_inds) // 4)
 
             for _ in range(4):
-                np.random.shuffle(w_inds)
+                np.random.shuffle(m_inds)
 
-                for start in range(0, len(w_inds), w_minibatch_size):
-                    end = start + w_minibatch_size
+                for start in range(0, len(m_inds), m_minibatch_size):
+                    end = start + m_minibatch_size
 
-                    mb = w_inds[start:end]
+                    mb = m_inds[start:end]
 
                     _, newlogprob, entropy, newvalue = (
-                        agent.get_worker_action_and_value(
-                            b_w_obs[mb],
-                            b_w_states[mb],
-                            b_w_roles[mb],
-                            b_current_goals[mb],
-                            b_w_masks[mb],
-                            action=b_w_actions[mb],
+                        agent.get_manager_action_and_value(
+                            b_m_obs[mb],
+                            b_m_states[mb],
+                            b_m_roles[mb],
+                            action=b_m_actions[mb],
                         )
                     )
 
-                    logratio = newlogprob - b_w_logprobs[mb]
+                    logratio = newlogprob - b_m_logprobs[mb]
 
                     ratio = logratio.exp()
 
-                    mb_adv = b_w_advantages[mb]
+                    mb_adv = b_m_advantages[mb]
 
                     mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
 
@@ -321,7 +373,7 @@ def main():
                         -mb_adv * ratio, -mb_adv * torch.clamp(ratio, 0.8, 1.2)
                     ).mean()
 
-                    v_loss = 0.5 * ((newvalue - b_w_returns[mb]) ** 2).mean()
+                    v_loss = 0.5 * ((newvalue - b_m_returns[mb]) ** 2).mean()
 
                     loss = pg_loss - 0.01 * entropy.mean() + 0.5 * v_loss
 
@@ -335,65 +387,13 @@ def main():
 
                     optimizer.step()
 
-            # Manager Optimization
-
-            m_inds = np.arange(
-                args.num_envs * (args.num_steps // args.macro_step) * N_AGENTS
-            )
-
-            if len(m_inds) > 0:
-                m_minibatch_size = max(1, len(m_inds) // 4)
-
-                for _ in range(4):
-                    np.random.shuffle(m_inds)
-
-                    for start in range(0, len(m_inds), m_minibatch_size):
-                        end = start + m_minibatch_size
-
-                        mb = m_inds[start:end]
-
-                        _, newlogprob, entropy, newvalue = (
-                            agent.get_manager_action_and_value(
-                                b_m_obs[mb],
-                                b_m_states[mb],
-                                b_m_roles[mb],
-                                action=b_m_actions[mb],
-                            )
-                        )
-
-                        logratio = newlogprob - b_m_logprobs[mb]
-
-                        ratio = logratio.exp()
-
-                        mb_adv = b_m_advantages[mb]
-
-                        mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
-
-                        pg_loss = torch.max(
-                            -mb_adv * ratio, -mb_adv * torch.clamp(ratio, 0.8, 1.2)
-                        ).mean()
-
-                        v_loss = 0.5 * ((newvalue - b_m_returns[mb]) ** 2).mean()
-
-                        loss = pg_loss - 0.01 * entropy.mean() + 0.5 * v_loss
-
-                        optimizer.zero_grad()
-
-                        loss.backward()
-
-                        torch.nn.utils.clip_grad_norm_(
-                            agent.parameters(), args.max_grad_norm
-                        )
-
-                        optimizer.step()
-
         if update % args.eval_every == 0 or update == num_updates:
             print(f"[{run_name}] Update {update}/{num_updates}")
 
     if args.save_model:
         os.makedirs(f"runs/{run_name}", exist_ok=True)
         torch.save(agent.state_dict(), f"runs/{run_name}/lrs.pt")
-        write_completion(f"runs/{run_name}", args)
+        write_completion(run_name, "lrs", args.total_timesteps, global_step)
 
 
 if __name__ == "__main__":

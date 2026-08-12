@@ -56,15 +56,13 @@ def compute_gae_simple(
     """Simplified GAE computation for agents that don't track truncated/bootstrap."""
     advantages = torch.zeros_like(rewards)
     last_gae = torch.zeros_like(next_values)
-    num_steps = rewards.shape[1]
+    num_steps = rewards.shape[0]
     for step in range(num_steps - 1, -1, -1):
-        following_values = next_values if step == num_steps - 1 else values[:, step + 1]
-        nonterminal = 1.0 - dones[:, step]
-        delta = (
-            rewards[:, step] + gamma * following_values * nonterminal - values[:, step]
-        )
+        following_values = next_values if step == num_steps - 1 else values[step + 1]
+        nonterminal = 1.0 - dones[step]
+        delta = rewards[step] + gamma * following_values * nonterminal - values[step]
         last_gae = delta + gamma * gae_lambda * nonterminal * last_gae
-        advantages[:, step] = last_gae
+        advantages[step] = last_gae
     return advantages, advantages + values
 
 

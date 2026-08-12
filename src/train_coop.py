@@ -300,7 +300,7 @@ def main():
             # Assign CAR structurally
             for e in range(args.num_envs):
                 for i, a in enumerate(AGENTS):
-                    base_reward = rewards[a][e]
+                    base_reward = float(rewards[a][e])
                     # The affordance was triggered globally, and THIS agent took the INTERACT action (5)
                     is_unlocked = (
                         affordance_triggered[e].item()
@@ -311,7 +311,7 @@ def main():
                     if is_unlocked and not args.ablation_no_car:
                         # Base structural CAR reward to the winning expert
                         car_reward = args.car_coef  # Dense causal affordance routing reward to the winning expert
-                    rewards_t[step, i, e] = (
+                    rewards_t[step, i, e] = float(
                         base_reward
                         + car_reward
                         - (args.complexity_penalty * active_experts)
@@ -360,9 +360,9 @@ def main():
             # Permute from [T, N_AGENTS, B] to [T, N_AGENTS, B] -> rewards_t is [T, N_AGENTS, B]
             rewards_t = rewards_t * omega_t
 
-            advantages, returns = compute_gae_simple(
-                rewards_t, values_t, next_value, dones_t, args.gamma, args.gae_lambda
-            )
+        advantages, returns = compute_gae_simple(
+            rewards_t, values_t, next_value, dones_t, args.gamma, args.gae_lambda
+        )
 
         # Flatten the batch
         b_obs = obs_t.flatten(0, 2)
@@ -433,7 +433,7 @@ def main():
     if args.save_model:
         os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
         torch.save(agent.state_dict(), f"checkpoints/{run_name}/coop.pt")
-        write_completion(f"checkpoints/{run_name}", args)
+        write_completion(run_name, "coop", args.total_timesteps, global_step)
 
 
 if __name__ == "__main__":
