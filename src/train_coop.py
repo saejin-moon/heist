@@ -196,6 +196,7 @@ def main():
                     and global_step >= args.burn_in_steps
                 ):
                     active_experts += 1
+                    expert_last_used_episode[active_experts - 1] = global_episode_count
                     print(
                         f"Spawning Expert {active_experts} at step {global_step} (mean_conf={mean_conf.item():.3f})!"
                     )

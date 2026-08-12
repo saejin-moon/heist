@@ -409,8 +409,8 @@ def main():
             print(f"[{run_name}] Update {update}/{num_updates}")
 
     if args.save_model:
-        os.makedirs(f"runs/{run_name}", exist_ok=True)
-        torch.save(agent.state_dict(), f"runs/{run_name}/lrs.pt")
+        os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
+        torch.save(agent.state_dict(), f"checkpoints/{run_name}/lrs.pt")
         write_completion(run_name, "lrs", args.total_timesteps, global_step)
 
 

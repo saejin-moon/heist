@@ -94,7 +94,8 @@ def load_policies(algo, run_dir, state_dim, device):
         return policies
     if algo in ["charm", "mahiro"]:
         p = ContinuousHierarchicalAgent(state_dim=state_dim)
-        filename = f"{algo}.pt"
+        actual_algo = os.path.basename(run_dir).split("_s")[0]
+        filename = f"{actual_algo}.pt"
         sd = torch.load(
             os.path.join(run_dir, filename), map_location=device, weights_only=True
         )
@@ -103,7 +104,8 @@ def load_policies(algo, run_dir, state_dim, device):
         return {a: p for a in AGENTS}
     if algo in ["roma", "lrs"]:
         p = DiscreteHierarchicalAgent(state_dim=state_dim)
-        filename = f"{algo}.pt"
+        actual_algo = os.path.basename(run_dir).split("_s")[0]
+        filename = f"{actual_algo}.pt"
         sd = torch.load(
             os.path.join(run_dir, filename), map_location=device, weights_only=True
         )
