@@ -205,7 +205,12 @@ def main():
                     w_rewards[step, i, e] = float(rewards[a][e])
                     base_reward = float(rewards[a][e])
                     affordance_bonus = (
-                        args.car_coef if infos[e][a].get("car_unlocked", False) else 0.0
+                        args.car_coef
+                        if (
+                            isinstance(infos, (list, tuple))
+                            and infos[e].get(a, {}).get("car_unlocked", False)
+                        )
+                        else 0.0
                     )
                     macro_reward_acc[i, e] += base_reward + affordance_bonus
 

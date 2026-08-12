@@ -53,6 +53,7 @@ def parse_args():
     p.add_argument("--env-config", type=str, default=Args.env_config)
     p.add_argument("--macro-step", type=int, default=Args.macro_step)
     p.add_argument("--eval-every", type=int, default=Args.eval_every)
+    p.add_argument("--lrs-shaping-coef", type=float, default=Args.lrs_shaping_coef)
     p.add_argument("--no-save-model", action="store_false", dest="save_model")
     args, _ = p.parse_known_args()
     return Args(**vars(args))
@@ -203,11 +204,27 @@ def main():
             for e in range(args.num_envs):
                 for i, a in enumerate(AGENTS):
                     base_reward = float(rewards[a][e])
-                    w_rewards[step, i, e] = (
-                        base_reward
-                        + 0.1
-                        * (w_actions[step, i, e] == current_goals[i, e]).float().item()
-                    )
+
+                    phi = current_goals[i, e].item()
+                    logical_reward = 0.0
+
+                    # state format: [step, alarm, terminal(2), loot(3), extract(4), countdown]
+                    if (
+                        phi == 0
+                        and next_state[e][2] - w_states[step, e, 2].item() > 0
+                        or phi == 1
+                        and next_state[e][3] - w_states[step, e, 3].item() > 0
+                        or phi == 2
+                        and next_state[e][4] - w_states[step, e, 4].item() > 0
+                        or phi == 3
+                        and (
+                            isinstance(infos, (list, tuple))
+                            and infos[e].get(a, {}).get("win", False)
+                        )
+                    ):
+                        logical_reward = args.lrs_shaping_coef
+
+                    w_rewards[step, i, e] = base_reward + logical_reward
                     macro_reward_acc[i, e] += base_reward
 
         m_rewards[-1] = macro_reward_acc.clone()

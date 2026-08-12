@@ -273,7 +273,7 @@ def main():
 
             alarms_step = [
                 infos[e].get("scout", {}).get("alarm", 0.0)
-                if isinstance(infos, list) and e < len(infos)
+                if isinstance(infos, (list, tuple)) and e < len(infos)
                 else 0.0
                 for e in range(args.num_envs)
             ]

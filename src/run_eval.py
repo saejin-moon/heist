@@ -111,28 +111,42 @@ def load_policies(algo, run_dir, state_dim, device):
         p.to(device).eval()
         return {a: p for a in AGENTS}
     if algo in ["coop", "coop_fixed", "coop_no_car"]:
-        filename = "coop.pt" if os.path.exists(os.path.join(run_dir, "coop.pt")) else f"{algo}.pt"
+        filename = (
+            "coop.pt"
+            if os.path.exists(os.path.join(run_dir, "coop.pt"))
+            else f"{algo}.pt"
+        )
         sd = torch.load(
             os.path.join(run_dir, filename), map_location=device, weights_only=True
         )
-        expert_indices = {
-            int(k.split(".")[1]) for k in sd.keys() if k.startswith("experts.")
-        }
+        expert_indices = {int(k.split(".")[1]) for k in sd if k.startswith("experts.")}
         max_exp = max(expert_indices) + 1 if expert_indices else 6
-        p = CoopAgent(state_dim=state_dim, max_experts=max_exp)
+        ckpt_state_dim = (
+            sd["experts.0.critic.0.weight"].shape[1] - 4
+            if "experts.0.critic.0.weight" in sd
+            else state_dim
+        )
+        p = CoopAgent(state_dim=ckpt_state_dim, max_experts=max_exp)
         p.load_state_dict(sd)
         p.to(device).eval()
         return {a: p for a in AGENTS}
     if algo == "coop_top_down":
-        filename = "coop.pt" if os.path.exists(os.path.join(run_dir, "coop.pt")) else f"{algo}.pt"
+        filename = (
+            "coop.pt"
+            if os.path.exists(os.path.join(run_dir, "coop.pt"))
+            else f"{algo}.pt"
+        )
         sd = torch.load(
             os.path.join(run_dir, filename), map_location=device, weights_only=True
         )
-        expert_indices = {
-            int(k.split(".")[1]) for k in sd.keys() if k.startswith("experts.")
-        }
+        expert_indices = {int(k.split(".")[1]) for k in sd if k.startswith("experts.")}
         max_exp = max(expert_indices) + 1 if expert_indices else 6
-        p = CoopTopDownAgent(state_dim=state_dim, max_experts=max_exp)
+        ckpt_state_dim = (
+            sd["manager_critic.0.weight"].shape[1] - 4
+            if "manager_critic.0.weight" in sd
+            else state_dim
+        )
+        p = CoopTopDownAgent(state_dim=ckpt_state_dim, max_experts=max_exp)
         p.load_state_dict(sd)
         p.to(device).eval()
         return {a: p for a in AGENTS}
@@ -153,7 +167,19 @@ def main():
     ap.add_argument(
         "--algo",
         default="ippo",
-        choices=["ippo", "mappo", "qmix", "comm", "coma"],
+        choices=[
+            "ippo",
+            "mappo",
+            "qmix",
+            "comm",
+            "coma",
+            "charm",
+            "mahiro",
+            "roma",
+            "lrs",
+            "coop",
+            "coop_top_down",
+        ],
     )
 
     ap.add_argument("--env-config", type=str, default="{}")

@@ -52,6 +52,7 @@ def parse_args():
     p.add_argument("--env-config", type=str, default=Args.env_config)
     p.add_argument("--macro-step", type=int, default=Args.macro_step)
     p.add_argument("--eval-every", type=int, default=Args.eval_every)
+    p.add_argument("--roma-kl-coef", type=float, default=Args.roma_kl_coef)
     p.add_argument("--no-save-model", action="store_false", dest="save_model")
     args, _ = p.parse_known_args()
     return Args(**vars(args))
@@ -372,7 +373,37 @@ def main():
 
                     v_loss = 0.5 * ((newvalue - b_m_returns[mb]) ** 2).mean()
 
-                    loss = pg_loss - 0.01 * entropy.mean() + 0.5 * v_loss
+                    # ROMA KL divergence for role diversity
+                    goal_onehot = torch.nn.functional.one_hot(
+                        b_m_actions[mb].long(), num_classes=agent.num_roles
+                    ).float()
+                    x = torch.cat([b_m_obs[mb], b_m_roles[mb], goal_onehot], dim=1)
+                    logits = agent.worker_actor(x)
+                    probs_actual = torch.distributions.Categorical(logits=logits)
+
+                    random_roles = (
+                        b_m_actions[mb].long()
+                        + torch.randint(1, agent.num_roles, (len(mb),), device=device)
+                    ) % agent.num_roles
+                    random_goal_onehot = torch.nn.functional.one_hot(
+                        random_roles, num_classes=agent.num_roles
+                    ).float()
+                    x_rand = torch.cat(
+                        [b_m_obs[mb], b_m_roles[mb], random_goal_onehot], dim=1
+                    )
+                    logits_rand = agent.worker_actor(x_rand)
+                    probs_rand = torch.distributions.Categorical(logits=logits_rand)
+
+                    kl_div = torch.distributions.kl.kl_divergence(
+                        probs_actual, probs_rand
+                    ).mean()
+
+                    loss = (
+                        pg_loss
+                        - 0.01 * entropy.mean()
+                        + 0.5 * v_loss
+                        - args.roma_kl_coef * kl_div
+                    )
 
                     optimizer.zero_grad()
 

@@ -199,7 +199,11 @@ def main():
             for e in range(args.num_envs):
                 for i, a in enumerate(AGENTS):
                     base_reward = float(rewards[a][e])
-                    pos = infos[e][a].get("pos", (0, 0))
+                    pos = (
+                        infos[e].get(a, {}).get("pos", (0, 0))
+                        if isinstance(infos, (list, tuple))
+                        else (0, 0)
+                    )
 
                     # MAHIRO Intrinsic Reward Calculation (scaled to map bounds)
                     g_x = current_goals[i, e, 0].item() * 50.0
