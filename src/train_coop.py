@@ -188,16 +188,16 @@ def main():
                 )
 
                 # Check for spawning
-                max_conf = torch.max(value)
+                mean_conf = torch.mean(value)
                 if (
-                    max_conf < args.tau_spawn
+                    mean_conf < args.tau_spawn
                     and active_experts < args.max_experts
                     and not args.ablation_fixed
                     and global_step >= args.burn_in_steps
                 ):
                     active_experts += 1
                     print(
-                        f"Spawning Expert {active_experts} at step {global_step} (min_conf={max_conf.item():.3f})!"
+                        f"Spawning Expert {active_experts} at step {global_step} (mean_conf={mean_conf.item():.3f})!"
                     )
 
                 actions_t[step] = action.view(N_AGENTS, args.num_envs)
