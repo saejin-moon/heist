@@ -830,7 +830,7 @@ class CoopAgent(nn.Module):
     Instead of a Manager, Experts vote via their Critic values (Bottom-Up Routing).
     """
 
-    def __init__(self, state_dim, max_experts=10, hidden_dim=HIDDEN_DIM):
+    def __init__(self, state_dim, max_experts=6, hidden_dim=HIDDEN_DIM):
         super().__init__()
         self.max_experts = max_experts
         self.experts = nn.ModuleList(
@@ -903,7 +903,7 @@ class CoopTopDownAgent(nn.Module):
     Uses a standard Manager network to pick the expert, rather than bottom-up voting.
     """
 
-    def __init__(self, state_dim, max_experts=10, hidden_dim=HIDDEN_DIM):
+    def __init__(self, state_dim, max_experts=6, hidden_dim=HIDDEN_DIM):
         super().__init__()
         self.max_experts = max_experts
 
