@@ -263,9 +263,9 @@ def main():
             }
 
             # Structural Affordance Detection (Pre-step state)
-            old_mask_sum = mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM).sum(
-                dim=(1, 2)
-            )
+            old_mask_sum = mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM)[
+                :, :, 5
+            ].sum(dim=1)
 
             next_obs, rewards, terminations, truncations, infos = envs.step(
                 actions_dict
@@ -292,9 +292,9 @@ def main():
             new_mask_all = torch.as_tensor(
                 next_obs["_stacked"]["action_mask"], dtype=torch.float32, device=device
             )
-            new_mask_sum = new_mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM).sum(
-                dim=(1, 2)
-            )
+            new_mask_sum = new_mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM)[
+                :, :, 5
+            ].sum(dim=1)
             affordance_triggered = new_mask_sum > old_mask_sum  # [num_envs]
 
             # Assign CAR structurally
@@ -343,7 +343,7 @@ def main():
             macro_alarm_factor = torch.exp(
                 -args.alpha_alarm * (alarms_t / 100.0)
             )  # [T, B]
-            macro_outcome = torch.where(win, 1.0, -0.5)  # [B]
+            macro_outcome = torch.where(win, 1.0, 0.5)  # [B]
 
             alarm_fac = macro_alarm_factor.unsqueeze(1)  # [T, 1, B]
             out_fac = macro_outcome.unsqueeze(0).unsqueeze(0)  # [1, 1, B]
