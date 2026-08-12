@@ -130,11 +130,6 @@ def parse_args():
     return p.parse_args()
 
 
-def log_summary(writer, global_step, metrics):
-    for k, v in metrics.items():
-        writer.add_scalar(k, v, global_step)
-
-
 def train(args: Args):
     import re
 

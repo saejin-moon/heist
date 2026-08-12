@@ -12,6 +12,7 @@ dependencies = [
     "torch>=2.2",
     "tensorboard>=2.14",
     "rich>=15.0.0",
+    "vulture>=2.16",
 ]
 
 [tool.ruff]

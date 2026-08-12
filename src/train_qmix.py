@@ -389,7 +389,6 @@ def train(args: Args):
     )
     global_step = 0
     episode = 0
-    total_reward = 0.0
 
     while global_step < args.total_steps:
         obs, _ = env.reset(seed=args.seed + episode)
@@ -429,7 +428,6 @@ def train(args: Args):
             states = next_states
             ep_reward += sum(rewards.values()) / len(AGENTS)
             global_step += 1
-            total_reward += sum(rewards.values()) / len(AGENTS)
 
             # ---------------- gradient step ----------------
             if (

@@ -1,0 +1,5 @@
+- fix pruning logic in coop
+- get .zsh script to run eval on specified models + stages in cli args
+- train from stage 0 to stage 1 again
+- further refine the current logic behind coop for the env and perhaps the theory as well
+- retrain all baseline models from beginning to end (stage 0 to stage 4)

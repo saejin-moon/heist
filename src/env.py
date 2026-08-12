@@ -122,8 +122,6 @@ DEFAULT_CONFIG = {
 
 
 class HeistEnv(ParallelEnv):
-    metadata = {"render_modes": ["ansi", "human", "rgb_array"], "name": "heist_v0"}
-
     def __init__(self, config=None):
         self.config = dict(DEFAULT_CONFIG)
         if config is not None:
@@ -202,7 +200,7 @@ class HeistEnv(ParallelEnv):
     # ------------------------------------------------------------------
     # PettingZoo API
     # ------------------------------------------------------------------
-    def reset(self, seed=None, options=None):
+    def reset(self, seed=None, _options=None):
         if seed is not None:
             self.rng = np.random.default_rng(seed)
 
@@ -667,7 +665,6 @@ class HeistEnv(ParallelEnv):
                 continue
             if self.grid[nr, nc] == WALL:
                 self.grid[nr, nc] = EMPTY
-                self.breach_pos = (nr, nc)
                 self._add_alarm(self.config["alarm_breach"], rewards)
                 if (nr, nc) not in self._rewarded_breached_walls:
                     self._rewarded_breached_walls.add((nr, nc))
@@ -1028,10 +1025,6 @@ class HeistEnv(ParallelEnv):
             }
         return observations
 
-    def _get_obs(self, agent):
-        """Return one observation for callers that use the legacy helper."""
-        return self._get_all_obs()[agent]
-
     def state(self):
         """Rich global state for centralized critics (MAPPO) / QMIX mixing.
 
@@ -1092,9 +1085,3 @@ class HeistEnv(ParallelEnv):
         if self._pending_events:
             status += f" pending_events={len(self._pending_events)}"
         return "\n".join(lines) + "\n" + status
-
-    def observation_space(self, agent):
-        return self.observation_spaces[agent]
-
-    def action_space(self, agent):
-        return self.action_spaces[agent]

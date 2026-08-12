@@ -222,7 +222,6 @@ def train(args):
     vec_env = VectorEnv(args.num_envs, config=env_cfg, base_seed=args.seed)
 
     dummy_env = vec_env.envs[0]
-    dummy_obs, _ = dummy_env.reset()
     state_dim = dummy_env.state().shape[0]
     from model import MappoAgent
 

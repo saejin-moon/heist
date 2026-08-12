@@ -7,6 +7,7 @@ towards fulfilling its preconditions.
 
 import argparse
 import os
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -120,6 +121,7 @@ def main():
     m_dones = torch.zeros((m_steps, args.num_envs)).to(device)
     m_values = torch.zeros((m_steps, N_AGENTS, args.num_envs)).to(device)
 
+    start_time = time.time()
     global_step = 0
     num_updates = args.total_timesteps // (args.num_envs * args.num_steps)
 
@@ -343,7 +345,7 @@ def main():
 
                 v_loss = 0.5 * ((newvalue - b_w_returns[mb]) ** 2).mean()
 
-                loss = pg_loss - 0.01 * entropy.mean() + 0.5 * v_loss
+                loss = pg_loss - args.ent_coef * entropy.mean() + args.vf_coef * v_loss
 
                 optimizer.zero_grad()
 
@@ -393,7 +395,9 @@ def main():
 
                     v_loss = 0.5 * ((newvalue - b_m_returns[mb]) ** 2).mean()
 
-                    loss = pg_loss - 0.01 * entropy.mean() + 0.5 * v_loss
+                    loss = (
+                        pg_loss - args.ent_coef * entropy.mean() + args.vf_coef * v_loss
+                    )
 
                     optimizer.zero_grad()
 
@@ -406,11 +410,17 @@ def main():
                     optimizer.step()
 
         if update % args.eval_every == 0 or update == num_updates:
-            print(f"[{run_name}] Update {update}/{num_updates}")
+            sps = int(global_step / (time.time() - start_time))
+            mean_reward = w_rewards.sum(0).mean().item()
+            win_rate = (w_rewards[:, 0, :] > 5.0).any(dim=0).float().mean().item()
+            print(
+                f"[{run_name}] update={update} step={global_step} sps={sps} win_rate={win_rate:.3f} mean_reward={mean_reward:.3f}"
+            )
+            if args.save_model:
+                os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
+                torch.save(agent.state_dict(), f"checkpoints/{run_name}/lrs.pt")
 
     if args.save_model:
-        os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
-        torch.save(agent.state_dict(), f"checkpoints/{run_name}/lrs.pt")
         write_completion(run_name, "lrs", args.total_timesteps, global_step)
 
 

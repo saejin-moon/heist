@@ -115,21 +115,3 @@ class RNDModule:
         self.optimizer.step()
 
         return loss.item()
-
-
-class CountExplorationModule:
-    """Hash-based state visit counter for grid environments."""
-
-    def __init__(self, beta: float = 0.05):
-        self.beta = beta
-        self.counts: dict[tuple, int] = {}
-
-    def compute_reward(self, state_pos: tuple | np.ndarray) -> float:
-        key = (
-            tuple(state_pos.tolist())
-            if isinstance(state_pos, np.ndarray)
-            else tuple(state_pos)
-        )
-        cnt = self.counts.get(key, 0) + 1
-        self.counts[key] = cnt
-        return float(self.beta / np.sqrt(cnt))

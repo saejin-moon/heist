@@ -100,7 +100,7 @@ class VectorEnv:
 
         # inspect initial state_dim
         self.remotes[0].send(("reset", base_seed))
-        initial_obs, initial_state = self.remotes[0].recv()
+        _, initial_state = self.remotes[0].recv()
         self.state_dim = initial_state.shape[0]
         self.obs = None
         self.state = None

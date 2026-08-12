@@ -196,7 +196,17 @@ def main():
                     and global_step >= args.burn_in_steps
                 ):
                     active_experts += 1
-                    expert_last_used_episode[active_experts - 1] = global_episode_count
+                    expert_idx = active_experts - 1
+                    expert_last_used_episode[expert_idx] = global_episode_count
+
+                    # Randomize the newly spawned expert so it explores new skills!
+                    agent.experts[expert_idx].reset()
+
+                    # Clear any stale optimizer momentum from when it was previously pruned
+                    for p in agent.experts[expert_idx].parameters():
+                        if p in optimizer.state:
+                            del optimizer.state[p]
+
                     print(
                         f"Spawning Expert {active_experts} at step {global_step} (mean_conf={mean_conf.item():.3f})!"
                     )
