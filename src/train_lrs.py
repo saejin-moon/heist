@@ -255,11 +255,12 @@ def main():
             w_rewards, w_values, next_w_value, w_dones, args.gamma, args.gae_lambda
         )
 
-        _, _, _, next_m_value = agent.get_manager_action_and_value(
-            next_obs_all.flatten(0, 1),
-            next_state_t.repeat(N_AGENTS, 1),
-            next_role_all.flatten(0, 1),
-        )
+        with torch.no_grad():
+            _, _, _, next_m_value = agent.get_manager_action_and_value(
+                next_obs_all.flatten(0, 1),
+                next_state_t.repeat(N_AGENTS, 1),
+                next_role_all.flatten(0, 1),
+            )
 
         next_m_value = next_m_value.view(N_AGENTS, args.num_envs)
 
