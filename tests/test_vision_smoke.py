@@ -79,11 +79,15 @@ def test_bfs_pathfinding():
     grid[1, 1:4] = WALL  # horizontal wall barrier
 
     targets = np.array([[2, 2]], dtype=np.int32)
-    dist_map = distance_to_nearest_target(grid, targets, wall_val=WALL, door_val=DOOR)
+    dist_map = np.full((5, 5), -1, dtype=np.int32)
+    queue = np.empty(25, dtype=np.int32)
+    distance_to_nearest_target(grid, targets, WALL, DOOR, dist_map, queue)
     assert dist_map[2, 2] == 0
     assert dist_map[0, 2] > 2  # Must route around wall
 
+    previous = np.full(25, -2, dtype=np.int32)
+    reset_stack = np.empty(25, dtype=np.int32)
     next_r, next_c = bfs_next_step(
-        grid, start_r=0, start_c=2, target_r=2, target_c=2, wall_val=WALL, door_val=DOOR
+        grid, 0, 2, 2, 2, WALL, DOOR, queue, previous, reset_stack
     )
     assert (next_r, next_c) in [(0, 1), (0, 3)]  # Step around wall

@@ -103,6 +103,7 @@ def main():
     w_actions = torch.zeros((args.num_steps, N_AGENTS, args.num_envs)).to(device)
     w_logprobs = torch.zeros((args.num_steps, N_AGENTS, args.num_envs)).to(device)
     w_rewards = torch.zeros((args.num_steps, N_AGENTS, args.num_envs)).to(device)
+    ext_rewards = torch.zeros((args.num_steps, N_AGENTS, args.num_envs)).to(device)
     w_dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     w_values = torch.zeros((args.num_steps, N_AGENTS, args.num_envs)).to(device)
 
@@ -227,6 +228,7 @@ def main():
                         logical_reward = args.lrs_shaping_coef
 
                     w_rewards[step, i, e] = base_reward + logical_reward
+                    ext_rewards[step, i, e] = base_reward
                     macro_reward_acc[i, e] += base_reward
 
         m_rewards[-1] = macro_reward_acc.clone()
@@ -411,8 +413,8 @@ def main():
 
         if update % args.eval_every == 0 or update == num_updates:
             sps = int(global_step / (time.time() - start_time))
-            mean_reward = w_rewards.sum(0).mean().item()
-            win_rate = (w_rewards[:, 0, :] > 5.0).any(dim=0).float().mean().item()
+            mean_reward = ext_rewards.mean().item()
+            win_rate = (ext_rewards[:, 0, :] > 5.0).any(dim=0).float().mean().item()
             print(
                 f"[{run_name}] update={update} step={global_step} sps={sps} win_rate={win_rate:.3f} mean_reward={mean_reward:.3f}"
             )

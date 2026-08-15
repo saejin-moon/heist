@@ -28,7 +28,7 @@ Follow this multi-phase workflow strictly:
 ---
 
 ### PHASE 3: Implementation vs. Theory Alignment & Code Audit
-1. Deep-dive into all Python/C++/CUDA scripts outside of `paper/`.
+1. Investigate all Python/C++/CUDA scripts outside of `paper/`.
 2. Trace the data flow from data loading -> model forward pass -> loss calculation -> backward pass -> optimization step.
 3. Verify that edge cases are handled (e.g., empty batches, NaNs/Infs in activations/gradients, zero-division, padding masks).
 4. Verify hyperparameter wiring: Ensure parameters defined in config files or scripts actually get passed to the underlying theoretical models without silent overrides or hardcoded default drops.

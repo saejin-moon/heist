@@ -1,7 +1,7 @@
 """
 CHARM: Causal Hierarchical Asymmetric Routing & Messaging
 Implements a two-timescale PPO where the Manager sets continuous goals (x,y)
-and receives Upward Affordance Routing credit from the Worker.
+and receives credit from the Worker when structural affordances change.
 """
 
 import argparse
@@ -152,7 +152,8 @@ def main():
             w_dones[step] = next_done
 
             # 1. Manager Step
-            if step % args.macro_step == 0:
+            manager_step_condition = (step % args.macro_step == 0) or next_done.any()
+            if manager_step_condition:
                 m_step = step // args.macro_step
                 m_obs[m_step] = obs_all.flatten(2)
                 m_roles[m_step] = role_all
@@ -398,7 +399,7 @@ def main():
 
         if update % args.eval_every == 0 or update == num_updates:
             sps = int(global_step / (time.time() - start_time))
-            mean_reward = w_rewards.sum(0).mean().item()
+            mean_reward = w_rewards.mean().item()
             win_rate = (w_rewards[:, 0, :] > 5.0).any(dim=0).float().mean().item()
             print(
                 f"[{run_name}] update={update} step={global_step} sps={sps} win_rate={win_rate:.3f} mean_reward={mean_reward:.3f}"

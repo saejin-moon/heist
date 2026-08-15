@@ -4,11 +4,11 @@ The HEIST environment models a high-security facility infiltration. It requires 
 
 ## 2.1 Role Specialization & Action Space
 
-The agent set $ \mathcal{N} = \{\text{scout}, \text{hacker}, \text{muscle}, \text{extractor}\} $ shares a discrete action space $ |\mathcal{A}_i| = 6 $:
+The agent set $ \mathcal{N} = \{\text{scout}, \text{hacker}, \text{muscle}, \text{extractor}\} $ shares a discrete action space $ |\mathcal{A}_i| = 7 $:
 
-$ \mathcal{A}_i = \{0: \text{UP}, 1: \text{DOWN}, 2: \text{LEFT}, 3: \text{RIGHT}, 4: \text{WAIT}, 5: \text{INTERACT}\} $
+$ \mathcal{A}_i = \{0: \text{UP}, 1: \text{DOWN}, 2: \text{LEFT}, 3: \text{RIGHT}, 4: \text{WAIT}, 5: \text{INTERACT}, 6: \text{BREACH}\} $
 
-The semantics of Action 5 ($ \text{INTERACT} $) depend on the role identity $ i $. The Scout broadcasts a point of interest to allies and reveals a $ 17 \times 17 $ vision cone. The Hacker executes multi-turn hacking on adjacent security terminals or bypasses locked doors. The Muscle temporarily knocks out a nearby guard within Manhattan distance 1. The Extractor secures loot at the vault and activates the extraction countdown.
+The semantics of Action 5 ($ \text{INTERACT} $) depend on the role identity $ i $. The Scout broadcasts a point of interest to allies and reveals an unoriented $ 17 \times 17 $ square bounding box. The Hacker executes multi-turn hacking on adjacent security terminals or bypasses locked doors. The Muscle temporarily knocks out a nearby guard within Manhattan distance 1. The Extractor secures loot at the vault and activates the extraction countdown.
 
 ## 2.2 Global State & Observation Encoding
 
@@ -51,7 +51,7 @@ Every hyperparameter and environment constant is defined as follows:
 | $ \text{ALARM\_NEUTRALIZE\_DELAY} $ | $ K_{\text{delay}} $ | $ 15 $ | Delay turns before security command notices a missing guard |
 | $ \text{ALARM\_BREACH} $ | $ \delta A_{\text{breach}} $ | $ 30.00 $ | Instant global-alarm cost of a wall breach |
 | $ \text{BREACH\_RADIUS} $ | $ R_{\text{breach}} $ | $ 10 $ | Guards within this range repath to the breach |
-| $ \text{EXTRACTOR\_BURDEN\_TURNS} $ | $ K_{\text{burden}} $ | $ 2 $ | Loot-carrying extractor moves 1 tile per $ K $ turns |
+| $ \text{EXTRACTOR\_BURDEN\_TURNS} $ | $ K_{\text{burden}} $ | $ 1 $ | Loot-carrying extractor moves 1 tile per $ K $ turns |
 | $ \text{GUARD\_LOS\_RANGE} $ | $ L_{\text{guard}} $ | $ 8 $ | Directional line-of-sight reach for guards |
 | $ \text{SEARCH\_RADIUS} $ | $ R_{\text{search}} $ | $ 5 $ | Tiles around a last-known position to sweep |
 | $ \text{SEARCH\_TURNS} $ | $ K_{\text{search}} $ | $ 6 $ | Turns a guard stays in Search before Patrol |

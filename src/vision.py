@@ -98,7 +98,18 @@ def line_is_clear(grid, r0, c0, r1, c1, wall_val, door_val):
 
 
 @njit(cache=True)
-def bfs_next_step(grid, start_r, start_c, target_r, target_c, wall_val, door_val):
+def bfs_next_step(
+    grid,
+    start_r,
+    start_c,
+    target_r,
+    target_c,
+    wall_val,
+    door_val,
+    queue,
+    previous,
+    reset_stack,
+):
     """Return the first shortest-path step as ``(row, col)`` or ``(-1, -1)``.
 
     This is deliberately BFS, rather than A*: movement has uniform cost and
@@ -110,15 +121,15 @@ def bfs_next_step(grid, start_r, start_c, target_r, target_c, wall_val, door_val
         return -1, -1
 
     height, width = grid.shape
-    size = height * width
-    previous = np.full(size, -2, dtype=np.int32)
-    queue = np.empty(size, dtype=np.int32)
     head = 0
     tail = 1
+    reset_ptr = 0
     start = start_r * width + start_c
     target = target_r * width + target_c
     queue[0] = start
     previous[start] = -1
+    reset_stack[reset_ptr] = start
+    reset_ptr += 1
 
     while head < tail:
         current = queue[head]
@@ -147,28 +158,106 @@ def bfs_next_step(grid, start_r, start_c, target_r, target_c, wall_val, door_val
             previous[neighbor] = current
             queue[tail] = neighbor
             tail += 1
+            reset_stack[reset_ptr] = neighbor
+            reset_ptr += 1
 
-    if previous[target] == -2:
-        return -1, -1
-    current = target
-    while previous[current] != start:
-        current = previous[current]
-        if current < 0:
-            return -1, -1
-    return current // width, current % width
+    res_r, res_c = -1, -1
+    if previous[target] != -2:
+        current = target
+        while previous[current] != start:
+            current = previous[current]
+            if current < 0:
+                res_r, res_c = -1, -1
+                break
+        else:
+            res_r, res_c = current // width, current % width
+
+    for i in range(reset_ptr):
+        previous[reset_stack[i]] = -2
+
+    return res_r, res_c
 
 
 @njit(cache=True)
-def distance_to_nearest_target(grid, targets, wall_val, door_val):
+def bfs_shortest_path_distance(
+    grid,
+    start_r,
+    start_c,
+    target_r,
+    target_c,
+    wall_val,
+    door_val,
+    queue,
+    distance,
+    reset_stack,
+):
+    """Return shortest-path distance between (start_r, start_c) and (target_r, target_c) or 999999."""
+    if start_r == target_r and start_c == target_c:
+        return 0
+    height, width = grid.shape
+    head = 0
+    tail = 1
+    reset_ptr = 0
+    start = start_r * width + start_c
+    target = target_r * width + target_c
+    queue[0] = start
+    distance[start_r, start_c] = 0
+    reset_stack[reset_ptr] = start
+    reset_ptr += 1
+
+    res_d = 999999
+    while head < tail:
+        current = queue[head]
+        head += 1
+        row = current // width
+        col = current % width
+        d = distance[row, col]
+        if current == target:
+            res_d = int(d)
+            break
+        for direction in range(4):
+            if direction == 0:
+                nr, nc = row - 1, col
+            elif direction == 1:
+                nr, nc = row + 1, col
+            elif direction == 2:
+                nr, nc = row, col - 1
+            else:
+                nr, nc = row, col + 1
+            if nr < 0 or nr >= height or nc < 0 or nc >= width:
+                continue
+            neighbor = nr * width + nc
+            if distance[nr, nc] != -1:
+                continue
+            tile = grid[nr, nc]
+            if tile in (wall_val, door_val):
+                continue
+            distance[nr, nc] = d + 1
+            queue[tail] = neighbor
+            tail += 1
+            reset_stack[reset_ptr] = neighbor
+            reset_ptr += 1
+
+    for i in range(reset_ptr):
+        idx = reset_stack[i]
+        distance[idx // width, idx % width] = -1
+
+    return res_d
+
+
+@njit(cache=True)
+def distance_to_nearest_target(grid, targets, wall_val, door_val, distance, queue):
     """Return a walkable-cell distance field seeded by every target.
 
     A single multi-source BFS lets all converging guards follow an optimal
     route to their nearest reachable agent rather than running one BFS per
-    guard.  ``-1`` marks walls, doors, and unreachable cells.
+    guard.  ``-1`` indicates walls, doors, and unreachable cells.
     """
     height, width = grid.shape
-    distance = np.full((height, width), -1, dtype=np.int32)
-    queue = np.empty(height * width, dtype=np.int32)
+    for r in range(height):
+        for c in range(width):
+            distance[r, c] = -1
+
     head = 0
     tail = 0
     for i in range(targets.shape[0]):
@@ -244,18 +333,36 @@ def camera_exposure(
     n_cam, n_agent = len(camera_positions), len(agent_positions)
     if n_cam == 0 or n_agent == 0:
         return np.zeros((n_cam, n_agent), dtype=bool)
+
+    c_pos = np.array(camera_positions)
+    a_pos = np.array(agent_positions)
+    dist = np.abs(c_pos[:, None, 0] - a_pos[None, :, 0]) + np.abs(
+        c_pos[:, None, 1] - a_pos[None, :, 1]
+    )
+
     exposure = np.zeros((n_cam, n_agent), dtype=bool)
-    for i, (cr, cc) in enumerate(camera_positions):
-        for j, (ar, ac) in enumerate(agent_positions):
-            if abs(cr - ar) + abs(cc - ac) > max_range:
+    for i in range(n_cam):
+        for j in range(n_agent):
+            if dist[i, j] > max_range:
                 continue
-            exposure[i, j] = line_is_clear(grid, cr, cc, ar, ac, wall_val, door_val)
+            exposure[i, j] = line_is_clear(
+                grid,
+                c_pos[i, 0],
+                c_pos[i, 1],
+                a_pos[j, 0],
+                a_pos[j, 1],
+                wall_val,
+                door_val,
+            )
     return exposure
 
 
 @njit(cache=True)
 def pick_search_tile(grid, center_r, center_c, radius, wall_val, door_val, rand_val):
     height, width = grid.shape
+    max_cells = (2 * radius + 1) * (2 * radius + 1)
+    stack_r = np.empty(max_cells, dtype=np.int32)
+    stack_c = np.empty(max_cells, dtype=np.int32)
     count = 0
     for dr in range(-radius, radius + 1):
         for dc in range(-radius, radius + 1):
@@ -263,21 +370,13 @@ def pick_search_tile(grid, center_r, center_c, radius, wall_val, door_val, rand_
             if 0 <= nr < height and 0 <= nc < width:
                 tile = grid[nr, nc]
                 if tile != wall_val and tile != door_val:
+                    stack_r[count] = nr
+                    stack_c[count] = nc
                     count += 1
     if count == 0:
         return center_r, center_c
     idx = int(rand_val * count)
-    curr = 0
-    for dr in range(-radius, radius + 1):
-        for dc in range(-radius, radius + 1):
-            nr, nc = center_r + dr, center_c + dc
-            if 0 <= nr < height and 0 <= nc < width:
-                tile = grid[nr, nc]
-                if tile != wall_val and tile != door_val:
-                    if curr == idx:
-                        return nr, nc
-                    curr += 1
-    return center_r, center_c
+    return stack_r[idx], stack_c[idx]
 
 
 @njit(cache=True)

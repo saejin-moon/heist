@@ -26,6 +26,10 @@ def compute_gae(
     advantages = torch.zeros_like(rewards)
     last_gae = torch.zeros_like(next_values)
     num_steps = rewards.shape[1]
+
+    nonterminal_mask = 1.0 - terminated
+    gae_mask_all = nonterminal_mask * (1.0 - truncated)
+
     for step in range(num_steps - 1, -1, -1):
         if step == num_steps - 1:
             following_values = next_values
@@ -35,8 +39,8 @@ def compute_gae(
                 bootstrap[:, step],
                 values[:, step + 1],
             )
-        nonterminal = 1.0 - terminated[:, step]
-        gae_mask = (1.0 - terminated[:, step]) * (1.0 - truncated[:, step])
+        nonterminal = nonterminal_mask[:, step]
+        gae_mask = gae_mask_all[:, step]
         delta = (
             rewards[:, step] + gamma * following_values * nonterminal - values[:, step]
         )
@@ -57,9 +61,10 @@ def compute_gae_simple(
     advantages = torch.zeros_like(rewards)
     last_gae = torch.zeros_like(next_values)
     num_steps = rewards.shape[0]
+    nonterminal_mask = 1.0 - dones
     for step in range(num_steps - 1, -1, -1):
         following_values = next_values if step == num_steps - 1 else values[step + 1]
-        nonterminal = 1.0 - dones[step]
+        nonterminal = nonterminal_mask[step]
         delta = rewards[step] + gamma * following_values * nonterminal - values[step]
         last_gae = delta + gamma * gae_lambda * nonterminal * last_gae
         advantages[step] = last_gae

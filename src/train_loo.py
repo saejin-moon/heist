@@ -267,8 +267,21 @@ def train(args):
             for a in AGENTS:
                 q_all = target_critic(b_states, b_other_oh[a])
                 adv, q_taken = compute_loo_advantage(q_all, b_actions[a], b_mask[a])
-                b_targets[a] = q_taken
                 b_adv[a] = adv
+
+                r_a = buffers[a]["rewards"]
+                d_a = buffers[a]["dones"]
+                q_taken_sq = q_taken.reshape(args.num_steps, args.num_envs)
+                td_targets = torch.zeros_like(q_taken_sq)
+                for step in range(args.num_steps - 1, -1, -1):
+                    if step == args.num_steps - 1:
+                        td_targets[step] = r_a[step]
+                    else:
+                        td_targets[step] = (
+                            r_a[step]
+                            + args.gamma * (1.0 - d_a[step]) * q_taken_sq[step + 1]
+                        )
+                b_targets[a] = td_targets.flatten()
 
         b_inds = np.arange(batch_size)
         for _epoch in range(args.update_epochs):

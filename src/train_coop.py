@@ -1,6 +1,6 @@
 """
-CO-OP: Scalable Cooperative Option-Pool Evolution.
-Implements a dynamic Bottom-Up Confidence Routing mechanism.
+CO-OP: Confidence-Oriented Option Pool
+Implements confidence-based skill routing.
 """
 
 import argparse
@@ -39,13 +39,15 @@ class Args:
     ent_coef: float = 0.01
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
-    tau_spawn: float = -0.1
+    tau_spawn: float = -0.50
     alpha_alarm: float = 1.5
     car_coef: float = 1.0
-    max_experts: int = 6
-    burn_in_steps: int = 500_000
+    max_experts: int = 8
+    burn_in_frac: float = 0.10
+    burn_in_steps: int = 30_000
+    spawn_cooldown_steps: int = 20_000
     complexity_penalty: float = 0.01
-    prune_episodes: int = 50
+    prune_episodes: int = 150
     env_config: str = ""
     save_model: bool = True
     eval_every: int = 10
@@ -70,7 +72,9 @@ def parse_args():
     p.add_argument("--tau-spawn", type=float, default=Args.tau_spawn)
     p.add_argument("--alpha-alarm", type=float, default=Args.alpha_alarm)
     p.add_argument("--car-coef", type=float, default=Args.car_coef)
+    p.add_argument("--burn-in-frac", type=float, default=Args.burn_in_frac)
     args, _ = p.parse_known_args()
+    args.burn_in_steps = int(args.total_timesteps * args.burn_in_frac)
     return Args(**vars(args))
 
 
@@ -149,11 +153,15 @@ def main():
         args.max_experts, dtype=torch.long, device=device
     )
 
+    last_spawn_step = 0
     global_step = 0
     global_episode_count = 0
     num_updates = args.total_timesteps // (args.num_envs * args.num_steps)
 
-    next_done = torch.zeros(args.num_envs).to(device)
+    next_done = torch.ones(args.num_envs).to(device)
+    env_expert_idx = torch.zeros(
+        N_AGENTS * args.num_envs, dtype=torch.long, device=device
+    )
     start_time = time.time()
 
     for update in range(1, num_updates + 1):
@@ -179,28 +187,55 @@ def main():
             dones_t[step] = next_done
 
             with torch.no_grad():
+                if next_done.any():
+                    _, _, _, _, new_expert_idx = agent.get_action_and_value(
+                        obs_all.flatten(0, 1),
+                        state_t.repeat(N_AGENTS, 1),
+                        role_all.flatten(0, 1),
+                        mask_all.flatten(0, 1),
+                        active_experts,
+                    )
+                    done_mask = next_done.repeat(N_AGENTS).bool()
+                    env_expert_idx = torch.where(
+                        done_mask, new_expert_idx, env_expert_idx
+                    )
+
+                # For top-down ablation, lock the expert for the episode. Otherwise, per-step dynamic routing.
+                current_expert_idx = env_expert_idx if args.ablation_top_down else None
+
                 action, logprob, _, value, chosen_expert = agent.get_action_and_value(
                     obs_all.flatten(0, 1),
                     state_t.repeat(N_AGENTS, 1),
                     role_all.flatten(0, 1),
                     mask_all.flatten(0, 1),
                     active_experts,
+                    expert_idx=current_expert_idx,
                 )
 
                 # Check for spawning
-                mean_conf = torch.mean(value)
+                min_conf = torch.min(value)
                 if (
-                    mean_conf < args.tau_spawn
+                    min_conf < args.tau_spawn
                     and active_experts < args.max_experts
                     and not args.ablation_fixed
                     and global_step >= args.burn_in_steps
+                    and (global_step - last_spawn_step) >= args.spawn_cooldown_steps
                 ):
                     active_experts += 1
+                    last_spawn_step = global_step
                     expert_idx = active_experts - 1
                     expert_last_used_episode[expert_idx] = global_episode_count
 
-                    # Randomize the newly spawned expert so it explores new skills!
-                    agent.experts[expert_idx].reset()
+                    # Warm-start the newly spawned expert from the best prior expert to retain navigation priors
+                    src = expert_idx - 1
+                    agent.experts[expert_idx].load_state_dict(
+                        agent.experts[src].state_dict()
+                    )
+
+                    # Inject parameter noise to encourage divergence
+                    with torch.no_grad():
+                        for param in agent.experts[expert_idx].parameters():
+                            param.add_(torch.randn_like(param) * 0.05)
 
                     # Clear any stale optimizer momentum from when it was previously pruned
                     for p in agent.experts[expert_idx].parameters():
@@ -208,7 +243,7 @@ def main():
                             del optimizer.state[p]
 
                     print(
-                        f"Spawning Expert {active_experts} at step {global_step} (mean_conf={mean_conf.item():.3f})!"
+                        f"Spawning Expert {active_experts} at step {global_step} (min_conf={min_conf.item():.3f})!"
                     )
 
                 actions_t[step] = action.view(N_AGENTS, args.num_envs)
@@ -220,7 +255,7 @@ def main():
                 chosen_expert_unique = chosen_expert.unique()
                 expert_last_used_episode[chosen_expert_unique] = global_episode_count
 
-                if not args.ablation_fixed:
+                if not args.ablation_fixed and global_step >= args.burn_in_steps:
                     for k in range(active_experts - 1, -1, -1):
                         if (
                             active_experts > 1
@@ -266,6 +301,7 @@ def main():
                                     src
                                 ]
                                 expert_idx_t[expert_idx_t == src] = k
+                                env_expert_idx[env_expert_idx == src] = k
 
                             active_experts -= 1
 
@@ -273,10 +309,7 @@ def main():
                 a: actions_t[step, i].cpu().numpy() for i, a in enumerate(AGENTS)
             }
 
-            # Structural Affordance Detection (Pre-step state)
-            old_mask_sum = mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM)[
-                :, :, 5
-            ].sum(dim=1)
+            # Structural Affordance Detection (Pre-step state removed)
 
             next_obs, rewards, terminations, truncations, infos = envs.step(
                 actions_dict
@@ -299,34 +332,17 @@ def main():
             ).to(device)
             global_episode_count += int(next_done.sum().item())
 
-            # Structural Affordance Detection (Post-step state)
-            new_mask_all = torch.as_tensor(
-                next_obs["_stacked"]["action_mask"], dtype=torch.float32, device=device
-            )
-            new_mask_sum = new_mask_all.view(args.num_envs, N_AGENTS, ACTION_DIM)[
-                :, :, 5
-            ].sum(dim=1)
-            affordance_triggered = new_mask_sum > old_mask_sum  # [num_envs]
-
-            # Assign CAR structurally
+            # Assign CAR structurally using the global unlock info from the environment
             for e in range(args.num_envs):
                 for i, a in enumerate(AGENTS):
                     base_reward = float(rewards[a][e])
-                    # The affordance was triggered globally, and THIS agent took the INTERACT action (5)
-                    is_unlocked = (
-                        affordance_triggered[e].item()
-                        and int(actions_t[step, i, e].item()) == 5
-                    )
+
+                    is_unlocked = infos[e][a].get("car_unlocked", False)
                     car_unlocked_t[step, i, e] = is_unlocked
                     car_reward = 0.0
                     if is_unlocked and not args.ablation_no_car:
-                        # Base structural CAR reward to the winning expert
-                        car_reward = args.car_coef  # Dense causal affordance routing reward to the winning expert
-                    rewards_t[step, i, e] = float(
-                        base_reward
-                        + car_reward
-                        - (args.complexity_penalty * active_experts)
-                    )
+                        car_reward = args.car_coef
+                    rewards_t[step, i, e] = float(base_reward + car_reward)
 
         with torch.no_grad():
             next_obs_all = torch.as_tensor(
@@ -345,22 +361,39 @@ def main():
                 next_role_all.flatten(0, 1),
                 mask_all.flatten(0, 1),
                 active_experts,
+                expert_idx=current_expert_idx,
             )
             next_value = next_value.view(N_AGENTS, args.num_envs)
 
-            # Apply Asymmetric Failure Shielding & Macro Weighting from MARC
-            win = (rewards_t > 5.0).any(dim=1).any(dim=0)  # [B]
+            # Apply binary success mask & Macro Weighting from MARC
+            # Compute O_t correctly per-episode boundaries to prevent temporal cross-contamination
+            O_t = torch.full((args.num_steps, args.num_envs), 0.5, device=device)
+            win_t = torch.zeros(
+                (args.num_steps, args.num_envs), dtype=torch.bool, device=device
+            )
+            for e in range(args.num_envs):
+                current_outcome = 0.5
+                current_win = False
+                for t in range(args.num_steps - 1, -1, -1):
+                    if rewards_t[t, 0, e] > 5.0:
+                        current_outcome = 1.0
+                        current_win = True
+                    elif dones_t[t, e]:
+                        current_outcome = 0.5
+                        current_win = False
+                    O_t[t, e] = current_outcome
+                    win_t[t, e] = current_win
+
             # Macro Weighting scales the baseline advantage by the alarm level.
             macro_alarm_factor = torch.exp(
                 -args.alpha_alarm * (alarms_t / 100.0)
             )  # [T, B]
-            macro_outcome = torch.where(win, 1.0, 0.5)  # [B]
 
             alarm_fac = macro_alarm_factor.unsqueeze(1)  # [T, 1, B]
-            out_fac = macro_outcome.unsqueeze(0).unsqueeze(0)  # [1, 1, B]
+            out_fac = O_t.unsqueeze(1)  # [T, 1, B]
             unshielded_omega = out_fac * alarm_fac  # [T, 1, B]
 
-            not_win = (~win).unsqueeze(0).unsqueeze(0)  # [1, 1, B]
+            not_win = ~win_t.unsqueeze(1)  # [T, 1, B]
             shield_mask = not_win & car_unlocked_t  # [T, N_AGENTS, B]
 
             unshielded_omega = unshielded_omega.expand(-1, N_AGENTS, -1)
@@ -431,19 +464,19 @@ def main():
 
         if update % 5 == 0 or update == num_updates:
             sps = int(global_step / (time.time() - start_time))
-            mean_reward = rewards_t.sum(0).mean().item()
-            win_rate = (
-                (rewards_t[:, 0, :] > 5.0).any(dim=0).float().mean().item()
-                if hasattr(rewards_t, "dim")
-                else 0.0
-            )
+            mean_reward = rewards_t.mean().item()
+            wins = (rewards_t[:, 0, :] > 5.0).sum().item()
+            episodes = dones_t.sum().item()
+            win_rate = wins / max(1.0, episodes)
             print(
                 f"[{run_name}] update={update} step={global_step} sps={sps} win_rate={win_rate:.3f} mean_reward={mean_reward:.3f} experts={active_experts}"
             )
 
     if args.save_model:
         os.makedirs(f"checkpoints/{run_name}", exist_ok=True)
-        torch.save(agent.state_dict(), f"checkpoints/{run_name}/coop.pt")
+        sd = agent.state_dict()
+        sd["active_experts"] = torch.tensor(active_experts)
+        torch.save(sd, f"checkpoints/{run_name}/coop.pt")
         write_completion(run_name, "coop", args.total_timesteps, global_step)
 
 

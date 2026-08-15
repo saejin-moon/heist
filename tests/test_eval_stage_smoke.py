@@ -59,7 +59,7 @@ def test_eval_one_checkpoint_skipping():
         "guard_count": 0,
         "camera_count": 0,
         "door_count": 0,
-        "max_steps": 60,
+        "max_steps": 100,
     }
     env = HeistEnv(config)
     device = torch.device("cpu")

@@ -121,6 +121,8 @@ def load_policies(algo, run_dir, state_dim, device):
         sd = torch.load(
             os.path.join(run_dir, filename), map_location=device, weights_only=True
         )
+        active_k = int(sd.pop("active_experts").item()) if "active_experts" in sd else 2
+
         expert_indices = {int(k.split(".")[1]) for k in sd if k.startswith("experts.")}
         max_exp = max(expert_indices) + 1 if expert_indices else 6
         ckpt_state_dim = (
@@ -130,6 +132,7 @@ def load_policies(algo, run_dir, state_dim, device):
         )
         p = CoopAgent(state_dim=ckpt_state_dim, max_experts=max_exp)
         p.load_state_dict(sd)
+        p.active_experts = active_k
         p.to(device).eval()
         return {a: p for a in AGENTS}
     if algo == "coop_top_down":
@@ -141,6 +144,8 @@ def load_policies(algo, run_dir, state_dim, device):
         sd = torch.load(
             os.path.join(run_dir, filename), map_location=device, weights_only=True
         )
+        active_k = int(sd.pop("active_experts").item()) if "active_experts" in sd else 2
+
         expert_indices = {int(k.split(".")[1]) for k in sd if k.startswith("experts.")}
         max_exp = max(expert_indices) + 1 if expert_indices else 6
         ckpt_state_dim = (
@@ -150,6 +155,7 @@ def load_policies(algo, run_dir, state_dim, device):
         )
         p = CoopTopDownAgent(state_dim=ckpt_state_dim, max_experts=max_exp)
         p.load_state_dict(sd)
+        p.active_experts = active_k
         p.to(device).eval()
         return {a: p for a in AGENTS}
     for a in AGENTS:

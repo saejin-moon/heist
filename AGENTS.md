@@ -135,8 +135,8 @@ The codebase supports 21 distinct algorithm configurations across 5 fundamental 
 | **`loo`** | Leave-One-Out (C3) | Marginal counterfactual baseline isolating $i$-th agent's contribution |
 | **`ate`** | Treatment Effect | Contrastive advantage against explicit WAIT null action |
 | **`macca`** | Dynamic Bayesian Graph| Dynamic Bayesian Network (DBN) factorizing global state transitions |
-| **`marc`** | **Novel Flagship** | **Micro-Macro Asymmetric Retroactive Causal-chain** with failure shielding |
-| **`marc_no_shielding`** | MARC Ablation | MARC without Asymmetric Failure Shielding |
+| **`marc`** | **Novel Flagship** | **Marginal Action Retroactive Credit** with binary success masking |
+| **`marc_no_shielding`** | MARC Ablation | MARC without binary success masking |
 | **`marc_no_macro`** | MARC Ablation | MARC without Macro Weighting ($\Omega_t = 1.0$) |
 | **`marc_no_affordance`** | MARC Ablation | MARC without Micro Affordance Delta Boost |
 | **`charm`** | Hierarchical RL | Continuous Hierarchical Agent with Top-Down Manager |

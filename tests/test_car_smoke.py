@@ -27,7 +27,7 @@ def test_car_affordance_unlock():
     obs, _ = env.reset(seed=42)
 
     # Scout starts adjacent to terminal in role spawn mode.
-    # Scout executes INTERACT to tag terminal, unlocking Hacker's INTERACT capability.
+    # Scout executes INTERACT to tag terminal to unlock Hacker's INTERACT capability.
     actions = {a: 4 for a in env.possible_agents}  # WAIT
     actions["scout"] = INTERACT
 

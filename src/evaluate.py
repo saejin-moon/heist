@@ -90,7 +90,6 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
     win = False
 
     current_goals = {a: None for a in AGENTS}
-    active_experts = 6  # max_experts for CO-OP during eval
 
     for step_idx in range(env.config["max_steps"]):
         actions = {}
@@ -126,7 +125,8 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
                         p_type == "ContinuousHierarchicalAgent"
                         or p_type == "DiscreteHierarchicalAgent"
                     ):
-                        if step_idx % 10 == 0 or current_goals[a] is None:
+                        macro_step = getattr(policy, "macro_step", 5)
+                        if step_idx % macro_step == 0 or current_goals[a] is None:
                             g, _, _, _ = policy.get_manager_action_and_value(
                                 obs_t, state_t, role_t
                             )
@@ -135,11 +135,42 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
                             obs_t, state_t, role_t, current_goals[a], mask_t
                         )
                         actions[a] = int(action.item())
-                    elif p_type in ["CoopAgent", "CoopTopDownAgent"]:
-                        action, _, _, _, _ = policy.get_action_and_value(
-                            obs_t, state_t, role_t, mask_t, active_experts
+                    elif p_type == "CoopAgent" or p_type == "CoopTopDownAgent":
+                        active_k = getattr(
+                            policy,
+                            "active_experts",
+                            len(getattr(policy, "experts", [None] * 8)),
                         )
-                        actions[a] = int(action.item())
+                        _, _, _, _, chosen_expert = policy.get_action_and_value(
+                            obs_t, state_t, role_t, mask_t, active_k
+                        )
+                        current_goals[a] = chosen_expert
+
+                        if greedy:
+                            x_actor = torch.cat(
+                                [
+                                    torch.flatten(obs_t, start_dim=1).float(),
+                                    role_t.float(),
+                                ],
+                                dim=1,
+                            )
+                            logits = policy.experts[int(current_goals[a].item())].actor(
+                                x_actor
+                            )
+                            masked_logits = torch.where(
+                                mask_t == 1, logits, torch.full_like(logits, -1e9)
+                            )
+                            actions[a] = int(masked_logits.argmax(dim=-1).item())
+                        else:
+                            action, _, _, _, _ = policy.get_action_and_value(
+                                obs_t,
+                                state_t,
+                                role_t,
+                                mask_t,
+                                active_k,
+                                expert_idx=current_goals[a],
+                            )
+                            actions[a] = int(action.item())
                 continue
 
             legal = np.argwhere(mask == 1).ravel()

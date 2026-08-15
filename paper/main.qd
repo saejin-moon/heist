@@ -14,3 +14,5 @@
 .include {04_curriculum_and_spatial_step_scaling.qd}
 .include {05_experimental_metrics_and_evaluation.qd}
 .include {06_dynamic_skill_routing.qd}
+.include {07_references.qd}
+.include {08_appendix_extended_baselines.qd}

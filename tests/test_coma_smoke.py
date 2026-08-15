@@ -8,13 +8,15 @@ from ppo_utils import compute_counterfactual_advantage
 
 def test_coma_critic_shape():
     state_dim = 135
-    critic = ComaCritic(state_dim=state_dim, n_agents=4, action_dim=6)
+    critic = ComaCritic(state_dim=state_dim, n_agents=4, action_dim=ACTION_DIM)
 
     state = torch.randn(2, state_dim)
     other_actions = torch.zeros(2, (N_AGENTS - 1) * ACTION_DIM)
 
     q_vals = critic(state, other_actions)
-    assert q_vals.shape == (2, 6), f"Expected Q-values shape (2, 6), got {q_vals.shape}"
+    assert q_vals.shape == (2, ACTION_DIM), (
+        f"Expected Q-values shape (2, {ACTION_DIM}), got {q_vals.shape}"
+    )
 
 
 def test_coma_forward_and_advantage():
@@ -29,7 +31,9 @@ def test_coma_forward_and_advantage():
     other_actions = torch.zeros(2, (N_AGENTS - 1) * ACTION_DIM).float()
 
     q_vals = agent.critic(state, other_actions)
-    assert q_vals.shape == (2, 6), f"Expected Q-values shape (2, 6), got {q_vals.shape}"
+    assert q_vals.shape == (2, ACTION_DIM), (
+        f"Expected Q-values shape (2, {ACTION_DIM}), got {q_vals.shape}"
+    )
 
     scout_obs = (
         torch.as_tensor(obs["scout"]["observation"]).unsqueeze(0).repeat(2, 1, 1)
@@ -42,7 +46,7 @@ def test_coma_forward_and_advantage():
     )
     assert act.shape == (2,)
     assert log_p.shape == (2,)
-    assert probs.shape == (2, 6)
+    assert probs.shape == (2, ACTION_DIM)
     assert ent.shape == (2,)
 
     adv, q_taken = compute_counterfactual_advantage(probs, q_vals, act, scout_mask)

@@ -53,7 +53,7 @@ class Args:
     anneal_lr: bool = True
     gamma: float = 0.99
     num_minibatches: int = 4
-    update_epochs: int = 4
+    update_epochs: int = 1
     ent_coef: float = 0.01
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
@@ -360,19 +360,17 @@ def train(args: Args):  # noqa: C901
 
             # CAR intrinsic reward bonus
             if getattr(args, "car_coef", 0.0) > 0.0:
-                new_masks = next_obs["_stacked"]["action_mask"]
-                old_masks = mask_all.cpu().numpy()
-                delta_masks = new_masks.sum(axis=-1) - old_masks.sum(axis=-1)
                 for env_idx in range(args.num_envs):
-                    for idx_a, a in enumerate(AGENTS):
-                        if infos[env_idx].get(a, {}).get("car_unlocked", False):
-                            bonus = 0.0
-                            for idx_j in range(len(AGENTS)):
-                                if idx_j != idx_a:
-                                    bonus += max(
-                                        0.0, float(delta_masks[idx_j, env_idx])
-                                    )
-                            rewards[a][env_idx] += args.car_coef * bonus
+                    for a in AGENTS:
+                        if (
+                            isinstance(infos, list)
+                            and env_idx < len(infos)
+                            and infos[env_idx].get(a, {}).get("car_unlocked", False)
+                            or isinstance(infos, dict)
+                            and a in infos
+                            and infos[a].get("car_unlocked", False)
+                        ):
+                            rewards[a][env_idx] += args.car_coef
 
             r_int_tensor = None
             if rnd_module is not None:

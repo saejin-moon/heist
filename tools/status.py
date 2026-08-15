@@ -242,11 +242,21 @@ def check_models_status(
     run_id: str = "N/A",
     models_to_show: list[str] = None,
 ) -> list[dict]:
-    """Gather status across models dynamically, finding their current stage."""
+    """Gather status across models dynamically, aggregating seed metrics and summary.json."""
     results = []
 
     # Use parsed models if available, otherwise fallback to all models
     models_list = models_to_show if models_to_show else MODEL_NAMES
+
+    # Load authoritative multi-seed evaluation summary if available
+    summary_data = {}
+    if run_id and run_id != "N/A":
+        summary_file = RESULTS_DIR / run_id / "summary.json"
+        if summary_file.is_file():
+            try:
+                summary_data = json.loads(summary_file.read_text())
+            except Exception:
+                pass
 
     for name in models_list:
         possible_candidates = []
@@ -268,7 +278,11 @@ def check_models_status(
         if possible_candidates:
             # Sort by modification time to find the most recent stage log for this model
             candidates_sorted = sorted(
-                [p for p in possible_candidates if p.is_file()],
+                [
+                    p
+                    for p in possible_candidates
+                    if p.is_file() and not p.name.startswith("eval_")
+                ],
                 key=lambda x: x.stat().st_mtime,
             )
             if candidates_sorted:
@@ -277,11 +291,9 @@ def check_models_status(
                 m_stg = re.search(r"_s(\d+)\.log$", log_path.name)
                 if m_stg:
                     active_stage = int(m_stg.group(1))
-        is_log_fresh = log_path is not None and (
-            active_run_start == 0.0
-            or log_mtime >= active_run_start - 60
-            or (time.time() - log_mtime) < 300
-        )
+
+        stage_key = f"stage_{active_stage}"
+        summary_runs = summary_data.get(stage_key, {}).get(name, [])
 
         possible_ckpt_names = [
             f"{name}_st_s{active_stage}",
@@ -298,7 +310,7 @@ def check_models_status(
                 is_ckpt_fresh = (
                     active_run_start == 0.0
                     or marker_mtime >= active_run_start - 60
-                    or (is_log_fresh and abs(marker_mtime - log_mtime) < 300)
+                    or (log_path and abs(marker_mtime - log_mtime) < 300)
                 )
                 if is_ckpt_fresh:
                     ckpt_complete = True
@@ -316,46 +328,111 @@ def check_models_status(
         runtime_str = "-"
         status = "QUEUED"
 
+        # 1. Prefer summary.json if multi-seed evaluation is complete for this stage & model
+        if summary_runs:
+            win_rates = [
+                r["metrics"]["win_rate"]
+                for r in summary_runs
+                if "metrics" in r and "win_rate" in r["metrics"]
+            ]
+            returns = [
+                r["metrics"]["mean_return"]
+                for r in summary_runs
+                if "metrics" in r and "mean_return" in r["metrics"]
+            ]
+            if win_rates:
+                win_rate_str = f"{sum(win_rates) / len(win_rates):.3f}"
+            if returns:
+                mean_ret = sum(returns) / len(returns)
+                reward_str = f"{mean_ret:+.2f}"
+
+        # 2. Parse live training logs across active seed files
+        is_log_fresh = log_path is not None and (
+            active_run_start == 0.0
+            or log_mtime >= active_run_start - 60
+            or (time.time() - log_mtime) < 300
+        )
+
         if is_log_fresh and log_path and log_path.is_file():
             mtime_diff = time.time() - log_mtime
-            lines = log_path.read_text(errors="replace").splitlines()
-            if lines:
+
+            # Gather all seed logs matching current stage
+            seed_logs = [
+                p
+                for p in possible_candidates
+                if p.name.endswith(f"_s{active_stage}.log")
+                and not p.name.startswith("eval_")
+            ]
+            if not seed_logs:
+                seed_logs = [log_path]
+
+            steps_list = []
+            sps_list = []
+            log_win_rates = []
+            log_rewards = []
+            has_finished = False
+
+            for s_log in seed_logs:
+                lines = s_log.read_text(errors="replace").splitlines()
+                if not lines:
+                    continue
+                if any("training done" in line_text for line_text in lines[-5:]):
+                    has_finished = True
+
                 for line_str in reversed(lines):
+                    # Check for evaluation summary lines first (clean evaluation return)
+                    m_eval = re.search(
+                        r"eval@\d+:\s*win_rate=([-\d.]+)\s*return=([-\d.]+)", line_str
+                    )
+                    if m_eval:
+                        if not log_win_rates and win_rate_str == "-":
+                            log_win_rates.append(float(m_eval.group(1)))
+                        if not log_rewards and reward_str == "-":
+                            log_rewards.append(float(m_eval.group(2)))
+
                     m_prog = re.search(
-                        r"step=(\d+)(?:.*?\bsps=(\d+))?(?:.*?\bwin_rate=([-\d.]+))?(?:.*?\b(?:mean_reward|ep_reward)=([-\d.]+))?",
+                        r"step=(\d+)(?:.*?\bsps=(\d+))?(?:.*?\bwin_rate=([-\d.]+))?(?:.*?\b(?:mean_reward|ext_reward|ep_reward)=([-\d.]+))?",
                         line_str,
                     )
                     if m_prog and m_prog.group(1):
-                        if step_str == "-":
-                            step_str = m_prog.group(1)
-                        if sps_str == "-" and m_prog.group(2):
-                            sps_str = m_prog.group(2)
-                        if win_rate_str == "-" and m_prog.group(3):
-                            win_rate_str = f"{float(m_prog.group(3)):.3f}"
-                        if reward_str == "-" and m_prog.group(4):
-                            reward_str = f"{float(m_prog.group(4)):.3f}"
+                        steps_list.append(int(m_prog.group(1)))
+                        if m_prog.group(2):
+                            sps_list.append(int(m_prog.group(2)))
+                        if (
+                            win_rate_str == "-"
+                            and not log_win_rates
+                            and m_prog.group(3)
+                        ):
+                            log_win_rates.append(float(m_prog.group(3)))
+                        if reward_str == "-" and not log_rewards and m_prog.group(4):
+                            log_rewards.append(float(m_prog.group(4)))
+                        break
+
                     m_done = re.search(
                         r"training done in ([\d.]+s|[\d.]+ min)", line_str
                     )
                     if m_done and runtime_str == "-":
                         runtime_str = m_done.group(1)
 
-                if runtime_str == "-" and is_log_fresh:
-                    # Calculate active duration if running
-                    try:
-                        elapsed = time.time() - log_path.stat().st_mtime
-                        # Approximate creation by reading the first log line if we had timestamps,
-                        # or just fallback to mtime if it hasn't finished. Actually ctime is better.
-                        elapsed = time.time() - log_path.stat().st_ctime
-                        mins = int(elapsed // 60)
-                        secs = int(elapsed % 60)
-                        runtime_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
-                    except Exception:
-                        pass
+            if steps_list:
+                step_str = str(max(steps_list))
+            if sps_list:
+                sps_str = str(sum(sps_list))
+            if win_rate_str == "-" and log_win_rates:
+                win_rate_str = f"{sum(log_win_rates) / len(log_win_rates):.3f}"
+            if reward_str == "-" and log_rewards:
+                mean_r = sum(log_rewards) / len(log_rewards)
+                reward_str = f"{mean_r:.3f}"
 
-            has_finished = lines and any(
-                "training done" in line_str for line_str in lines[-5:]
-            )
+            if runtime_str == "-":
+                try:
+                    elapsed = time.time() - min([p.stat().st_ctime for p in seed_logs])
+                    mins = int(elapsed // 60)
+                    secs = int(elapsed % 60)
+                    runtime_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+                except Exception:
+                    pass
+
             is_recent = mtime_diff < 300 or len(running_pids) > 0
             if (is_recent or len(running_pids) > 0) and not has_finished:
                 status = "RUNNING"

@@ -90,12 +90,7 @@ class RNDModule:
             self.count += batch_count
             delta = batch_mean - self.r_mean
             self.r_mean += delta * batch_count / self.count
-            self.r_std = max(
-                1e-4,
-                np.sqrt(
-                    self.r_std**2 + (batch_std**2 + delta**2 * batch_count / self.count)
-                ),
-            )
+            self.r_std = max(1e-4, 0.99 * self.r_std + 0.01 * batch_std)
 
             normalized_r = r_int / (self.r_std + 1e-8)
             return normalized_r

@@ -47,7 +47,7 @@ def test_comm_cir_influence_matrix():
     vec.close()
 
 
-def test_mappo_cir_influence_matrix():
+def test_mappo_cir_influence_scalar():
     vec = VectorEnv(2, config={"map_size": (11, 11), "guard_count": 0}, base_seed=0)
     vec.reset()
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -55,14 +55,9 @@ def test_mappo_cir_influence_matrix():
     policy = MappoAgent(state_dim=vec.state_dim).to(device)
     state_t = torch.as_tensor(vec.state, device=device)
 
-    routing = policy.get_influence_matrix(state_t)
+    routing = policy.get_influence_scalar(state_t)
 
-    assert routing.shape == (2, len(AGENTS), len(AGENTS))
-
-    for i in range(len(AGENTS)):
-        assert torch.allclose(
-            routing[:, i, i], torch.zeros(2, device=device), atol=1e-5
-        )
+    assert routing.shape == (2, len(AGENTS))
 
     row_sums = routing.sum(dim=-1)
     assert torch.allclose(row_sums, torch.ones_like(row_sums, device=device), atol=1e-4)

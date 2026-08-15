@@ -28,6 +28,7 @@ GUARD = 5  # rule-based adversary (dynamic entity)
 ALLY = 6  # other agent (dynamic entity)
 CAMERA = 7  # security camera (line-of-sight alarm source)
 DOOR = 8  # locked door (blocks movement; hacker can bypass)
+WAYPOINT = 9  # directional beacon for tagged objectives outside local vision box
 
 # ---------------------------------------------------------------------------
 # Actions
@@ -44,6 +45,7 @@ LEFT = 2
 RIGHT = 3
 WAIT = 4
 INTERACT = 5
+BREACH = 6
 
 ACTION_DELTAS = {
     UP: (-1, 0),
@@ -78,7 +80,7 @@ ROLE_ONEHOT_ARRAYS = {a: np.array(ROLE_ONEHOT[a], dtype=np.int8) for a in AGENTS
 # ---------------------------------------------------------------------------
 MAP_SIZE = (50, 50)  # default; overridable via env config
 OBSERVATION_SIZE = (7, 7)  # agent local view window
-ACTION_SPACE_SIZE = 6  # |A| for every agent
+ACTION_SPACE_SIZE = 7  # |A| for every agent
 TILE_SIZE = 20  # renderer pixels per tile
 SCOUT_VISION_RADIUS = 8  # scout reveals this far in every direction
 AGENT_VISION_RADIUS = 3  # every agent sees/reveals this local radius
@@ -142,7 +144,7 @@ NEUTRALIZE_TURNS = 8  # turns a guard stays neutralized
 # ---------------------------------------------------------------------------
 ALARM_BREACH = 30.0  # instant global-alarm cost of a wall breach
 BREACH_RADIUS = 10  # guards within this range repath to the breach
-EXTRACTOR_BURDEN_TURNS = 2  # loot-carrying extractor moves 1 tile per N turns
+EXTRACTOR_BURDEN_TURNS = 1  # loot-carrying extractor moves 1 tile per N turns
 ALARM_NEUTRALIZE_DELAY = 15  # turns until command notices a missing guard
 GUARD_LOS_RANGE = 8  # directional line-of-sight reach for guards
 SEARCH_RADIUS = 5  # tiles around a last-known position to sweep

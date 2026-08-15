@@ -1,10 +1,10 @@
 """
-Smoke test for MARC (Micro-Macro Asymmetric Retroactive Causal-chain) advantage computation.
+Smoke test for MARC (Marginal Action Retroactive Credit) advantage computation.
 
 Validates that:
 1. compute_marc_advantages produces correct tensor shapes [N_AGENTS, T, B] for advantages and returns.
 2. Full MARC, marc_no_shielding, marc_no_macro, and marc_no_affordance compute correctly.
-3. Asymmetric Failure Shielding protects upstream enablers on team failure.
+3. Binary success masking protects upstream enablers on team failure.
 
 Run with: uv run pytest tests/test_marc_smoke.py
 """
@@ -107,7 +107,7 @@ def test_marc_advantages_shape_and_ablation_modes():
     assert adv_no_aff.shape == (num_agents, num_steps, num_envs)
 
 
-def test_asymmetric_failure_shielding():
+def test_binary_success_masking():
     # In a losing environment (rewards <= 0), an enabler (car_events=True) should be shielded
     num_agents = 4
     num_steps = 4

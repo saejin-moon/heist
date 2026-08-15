@@ -68,6 +68,8 @@ def main():
         torch.backends.cudnn.deterministic = True
 
     env_config = parse_env_config(args.env_config)
+    map_w, map_h = env_config.get("map_size", (11, 11))
+    map_diag = float(np.sqrt(map_w**2 + map_h**2))
     envs = VectorEnv(args.num_envs, config=env_config, base_seed=args.seed)
 
     next_obs, next_state = envs.reset(seed=args.seed)
@@ -100,6 +102,7 @@ def main():
     w_actions = torch.zeros((args.num_steps, N_AGENTS, args.num_envs)).to(device)
     w_logprobs = torch.zeros((args.num_steps, N_AGENTS, args.num_envs)).to(device)
     w_rewards = torch.zeros((args.num_steps, N_AGENTS, args.num_envs)).to(device)
+    ext_rewards = torch.zeros((args.num_steps, N_AGENTS, args.num_envs)).to(device)
     w_dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     w_values = torch.zeros((args.num_steps, N_AGENTS, args.num_envs)).to(device)
 
@@ -207,15 +210,23 @@ def main():
                         else (0, 0)
                     )
 
-                    # MAHIRO Intrinsic Reward Calculation (scaled to map bounds)
-                    g_x = current_goals[i, e, 0].item() * 50.0
-                    g_y = current_goals[i, e, 1].item() * 50.0
-                    intrinsic_reward = -np.sqrt(
-                        (pos[0] - g_x) ** 2 + (pos[1] - g_y) ** 2
+                    # MAHIRO Intrinsic Reward Calculation (mapped to map grid bounds and normalized)
+                    g_x = np.clip(
+                        (current_goals[i, e, 0].item() + 1.0) * 0.5 * map_w,
+                        0.0,
+                        float(map_w),
                     )
+                    g_y = np.clip(
+                        (current_goals[i, e, 1].item() + 1.0) * 0.5 * map_h,
+                        0.0,
+                        float(map_h),
+                    )
+                    dist = np.sqrt((pos[0] - g_x) ** 2 + (pos[1] - g_y) ** 2)
+                    intrinsic_reward = -(dist / max(1.0, map_diag))
 
                     # Worker receives extrinsic + intrinsic
                     w_rewards[step, i, e] = base_reward + 0.05 * intrinsic_reward
+                    ext_rewards[step, i, e] = base_reward
 
                     # Manager ONLY receives extrinsic (standard MAHIRO)
                     macro_reward_acc[i, e] += base_reward
@@ -402,8 +413,8 @@ def main():
 
         if update % args.eval_every == 0 or update == num_updates:
             sps = int(global_step / (time.time() - start_time))
-            mean_reward = w_rewards.sum(0).mean().item()
-            win_rate = (w_rewards[:, 0, :] > 5.0).any(dim=0).float().mean().item()
+            mean_reward = ext_rewards.mean().item()
+            win_rate = (ext_rewards[:, 0, :] > 5.0).any(dim=0).float().mean().item()
             print(
                 f"[{run_name}] update={update} step={global_step} sps={sps} win_rate={win_rate:.3f} mean_reward={mean_reward:.3f}"
             )

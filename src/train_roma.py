@@ -420,7 +420,7 @@ def main():
 
         if update % args.eval_every == 0 or update == num_updates:
             sps = int(global_step / (time.time() - start_time))
-            mean_reward = w_rewards.sum(0).mean().item()
+            mean_reward = w_rewards.mean().item()
             win_rate = (w_rewards[:, 0, :] > 5.0).any(dim=0).float().mean().item()
             print(
                 f"[{run_name}] update={update} step={global_step} sps={sps} win_rate={win_rate:.3f} mean_reward={mean_reward:.3f}"

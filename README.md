@@ -22,7 +22,7 @@ Standard multi-agent RL algorithms (e.g., standard MAPPO, QMIX, or COMA) rely on
 
 ---
 
-## Key Environment Features & Refinements
+## Key Environment Mechanics & Refinements
 
 ### 1. Refined & Balanced Reward System
 * **Step Time Bleed:** `-0.01` per step to discourage loafing.
@@ -33,10 +33,10 @@ Standard multi-agent RL algorithms (e.g., standard MAPPO, QMIX, or COMA) rely on
 
 ### 2. Dynamic Side-Tasks Extension (`--side-tasks`)
 When launched with the `--side-tasks` CLI trigger, agents gain role-specific secondary capabilities during waiting phases:
-* **Scout (Decoy Noise Ping):** Emits a sound distraction in open space, drawing nearby guards within 6 tiles to search the Scout's location.
+* **Scout (Decoy Noise Ping):** Emits a sound distraction in open space to draw nearby guards within 6 tiles to search the Scout's location.
 * **Hacker (Door Lock Override):** Force-unlocks adjacent doors permanently (`DOOR` $\rightarrow$ `EMPTY`) to clear fast transit routes for the team.
 * **Muscle (Shortcut Wall Breach):** Destroys internal walls (`WALL` $\rightarrow$ `EMPTY`) to create custom escape corridors.
-* **Extractor (Beacon Pre-Calibration):** Calibrates the extraction beacon early, dropping the final extraction countdown from 10 steps down to **3 steps**.
+* **Extractor (Beacon Pre-Calibration):** Calibrates the extraction beacon early, which drops the final extraction countdown from 10 steps down to **3 steps**.
 
 ---
 
@@ -55,28 +55,34 @@ HEIST evaluates a 9-baseline benchmark suite alongside our flagship novel algori
 | **`loo`** | Leave-One-Out (C3-Style) | Marginal counterfactual baseline isolating $i$-th agent's contribution |
 | **`ate`** | Average Treatment Effect | Contrastive advantage against explicit WAIT null action ($a_{\text{WAIT}} = 4$) |
 | **`macca`** | Dynamic Bayesian Graph | Dynamic Bayesian Network (DBN) factorizing global state transitions |
-| **`marc`** | **Novel Flagship Algorithm** | **Micro-Macro Asymmetric Retroactive Causal-chain** with failure shielding |
-| **`marc_no_shielding`** | MARC Ablation | MARC without Asymmetric Failure Shielding |
+| **`marc`** | **Novel Flagship Algorithm** | **Marginal Action Retroactive Credit** with binary success masking |
+| **`marc_no_shielding`** | MARC Ablation | MARC without binary success masking |
 | **`marc_no_macro`** | MARC Ablation | MARC without Macro Weighting ($\Omega_t = 1.0$) |
-| **`marc_no_affordance`** | MARC Ablation | MARC without Micro Affordance Delta Boost |
+| **`marc_no_affordance`** | MARC Ablation | MARC without local affordance delta boost |
+| **`charm`** | Hierarchical RL | Continuous Hierarchical Agent with Top-Down Manager |
+| **`roma`** | Hierarchical RL | Role-Oriented Multi-Agent reinforcement learning |
+| **`mahiro`** | Hierarchical RL | Multi-Agent Hierarchical reinforcement learning |
+| **`lrs`** | Hierarchical RL | Latent Role Space baseline |
+| **`coop`** | **Novel Flagship** | **Confidence-Oriented Option Pool** with structural affordances |
+| **`coop_fixed`** | CO-OP Ablation | CO-OP without dynamic spawning (fixed pool) |
+| **`coop_no_car`** | CO-OP Ablation | CO-OP without Causal Affordance Credit |
+| **`coop_top_down`** | CO-OP Ablation | CO-OP using traditional Top-Down Manager instead of voting |
 
 ---
 
-## The Flagship Novel Algorithm: MARC & Ablations
+## The MARC Architecture
 
-**MARC** (*Micro-Macro Asymmetric Retroactive Causal-chain*) solves Causal Credit Dilution by decomposing credit assignment into a multi-scale Micro-Macro structure:
-
-1. **Micro Credit ($\mu_{i, t}$):** Measures local action interaction impact using Action Affordance Deltas ($\Delta \text{Mask}_j(s_t, a_{i, t})$).
-2. **Macro Weighting ($\Omega_t$):** Multiplicatively scales micro credit by global alarm ($A_t$) and team outcome ($R_T$):
-   $$\Omega_t = \Phi_{\text{outcome}}(R_T) \cdot \exp\left( -\alpha_{\text{alarm}} \frac{A_t}{A_{\text{max}}} \right)$$
-3. **Asymmetric Failure Shielding:** On team failure, negative credit targets direct failure triggers while shielding upstream enabling actions ($\Omega_t = 1.0$ for enablers).
-4. **Backward Retroactive Causal Pass ($t = T \to 0$):** Propagates joint Micro-Macro advantages backward through time:
+The **MARC (Marginal Action Retroactive Credit)** model resolves the Sparsity Wall via three mechanics:
+1. **Local Affordance Deltas:** Local action advantages are boosted when an agent's direct interaction triggers an environment state-change (e.g., neutralizing a guard).
+2. **Macro Weighting:** Global reward allocation decays exponentially relative to the environmental alarm level, naturally penalizing noisy/inefficient runs even if they eventually succeed.
+3. **Binary Success Masking:** On team failure, negative credit targets direct failure triggers while shielding upstream enabling actions ($\Omega_t = 1.0$ for enablers).
+4. **Retroactive Advantage Propagation ($t = T \to 0$):** Propagates advantages backward through time:
    $$\hat{A}_{i, t}^{\text{MARC}} = \mu_{i, t} \cdot \Omega_t + \gamma_{\text{causal}} \hat{A}_{i, t+1}^{\text{MARC}}$$
 
 ### MARC Component Ablations
 - **`marc_no_shielding`:** Disables enabler shielding on team failure (tests necessity of shielding enablers from penalty leakage).
 - **`marc_no_macro`:** Disables macro weighting ($\Omega_t = 1.0$) (tests necessity of global alarm and win/loss scaling).
-- **`marc_no_affordance`:** Disables micro affordance boost ($\beta_{\text{affordance}} = 0.0$) (tests necessity of action-mask expansion feedback).
+- **`marc_no_affordance`:** Disables local affordance boost ($\beta_{\text{affordance}} = 0.0$) (tests necessity of action-mask expansion feedback).
 
 ---
 

@@ -2,7 +2,6 @@
 Smoke tests for exploration modules (RND and CountExplorationModule).
 """
 
-import numpy as np
 import torch
 
 from constants import OBSERVATION_SIZE
@@ -26,4 +25,3 @@ def test_rnd_module_shapes_and_update():
     loss = rnd.update(obs)
     assert isinstance(loss, float), "Update should return float loss"
     assert loss >= 0.0, "Loss must be non-negative"
-

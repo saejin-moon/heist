@@ -1,0 +1,81 @@
+# 8. Appendix: Extended Baseline Formulations
+
+During the architectural development of HEIST, we evaluated a comprehensive suite of 16 additional historical baselines and custom ablations. Their theoretical formulations are preserved here for rigorous reproducibility.
+
+## 8.1 Model 1: IPPO (Independent PPO)
+
+IPPO treats each agent $ i \in \mathcal{N} $ as an independent learning agent. It ignores non-stationarity. The policy network $ \pi_{\theta_i}(a_i|o_i) $ maps local obs $ o_i \in \mathbb{R}^{53} $ to action logits over $ \mathcal{A}_i $. The value network $ V_{\phi_i}(o_i) $ acts as a local critic. It estimates state value from $ o_i $.
+
+The PPO clipped objective is:
+
+$ L_i^{\text{CLIP}}(\theta_i) = \hat{\mathbb{E}}_t \left[ \min \left( r_{t,i}(\theta_i) \hat{A}_{t,i}, \text{clip}(r_{t,i}(\theta_i), 1-\epsilon, 1+\epsilon) \hat{A}_{t,i} \right) \right] $
+
+We calculate $ r_{t,i}(\theta_i) = \frac{\pi_{\theta_i}(a_{t,i}|o_{t,i})}{\pi_{\theta_i}^{\text{old}}(a_{t,i}|o_{t,i})} $. We compute $ \hat{A}_{t,i} $ via GAE($ \lambda = 0.95 $).
+
+---
+
+## 8.2 Model 4: MAPPO + CAR (Causal Affordance Credit)
+
+MAPPO_CAR injects action-mask affordance delta feedback into agent rewards:
+
+$ r_{t,i}^{\text{CAR}} = r_{t,i} + \beta_{\text{CAR}} \sum_{j \neq i} \Delta \text{Mask}_j(s_t, a_{t,i}) $
+
+The function $ \Delta \text{Mask}_j(s_t, a_{t,i}) = |\text{Mask}_j(s_{t+1})| - |\text{Mask}_j(s_t)| $ measures how agent $ i $'s action expanded available action affordances for teammate $ j $.
+
+---
+
+## 8.3 Model 5: MAPPO + CIR (Causal Advantage Routing)
+
+MAPPO_CIR routes advantage estimation based on causal contribution. It does not use uniform spatial sharing:
+
+$ \hat{A}_{t,i}^{\text{CIR}} = \hat{A}_t^{\text{central}} \cdot \psi_i(s_t) $
+
+The routing function $ \psi_i(s_t) $ measures Counterfactual Feature Ablation. It calculates the variance of the centralized value function by zero-masking agent $i$'s position coordinates within the global state vector.
+
+---
+
+## 8.4 Model 6: LOO (Leave-One-Out Marginal Counterfactual)
+
+LOO implements a Leave-One-Out marginal counterfactual advantage:
+
+$ A_i^{\text{LOO}}(s, \mathbf{a}) = Q_i(s, a_{-i}, a_i) - \frac{1}{|\mathcal{A}_{\text{legal}}|-1} \sum_{a' \neq a_i} Q_i(s, a_{-i}, a') $
+
+LOO isolates the marginal contribution without taking expectations over uncalibrated policy distributions $ \pi_i(a_i'|o_i) $. It reduces counterfactual variance compared to COMA.
+
+---
+
+## 8.5 Model 7: ATE (Average Treatment Effect Contrastive PPO)
+
+ATE measures the direct treatment effect of executing an action $ a_i $. It compares it to the explicit null action ($ a_{\text{WAIT}} = 4 $):
+
+$ A_i^{\text{ATE}}(s, a_i) = Q_i(s, a_{-i}, a_i) - Q_i(s, a_{-i}, a_{\text{WAIT}}) $
+
+---
+
+## 8.6 Model 8: MACCA (Multi-Agent Dynamic Bayesian Causal Graph)
+
+MACCA factorizes global state transitions into a Dynamic Bayesian Network (DBN). It measures inter-agent influence graphs:
+
+$ \hat{A}_{t,i}^{\text{MACCA}} = \hat{A}_{t,i}^{\text{central}} \cdot \left[ 1 + \eta_{\text{MACCA}} \sum_{j \neq i} P_{\text{DBN}}(s_{j, t+1} \mid s_t, a_{i, t}) \right] $
+
+---
+
+## 8.7 Extended Hierarchical MARL (H-MARL) Baselines
+
+We developed and evaluated three additional canonical H-MARL baselines using a Manager operating at a macro-step frequency $ c $ and a Worker operating at the environment frequency.
+
+### 8.7.1 CHARM (Causal Hierarchical Asymmetric Routing & Messaging)
+CHARM's Manager outputs a continuous spatial goal $ g \in \mathbb{R}^2 $. The Worker learns from the sparse extrinsic reward $ R_{ext} $. We send dense upward credit to the Manager:
+$$$
+R_{Manager} = R_{ext} + \lambda \cdot R_{affordance}
+$$$
+This prevents causal cycle traps. It densifies the macro-gradient.
+
+### 8.7.2 ROMA (Role-Oriented Multi-Agent RL)
+ROMA utilizes a discrete Manager that outputs a latent role $ z $. The Worker policy $ \pi(a | \tau, z) $ depends on this role. A KL-divergence regularizer enforces role diversity:
+$$$
+L_{ROMA} = L_{PPO} + \alpha_{KL} \sum_{i,j} D_{KL}( \pi( \cdot | \tau_i, z_i ) || \pi( \cdot | \tau_j, z_j ) )
+$$$
+
+### 8.7.3 LRS (Logical Reward Shaping)
+LRS structurally matches ROMA by outputting a discrete state phase $ \phi $. The Worker is rewarded for transitioning the global state to satisfy the logical preconditions of $ \phi $. It frames the problem as a progression through a Finite State Automaton.

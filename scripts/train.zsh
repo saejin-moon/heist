@@ -29,7 +29,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 WORKDIR="${HEIST_WORKDIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 REPO_URL="${HEIST_REPO_URL:-https://github.com/saejin-moon/heist.git}"
-CAMPAIGN_STEPS=299008
+CAMPAIGN_STEPS=120000
 CIR_COEF=0.5
 CAR_COEF=0.5
 STAGES="0"
@@ -91,6 +91,7 @@ USE_CKPT=0
 FROM_STAGE=""
 MAX_CPU_TEMP=""
 MAX_GPU_TEMP=""
+TAU_SPAWN="-0.50"
 
 while (( $# )); do
     case "$1" in
@@ -112,6 +113,7 @@ while (( $# )); do
         --rnd-coef)   USE_RND=1; RND_COEF="$2"; shift 2 ;;
         --side-tasks) ENABLE_SIDE_TASKS=1; shift ;;
         --run-prefix|--prefix) CUSTOM_PREFIX="$2"; shift 2 ;;
+        --tau-spawn)  TAU_SPAWN="$2"; shift 2 ;;
         --num-stages)
             N="$2"; shift 2
             STAGES=$(python3 -c "print(','.join(str(i) for i in range($N)))")
@@ -197,7 +199,7 @@ log "All checks passed!"
 # Smoke test (optional)
 if [ "$SKIP_SMOKE" -eq 0 ]; then
     log "running smoke test..."
-    STAGE0='{"map_size": [11, 11], "num_rooms_range": [1, 2], "guard_count": 0, "camera_count": 0, "door_count": 0, "max_steps": 60, "spawn_mode": "role"}'
+    STAGE0='{"map_size": [11, 11], "num_rooms_range": [1, 2], "guard_count": 0, "camera_count": 0, "door_count": 0, "max_steps": 100, "spawn_mode": "role"}'
     uv run python src/train_ippo.py --total-timesteps 2048 --num-envs 8 --num-steps 256 --no-save-model --env-config "$STAGE0" --exp-name smoke
     rm -rf runs/smoke_s0
 fi
@@ -264,7 +266,7 @@ run_campaign() {
 
         local steps_for_stage=$CAMPAIGN_STEPS
         if [ "$FAST_MODE" -eq 0 ]; then
-            steps_for_stage=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from curriculum import CURRICULUM; c = CURRICULUM[$stg]; area = c['map_size'][0] * c['map_size'][1]; entities = c['guard_count'] + c['camera_count'] + c['door_count']; mu = 1.0 + 0.10 * entities; print(int(round($CAMPAIGN_STEPS * (area / 121.0) * mu)))")
+            steps_for_stage=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from curriculum import get_stage_steps; print(get_stage_steps($stg, $CAMPAIGN_STEPS))")
         fi
 
         local cfg
@@ -513,22 +515,22 @@ run_campaign() {
                     task_pids[$next_t]=$launched_pid
                     ;;
                 coop)
-                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --tau-spawn "$TAU_SPAWN" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;
                 coop_fixed)
-                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ablation-fixed "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --tau-spawn "$TAU_SPAWN" --ablation-fixed "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;
                 coop_no_car)
-                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ablation-no-car "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --tau-spawn "$TAU_SPAWN" --ablation-no-car "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;
                 coop_top_down)
-                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ablation-top-down "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --tau-spawn "$TAU_SPAWN" --ablation-top-down "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;

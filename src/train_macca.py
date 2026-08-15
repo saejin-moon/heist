@@ -24,7 +24,7 @@ from constants import (
     OBSERVATION_SIZE,
 )
 from env import AGENTS, parse_env_config
-from model import MappoAgent
+from model import MaccaAgent
 from ppo_utils import (
     compute_gae,
     get_previous_stage_checkpoint,
@@ -121,7 +121,7 @@ def train(args):
     dummy_env = vec_env.envs[0]
     state_dim = dummy_env.state().shape[0]
 
-    policy = MappoAgent(state_dim).to(device)
+    policy = MaccaAgent(state_dim).to(device)
 
     if args.use_ckpt:
         ckpt_dir = get_previous_stage_checkpoint(run_name, exp_name=args.exp_name)
@@ -295,11 +295,22 @@ def train(args):
             }
 
             # Apply MACCA Dynamic Bayesian Network Causal Advantage Scaling
-            inf_matrix = policy.get_influence_matrix(
-                buffer_states.reshape(-1, state_dim)
+            b_states_flat = buffer_states.reshape(-1, state_dim)
+            next_states_b = torch.cat(
+                [buffer_states[1:], next_state_final.unsqueeze(0)], dim=0
+            ).reshape(-1, state_dim)
+            b_actions_tensor = (
+                torch.stack([buffers[a]["actions"] for a in AGENTS], dim=-1)
+                .reshape(-1, N_AGENTS)
+                .to(torch.int64)
             )
+
+            p_dbn = policy.get_dbn_probability(
+                b_states_flat, b_actions_tensor, next_states_b
+            )
+
             for i, a in enumerate(AGENTS):
-                macca_weight = 1.0 + args.macca_coef * inf_matrix[:, i, :].mean(dim=-1)
+                macca_weight = 1.0 + args.macca_coef * p_dbn[:, i]
                 b_advs[a] = b_advs[a] * macca_weight
 
         b_states = buffer_states.reshape(-1, state_dim)
@@ -324,7 +335,7 @@ def train(args):
                 state_mb = b_states[mb]
                 new_value = policy.get_value(state_mb).squeeze(-1)
 
-                for a in AGENTS:
+                for i_agent, a in enumerate(AGENTS):
                     obs_mb = b_obs[a][mb]
                     role_mb = b_role[a][mb]
                     mask_mb = b_mask[a][mb]
@@ -362,8 +373,37 @@ def train(args):
                     else:
                         v_loss = 0.5 * ((new_value - ret_mb) ** 2).mean()
 
+                    act_oh = torch.nn.functional.one_hot(
+                        act_mb, num_classes=ACTION_DIM
+                    ).float()
+                    pred_next = policy.dbn(torch.cat([state_mb, act_oh], dim=-1))
+                    next_state_mb = next_states_b[mb]
+
+                    # Calculate map grid length
+                    state_dim = state_mb.shape[-1]
+                    n_rem = state_dim - 6 - (2 * N_AGENTS)
+                    grid_len = 121
+                    for sq in (2500, 961, 441, 225, 121):
+                        if sq <= n_rem:
+                            grid_len = sq
+                            break
+                    agent_pos_start = 6 + grid_len + 2 * i_agent
+
+                    # Factorized DBN loss: only minimize error for global scalars (0:6) and agent's own position
+                    mse_global = torch.mean(
+                        (pred_next[:, :6] - next_state_mb[:, :6]) ** 2
+                    )
+                    mse_pos = torch.mean(
+                        (
+                            pred_next[:, agent_pos_start : agent_pos_start + 2]
+                            - next_state_mb[:, agent_pos_start : agent_pos_start + 2]
+                        )
+                        ** 2
+                    )
+                    dbn_loss = mse_global + mse_pos
+
                     tot_policy_loss = tot_policy_loss + pg_loss
-                    tot_value_loss = tot_value_loss + v_loss
+                    tot_value_loss = tot_value_loss + v_loss + dbn_loss
                     tot_entropy_loss = tot_entropy_loss + entropy.mean()
 
                 loss = (

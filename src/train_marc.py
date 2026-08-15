@@ -1,11 +1,11 @@
 """
-MARC (Micro-Macro Asymmetric Retroactive Causal-chain) trainer for HEIST.
+MARC (Marginal Action Retroactive Credit) trainer for HEIST.
 
 Implements the MARC algorithm:
 1. Micro Credit (\\mu_{i, t}): Local action interaction impact via Action Affordance Deltas (\\Delta Mask_j(s_t, a_{i,t})).
 2. Macro Weighting (\\Omega_t): Multiplicative global alarm penalty exp(-\alpha A_t / A_max) and outcome factor.
-3. Asymmetric Failure Shielding: Negative credit targets direct failure triggers while shielding upstream enablers.
-4. Backward Retroactive Pass (t = T -> 0): Propagates Micro-Macro causal advantages backward over trajectory.
+3. Binary Success Masking: Negative credit targets direct failure triggers while shielding upstream enablers.
+4. Retroactive advantage propagation (t = T -> 0): Propagates advantages backward over trajectory.
 """
 
 import argparse
@@ -137,7 +137,7 @@ def compute_marc_advantages(
     no_shielding=False,
     no_macro=False,
 ):
-    r"""Computes Micro-Macro Asymmetric Retroactive Causal-chain (MARC) advantages.
+    r"""Computes Marginal Action Retroactive Credit (MARC) advantages.
 
     Args:
         rewards: [N_AGENTS, T, B]
@@ -146,11 +146,12 @@ def compute_marc_advantages(
         truncs: [N_AGENTS, T, B]
         alarms: [T, B] Alarm values A_t in [0, 100]
         affordance_deltas: [N_AGENTS, T, B] Continuous mask expansion sum
-        no_shielding: If True, disables asymmetric failure shielding.
+        no_shielding: If True, disables binary success masking.
         no_macro: If True, disables macro weighting (\Omega_t = 1.0).
     """
     num_agents, num_steps, num_envs = rewards.shape
     base_adv = torch.zeros_like(rewards)
+    deltas = torch.zeros_like(rewards)
     marc_adv = torch.zeros_like(rewards)
 
     # 1. Standard GAE base computation
@@ -161,6 +162,7 @@ def compute_marc_advantages(
             next_val = values[:, step + 1]
         nonterminal = 1.0 - dones[:, step]
         delta = rewards[:, step] + gamma * next_val * nonterminal - values[:, step]
+        deltas[:, step] = delta
         if step == num_steps - 1:
             base_adv[:, step] = delta
         else:
@@ -176,7 +178,7 @@ def compute_marc_advantages(
         omega_t = torch.ones_like(rewards)
     else:
         macro_alarm_factor = torch.exp(-alpha_alarm * (alarms / ALARM_MAX))  # [T, B]
-        macro_outcome = torch.where(win, 1.0, -0.5)  # [B]
+        macro_outcome = torch.where(win, 1.0, 0.5)  # [B]
 
         alarm_fac = macro_alarm_factor.unsqueeze(0)  # [1, T, B]
         out_fac = macro_outcome.unsqueeze(0).unsqueeze(0)  # [1, 1, B]
@@ -193,7 +195,7 @@ def compute_marc_advantages(
     affordance_boost = (
         affordance_deltas * affordance_coef if affordance_coef > 0.0 else 0.0
     )
-    micro_credit = base_adv + affordance_boost
+    micro_credit = deltas + affordance_boost
     immediate_marc = micro_credit * omega_t  # [N_AGENTS, T, B]
 
     # Backward Causal Trace Propagation
@@ -347,14 +349,7 @@ def train(args):
                 alarms_step, dtype=torch.float32, device=device
             )
 
-            # Compute affordance deltas
-            delta_masks = np.zeros((len(AGENTS), args.num_envs), dtype=np.float32)
-            for j, a_j in enumerate(AGENTS):
-                new_m = np.sum(next_obs[a_j]["action_mask"], axis=-1)
-                old_m = np.sum(obs_dict[a_j]["action_mask"], axis=-1)
-                delta_masks[j] = new_m - old_m
-
-            for idx_a, a in enumerate(AGENTS):
+            for _idx_a, a in enumerate(AGENTS):
                 r_tensor = torch.tensor(rewards[a], dtype=torch.float32, device=device)
                 if rnd_module is not None:
                     rnd_r = rnd_module.compute_reward(buffers[a]["obs"][step])
@@ -370,16 +365,16 @@ def train(args):
 
                 affordance_val = np.zeros(args.num_envs, dtype=np.float32)
                 for env_idx in range(args.num_envs):
+                    # In VectorEnv, infos is a dict mapping a -> { "car_unlocked": ... } or a list of dicts.
                     if (
                         isinstance(infos, list)
                         and env_idx < len(infos)
                         and infos[env_idx].get(a, {}).get("car_unlocked", False)
+                        or isinstance(infos, dict)
+                        and a in infos
+                        and infos[a].get("car_unlocked", False)
                     ):
-                        for idx_j in range(len(AGENTS)):
-                            if idx_j != idx_a:
-                                affordance_val[env_idx] += max(
-                                    0.0, float(delta_masks[idx_j, env_idx])
-                                )
+                        affordance_val[env_idx] = 1.0
 
                 buffers[a]["affordance_deltas"][step] = torch.tensor(
                     affordance_val, dtype=torch.float32, device=device

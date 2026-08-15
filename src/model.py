@@ -27,9 +27,10 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions.categorical import Categorical
 
-from constants import N_AGENTS, OBSERVATION_SIZE
+from constants import ACTION_SPACE_SIZE, N_AGENTS, OBSERVATION_SIZE
 
 # local obs (7x7=49) + role one-hot (4) = 53
 LOCAL_INPUT_DIM = OBSERVATION_SIZE[0] * OBSERVATION_SIZE[1] + N_AGENTS  # 53
@@ -40,7 +41,7 @@ COMM_MESSAGE_DIM = 32  # per-agent message vector length
 # Comm agent input: obs (49) + role (4) + attended message (32) = 85
 COMM_INPUT_DIM = LOCAL_INPUT_DIM + COMM_MESSAGE_DIM  # 85
 
-ACTION_DIM = 6
+ACTION_DIM = ACTION_SPACE_SIZE
 HIDDEN_DIM = 64
 
 
@@ -138,8 +139,8 @@ class MappoAgent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), self.critic(state)
 
-    def get_influence_matrix(self, state):
-        """Calculates Non-Communicating Causal Influence Routing (CIR) matrix via Counterfactual Feature Ablation for MAPPO."""
+    def get_influence_scalar(self, state):
+        """Calculates Non-Communicating Causal Influence Routing (CIR) scalar weight via Counterfactual Feature Ablation for MAPPO."""
         B, state_dim = state.shape
         v_base = self.critic(state).squeeze(-1)  # [B]
 
@@ -153,10 +154,8 @@ class MappoAgent(nn.Module):
 
         agent_pos_start = 6 + grid_len
 
-        # Vectorized CFA: repeat state for all agents
-        state_alt = state.unsqueeze(1).repeat(
-            1, N_AGENTS, 1
-        )  # [B, N_AGENTS, state_dim]
+        # Vectorized CFA: expand state for all agents
+        state_alt = state.unsqueeze(1).expand(-1, N_AGENTS, -1).clone()
         for j in range(N_AGENTS):
             pos_col = agent_pos_start + 2 * j
             state_alt[:, j, pos_col : pos_col + 2] = 0.0
@@ -164,17 +163,43 @@ class MappoAgent(nn.Module):
         state_alt_flat = state_alt.view(B * N_AGENTS, state_dim)
         v_alt_flat = self.critic(state_alt_flat).squeeze(-1)
         v_alt = v_alt_flat.view(B, N_AGENTS)
+        diff = torch.abs(v_base.unsqueeze(1) - v_alt)
 
-        diff = torch.abs(v_base.unsqueeze(1) - v_alt)  # [B, N_AGENTS]
+        return F.softmax(diff, dim=-1)
 
-        influence_matrix = diff.unsqueeze(1).repeat(
-            1, N_AGENTS, 1
-        )  # [B, N_AGENTS, N_AGENTS]
-        mask = torch.eye(N_AGENTS, device=state.device).bool()
-        influence_matrix.masked_fill_(mask, 0.0)
 
-        row_sums = influence_matrix.sum(dim=-1, keepdim=True) + 1e-8
-        return influence_matrix / row_sums
+class MaccaAgent(MappoAgent):
+    """MACCA: Dynamic Bayesian Network Causal Advantage Scaling.
+
+    Inherits from MappoAgent to use the centralized critic, but adds a DBN
+    transition model to predict inter-agent state transitions.
+    """
+
+    def __init__(self, state_dim, hidden_dim=HIDDEN_DIM):
+        super().__init__(state_dim, hidden_dim)
+        self.dbn = nn.Sequential(
+            layer_init(nn.Linear(state_dim + ACTION_DIM, hidden_dim)),
+            nn.ReLU(),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            nn.ReLU(),
+            layer_init(nn.Linear(hidden_dim, state_dim), std=0.01),
+        )
+
+    def get_dbn_probability(self, state, actions, next_state):
+        """
+        Calculates P_DBN(s_{t+1} | s_t, a_{i,t}) for each agent i.
+        Returns P_DBN: [B, N_AGENTS]
+        """
+        B = state.shape[0]
+        p_dbn = torch.zeros((B, N_AGENTS), device=state.device)
+        for i in range(N_AGENTS):
+            act_oh = torch.nn.functional.one_hot(
+                actions[:, i], num_classes=ACTION_DIM
+            ).float()
+            pred_next = self.dbn(torch.cat([state, act_oh], dim=-1))
+            mse = torch.mean((pred_next - next_state) ** 2, dim=-1)
+            p_dbn[:, i] = torch.exp(-mse)
+        return p_dbn
 
 
 class QNetwork(nn.Module):
@@ -596,24 +621,28 @@ class ComaAgent(nn.Module):
             q_base_all = self.critic(state, other_oh_base)
             q_base = q_base_all.gather(1, actions_tensor[i].unsqueeze(1)).squeeze(1)
 
-            other_oh_alts = other_oh_base.unsqueeze(0).repeat(N_AGENTS - 1, 1, 1)
+            other_oh_alts = other_oh_base.unsqueeze(0).expand(N_AGENTS - 1, -1, -1)
             for idx in range(N_AGENTS - 1):
                 start_col = idx * ACTION_DIM
                 end_col = start_col + ACTION_DIM
                 other_oh_alts[idx, :, start_col:end_col] = 0.0
 
             state_repeated = (
-                state.unsqueeze(0).repeat(N_AGENTS - 1, 1, 1).view(-1, state.shape[1])
+                state.unsqueeze(0)
+                .expand(N_AGENTS - 1, -1, -1)
+                .reshape(-1, state.shape[1])
             )
-            other_oh_alts_flat = other_oh_alts.view(-1, other_oh_base.shape[1])
+            other_oh_alts_flat = other_oh_alts.reshape(-1, other_oh_base.shape[1])
 
             q_alt_all_flat = self.critic(state_repeated, other_oh_alts_flat)
-            actions_i_repeated = actions_tensor[i].repeat(N_AGENTS - 1)
+            actions_i_repeated = (
+                actions_tensor[i].unsqueeze(0).expand(N_AGENTS - 1, -1).reshape(-1)
+            )
             q_alt_flat = q_alt_all_flat.gather(
                 1, actions_i_repeated.unsqueeze(1)
             ).squeeze(1)
 
-            q_alt = q_alt_flat.view(N_AGENTS - 1, B)
+            q_alt = q_alt_flat.reshape(N_AGENTS - 1, B)
 
             idx = 0
             for j in range(N_AGENTS):
@@ -681,7 +710,7 @@ class ContinuousHierarchicalAgent(nn.Module):
 
     def get_manager_action_and_value(self, obs, state, role_id, action=None):
         x = torch.cat([torch.flatten(obs, start_dim=1), role_id], dim=1)
-        action_mean = self.manager_actor_mean(x)
+        action_mean = torch.tanh(self.manager_actor_mean(x))
         action_logstd = self.manager_actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
         probs = torch.distributions.Normal(action_mean, action_std)
@@ -807,21 +836,32 @@ class DiscreteHierarchicalAgent(nn.Module):
 class CoopExpert(nn.Module):
     def __init__(self, state_dim, hidden_dim=HIDDEN_DIM):
         super().__init__()
+        self.state_dim = state_dim
+        self.hidden_dim = hidden_dim
+        self.reset()
+
+    def reset(self, device=None):
+        if device is None:
+            try:
+                device = next(self.parameters()).device
+            except (StopIteration, RuntimeError):
+                device = torch.device("cpu")
         self.actor = nn.Sequential(
-            layer_init(nn.Linear(LOCAL_INPUT_DIM, hidden_dim)),
+            layer_init(nn.Linear(LOCAL_INPUT_DIM, self.hidden_dim)),
             nn.Tanh(),
-            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            layer_init(nn.Linear(self.hidden_dim, self.hidden_dim)),
             nn.Tanh(),
-            layer_init(nn.Linear(hidden_dim, ACTION_DIM), std=0.01),
+            layer_init(nn.Linear(self.hidden_dim, ACTION_DIM), std=0.01),
         )
         # Critic predicts value of state given this expert is acting
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(state_dim + 4, hidden_dim)),
+            layer_init(nn.Linear(self.state_dim + 4, self.hidden_dim)),
             nn.Tanh(),
-            layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            layer_init(nn.Linear(self.hidden_dim, self.hidden_dim)),
             nn.Tanh(),
-            layer_init(nn.Linear(hidden_dim, 1), std=1e-5),
+            layer_init(nn.Linear(self.hidden_dim, 1), std=1e-5),
         )
+        self.to(device)
 
 
 class CoopAgent(nn.Module):
@@ -830,7 +870,7 @@ class CoopAgent(nn.Module):
     Instead of a Manager, Experts vote via their Critic values (Bottom-Up Routing).
     """
 
-    def __init__(self, state_dim, max_experts=6, hidden_dim=HIDDEN_DIM):
+    def __init__(self, state_dim, max_experts=8, hidden_dim=HIDDEN_DIM):
         super().__init__()
         self.max_experts = max_experts
         self.experts = nn.ModuleList(
@@ -846,6 +886,7 @@ class CoopAgent(nn.Module):
         active_experts,
         action=None,
         expert_idx=None,
+        epsilon_expert=0.10,
     ):
         """
         active_experts: integer representing how many experts are currently spawned.
@@ -872,6 +913,12 @@ class CoopAgent(nn.Module):
         if expert_idx is None:
             # Bottom-Up Routing: select expert with max value
             chosen_expert = torch.argmax(values_stack, dim=1)  # [B]
+            if self.training and active_experts > 1 and epsilon_expert > 0:
+                random_experts = torch.randint(
+                    0, active_experts, (B,), device=obs.device
+                )
+                explore_mask = torch.rand(B, device=obs.device) < epsilon_expert
+                chosen_expert = torch.where(explore_mask, random_experts, chosen_expert)
         else:
             chosen_expert = expert_idx
 
@@ -903,7 +950,7 @@ class CoopTopDownAgent(nn.Module):
     Uses a standard Manager network to pick the expert, rather than bottom-up voting.
     """
 
-    def __init__(self, state_dim, max_experts=6, hidden_dim=HIDDEN_DIM):
+    def __init__(self, state_dim, max_experts=8, hidden_dim=HIDDEN_DIM):
         super().__init__()
         self.max_experts = max_experts
 

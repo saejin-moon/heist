@@ -9,7 +9,7 @@ Run with:  uv run python src/test_comm_smoke.py
 
 import torch
 
-from constants import N_AGENTS, OBSERVATION_SIZE
+from constants import ACTION_SPACE_SIZE, N_AGENTS, OBSERVATION_SIZE
 from env import HeistEnv
 from model import (
     COMM_HIDDEN_DIM,
@@ -48,7 +48,7 @@ def test_comm_agent_shapes():
     roles = [torch.zeros(B, N_AGENTS) for _ in range(N_AGENTS)]
     for i in range(N_AGENTS):
         roles[i][:, i] = 1.0
-    masks = [torch.ones(B, 6) for _ in range(N_AGENTS)]
+    masks = [torch.ones(B, ACTION_SPACE_SIZE) for _ in range(N_AGENTS)]
     obs_list = [obs[:, i] for i in range(N_AGENTS)]
 
     actions, logprobs, entropy, values = agent.get_action_and_value(
@@ -71,7 +71,7 @@ def test_comm_agent_centralized():
     roles = [torch.zeros(B, N_AGENTS) for _ in range(N_AGENTS)]
     for i in range(N_AGENTS):
         roles[i][:, i] = 1.0
-    masks = [torch.ones(B, 6) for _ in range(N_AGENTS)]
+    masks = [torch.ones(B, ACTION_SPACE_SIZE) for _ in range(N_AGENTS)]
     obs_list = [obs[:, i] for i in range(N_AGENTS)]
     state = torch.randn(B, 100)
 

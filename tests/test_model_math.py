@@ -42,21 +42,19 @@ def test_heist_agent_nan_inf_inputs():
         _, log_prob, _, value = agent.get_action_and_value(obs, role, mask)
 
 
-def test_mappo_agent_influence_matrix():
+def test_mappo_agent_influence_scalar():
     agent = MappoAgent(STATE_DIM)
     state = torch.randn(2, STATE_DIM)
-    inf = agent.get_influence_matrix(state)
-    assert inf.shape == (2, 4, 4)
-    # Check diagonal is 0
-    assert torch.allclose(inf.diagonal(dim1=1, dim2=2), torch.zeros(2, 4))
+    inf = agent.get_influence_scalar(state)
+    assert inf.shape == (2, 4)
     # Check row sums to 1
-    assert torch.allclose(inf.sum(dim=-1), torch.ones(2, 4), atol=1e-5)
+    assert torch.allclose(inf.sum(dim=-1), torch.ones(2), atol=1e-5)
 
 
 def test_coma_agent_influence_matrix():
     agent = ComaAgent(STATE_DIM)
     state = torch.randn(2, STATE_DIM)
-    actions = {i: torch.randint(0, 6, (2,)) for i in range(4)}
+    actions = {i: torch.randint(0, ACTION_SPACE_SIZE, (2,)) for i in range(4)}
     inf = agent.get_influence_matrix(state, actions)
     assert inf.shape == (2, 4, 4)
     assert torch.allclose(inf.diagonal(dim1=1, dim2=2), torch.zeros(2, 4))

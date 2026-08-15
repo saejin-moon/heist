@@ -1,6 +1,6 @@
 # CO-OP: Confidence-Oriented Option Pool
 
-Hierarchical reinforcement learning in multi-agent systems usually relies on a top-down manager network to assign tasks. The manager looks at the state and picks a worker. The problem with this structure is manager mode-collapse. The manager learns to pick the exact same worker for every state because it is easier than learning how to route properly. The chosen worker is forced to learn the entire environment, defeating the purpose of the hierarchy.
+Hierarchical reinforcement learning in multi-agent systems usually relies on a top-down manager network to assign tasks. The manager looks at the state and picks a worker. The problem with this structure is manager mode-collapse. The manager learns to pick the exact same worker for every state because it is easier than learning how to route properly. This forces the chosen worker to learn the entire environment and defeats the purpose of the hierarchy.
 
 CO-OP solves this by deleting the manager entirely.
 
@@ -9,9 +9,9 @@ $$$
 k^* = \arg\max_{k \in \{1 \dots K\}} V_k(s_t)
 $$$
 
-Because routing is an emergent property of value accuracy rather than a separate policy, mode-collapse mathematically cannot happen.
+Because routing is a mathematical consequence of value accuracy rather than a separate policy, mode-collapse mathematically cannot happen.
 
-## Spawning and Optimistic Nativism
+## Spawning and Optimistic Initialization
 
 Standard MoE networks force you to hardcode the number of workers before training. CO-OP starts with two experts and grows its capacity dynamically.
 
@@ -20,7 +20,7 @@ $$$
 \max(V_1(s_t), \dots, V_K(s_t)) < \tau_{spawn}
 $$$
 
-When a new expert is initialized, its weights output values near $0.0$. Since the spawn condition explicitly requires all existing experts to have a confidence below the negative threshold (e.g., $-0.1$), the new expert naturally wins the argmax vote on its very first step. It inherently thinks it can do better than the failing experts. We call this optimistic nativism. The system does not need a UCB exploration bonus to force new experts to train.
+When a new expert is initialized, its weights output values near $0.0$. Since the spawn condition explicitly requires all existing experts to have a confidence below the negative threshold (e.g., $-0.1$), the new expert naturally wins the argmax vote on its very first step. It inherently thinks it can do better than the failing experts. We call this optimistic initialization. The system does not need a UCB exploration bonus to force new experts to train.
 
 To prevent the model from uncontrollably spawning experts early in training, CO-OP enforces a strict burn-in period. Existing experts get plenty of time to learn the initial state distribution before the router is allowed to judge their confidence.
 
@@ -37,6 +37,6 @@ $$$
 O \cdot \exp\left(-\alpha \frac{C_t}{C_{max}}\right) & \text{otherwise (Unshielded)}
 \end{cases}
 $$$
-Here $O$ is the terminal outcome ($1.0$ or $-0.5$) and $C_t$ is a continuous global environment cost or penalty, normalized by $C_{max}$.
+Here $O$ is the terminal outcome ($1.0$ or $0.5$) and $C_t$ is a continuous global environment cost or penalty, normalized by $C_{max}$. (Note: We use 0.5 to half the negative penalty on unshielded failing trajectories, acting as a baseline scalar).
 
 By multiplying the immediate rewards by this factor before calculating the generalized advantage estimate (GAE), the $\gamma \cdot \lambda$ trace naturally propagates the failure shielding backward through time. Competent experts are insulated from incompetent teammates.

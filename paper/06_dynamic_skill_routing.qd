@@ -1,9 +1,9 @@
 # 6. Dynamic Expert Spawning and Bottom-Up Routing
 
 ## 6.1 The Failure of Fixed-Capacity and Flat Architectures
-Flat MARL architectures collapse at the Sparsity Wall due to temporal discount dilution ($ \gamma^{250} \approx 0.08 $). Causal Affordance Routing (CAR) and Causal Advantage Routing (CIR) fail. Monolithic architectures lack temporal abstraction and modular capacity. Traditional H-MARL approaches like ROMA or MAHIRO introduce this abstraction. They rely on fixed-capacity networks or top-down manager-worker dichotomies. They are prone to non-stationarity and goal collapse.
+Flat MARL architectures collapse at the Sparsity Wall due to temporal discount dilution ($ \gamma^{250} \approx 0.08 $). Causal Affordance Routing (CAR) and Causal Advantage Routing (CIR) fail. Monolithic architectures lack temporal abstraction and modular capacity. Traditional H-MARL approaches like ROMA or MAHIRO introduce this abstraction. They rely on fixed-capacity networks or top-down manager-worker structures. They are prone to non-stationarity and goal collapse.
 
-We introduce a decentralized paradigm. It is a Dynamic Skill-Pool Co-op architecture. We refer to it as CO-OP (Confidence-Oriented Option Pool).
+We introduce a decentralized model. It is a Dynamic Skill-Pool Co-op architecture. We refer to it as CO-OP (Confidence-Oriented Option Pool).
 
 ## 6.2 The CO-OP Architecture
 
@@ -14,7 +14,7 @@ Any agent $ i $ can route its execution to any Expert in the pool. The agent's i
 ### 6.2.1 Bottom-Up Confidence Routing
 CO-OP employs a bottom-up voting mechanism. It replaces a top-down manager. 
 
-At step $ t $, the state $ s_t $ is passed to all $ K $ currently active Experts. Each Expert $ E_k $ outputs an action distribution $ \pi_k(a|s_t) $ and a Value prediction $ V_k(s_t) $. The Value prediction serves as the Expert's Confidence Score. The global router selects the Expert with the highest confidence:
+At step $ t $, the state $ s_t $ is passed to all $ K $ currently active Experts. Each Expert $ E_k $ outputs an action distribution $ \pi_k(a|s_t) $ and a Value prediction $ V_k(s_t) $. The Value prediction is the Expert's Confidence Score. The global router selects the Expert with the highest confidence:
 $$$
 k^* = \arg\max_{k \in \{1 \dots K\}} V_k(s_t)
 $$$
@@ -22,8 +22,8 @@ The agent executes the action sampled from $ \pi_{k^*} $. Causal Affordance Cred
 
 CO-OP eliminates manual reward shaping by implementing structural affordance detection. It detects an affordance by evaluating the team's aggregate action-mask volume. If $ \sum \text{mask}_{t+1} > \sum \text{mask}_t $ and an agent executed the `INTERACT` action, that Expert is causally credited for expanding the team's physical capabilities.
 
-### 6.2.2 Asymmetric Failure Shielding Integration
-CO-OP integrates MARC's Asymmetric Failure Shielding and Macro Weighting. 
+### 6.2.2 Binary Success Masking Integration
+CO-OP integrates MARC's binary success masking and exponential alarm weighting. 
 
 The base rewards for the active experts are modulated by a macro weighting factor $ \Omega_t $:
 $$$
@@ -32,7 +32,7 @@ $$$
 O \cdot \exp\left(-\alpha \frac{A_t}{A_{max}}\right) & \text{otherwise}
 \end{cases}
 $$$
-Here, $ O \in \{1.0, -0.5\} $ is the binary terminal outcome of the episode, and $ A_t $ is the global alarm level, normalized by $ A_{max} $. CO-OP multiplies the immediate rewards by $ \Omega_t $ before calculating the Generalized Advantage Estimate. It shields competent upstream experts from downstream incompetence. The decentralized router accurately assesses confidence.
+Here, $ O \in \{1.0, 0.5\} $ is the binary terminal outcome of the episode (using 0.5 to half the negative penalty on unshielded failing trajectories), and $ A_t $ is the global alarm level, normalized by $ A_{max} $. CO-OP multiplies the immediate rewards by $ \Omega_t $ before calculating the Generalized Advantage Estimate. It shields competent upstream experts from downstream incompetence. The decentralized router accurately assesses confidence.
 
 ### 6.2.3 Dynamic Capacity Evolution (Spawning and Pruning)
 CO-OP dynamically adjusts the size of the Expert pool $ K $. 
@@ -41,6 +41,8 @@ If an agent encounters a novel state space and the maximum confidence across all
 $$$
 \max(V_1(s_t), \dots, V_K(s_t)) < \tau_{spawn}
 $$$
-A new Expert $ E_{K+1} $ is appended to the pool. Neural network weights initialize to output near $ 0.0 $. Spawning strictly requires all other experts to fall below $ \tau_{spawn} $. The newly spawned $ E_{K+1} $ natively wins the vote. This is optimistic nativism. It bypasses Upper Confidence Bound algorithms. New experts are selected to explore unknown states.
+A new Expert $ E_{K+1} $ is appended to the pool. Spawning strictly requires all other experts to fall below $ \tau_{spawn} $. 
 
-A global complexity penalty $ -\lambda \cdot K $ is applied to the reward stream. If an Expert $ E_k $ is not selected by any agent for a continuous window of $ W $ episodes, it is pruned from the pool.
+Instead of random initialization, CO-OP uses weight cloning. The new Expert $ E_{K+1} $ is initialized as an exact parameter clone of the parent Expert $ E_K $. We inject standard Gaussian noise ($ \sigma = 0.05 $) into the cloned weights. This retains foundational movement and locomotion priors while forcing mechanical divergence in familiar state distributions. Because the clone retains the parent's value target (which has fallen below the negative threshold), it competes on parity. 
+
+If the cloned expert simply mimics the parent, the injected parameter noise guarantees its policy is strictly sub-optimal compared to the converged parent. The clone will achieve a lower episodic return, which causes its value function $ V_{clone} $ to drop below $ V_{parent} $. The router will naturally stop selecting the clone. To survive, the new expert must locate unexploited structural affordances to overcome its noisy deficit. If an Expert $ E_k $ is not selected by any agent for a continuous window of $ W $ episodes, it is pruned from the pool.

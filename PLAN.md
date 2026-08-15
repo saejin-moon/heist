@@ -21,7 +21,7 @@ Each agent has a distinct role, partial information about the world, and unique 
 ### The Four Agents
 
 1. **Scout**
-   * **Role:** Moves ahead of the team, revealing tile information (guard positions, camera coverage, door lock types, terminal locations) masked to other agents.
+   * **Role:** Moves ahead of the team and reveals tile information (guard positions, camera coverage, door lock types, terminal locations) masked to other agents.
    * **Observation Space:** Widest field of view (N tiles in all directions), including guard patrol states and camera rotation angles.
    * **Action Space:** Move (8 directions), wait, tag tile (broadcasts location info to team), use distraction item (draws guard attention temporarily).
    * **Unique Mechanic:** Other agents' observation spaces are partially gated by what the Scout has revealed.

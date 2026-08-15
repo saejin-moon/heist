@@ -4,7 +4,7 @@ IPPO (Independent PPO) baseline trainer for HEIST.
 PLAN.md Baseline 1: each agent runs an independent PPO policy (its own
 actor-critic network and its own optimizer) on its own observation stream.
 Agents only interact through the shared reward and the environment's causal
-gates.  This is the standard IPPO setup and serves as the weak baseline
+gates.  This is the standard IPPO setup and is the weak baseline
 against which MAPPO and QMIX are compared.
 
 Two modes:
@@ -256,7 +256,7 @@ def train(args: Args):
                 (args.num_steps, args.num_envs, ACTION_DIM), device=device
             ),
             # REV-7 (REVISION_PLAN.md §6): no global_state buffer; baselines
-            # navigate from local view + role one-hot only.
+            # move using local view + role one-hot only.
             "role_id": torch.zeros(
                 (args.num_steps, args.num_envs, N_AGENTS), device=device
             ),

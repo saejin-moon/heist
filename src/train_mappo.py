@@ -302,7 +302,7 @@ def train(args: Args):
 
         # ---------------- rollout ----------------
         buf_influence = torch.zeros(
-            (args.num_steps, args.num_envs, N_AGENTS, N_AGENTS), device=device
+            (args.num_steps, args.num_envs, N_AGENTS), device=device
         )
         for step in range(args.num_steps):
             global_step += args.num_envs
@@ -310,7 +310,7 @@ def train(args: Args):
             state_buffer[step] = state_t
             if getattr(args, "cir_coef", 0.0) > 0.0:
                 with torch.no_grad():
-                    buf_influence[step] = policy.get_influence_matrix(state_t)
+                    buf_influence[step] = policy.get_influence_scalar(state_t)
             stacked = next_obs["_stacked"]
             obs_all = torch.as_tensor(stacked["observation"], device=device)
             role_all = torch.as_tensor(stacked["role_id"], device=device)
@@ -338,21 +338,19 @@ def train(args: Args):
             next_obs, rewards, terminations, truncations, infos = vec_env.step(
                 actions_dict
             )
-            # --- CAR: Counterfactual Affordance Reward ---
+            # --- CAR: Causal Affordance Credit Tracking ---
             if getattr(args, "car_coef", 0.0) > 0.0:
-                new_masks = next_obs["_stacked"]["action_mask"]
-                old_masks = mask_all.cpu().numpy()
-                delta_masks = new_masks.sum(axis=-1) - old_masks.sum(axis=-1)
                 for env_idx in range(args.num_envs):
-                    for idx_a, a in enumerate(AGENTS):
-                        if infos[env_idx].get(a, {}).get("car_unlocked", False):
-                            bonus = 0.0
-                            for idx_j in range(len(AGENTS)):
-                                if idx_j != idx_a:
-                                    bonus += max(
-                                        0.0, float(delta_masks[idx_j, env_idx])
-                                    )
-                            rewards[a][env_idx] += args.car_coef * bonus
+                    for a in AGENTS:
+                        if (
+                            isinstance(infos, list)
+                            and env_idx < len(infos)
+                            and infos[env_idx].get(a, {}).get("car_unlocked", False)
+                            or isinstance(infos, dict)
+                            and a in infos
+                            and infos[a].get("car_unlocked", False)
+                        ):
+                            rewards[a][env_idx] += args.car_coef
 
             next_terminations = torch.as_tensor(
                 terminations["scout"], device=device
@@ -426,7 +424,9 @@ def train(args: Args):
             adv_t = stacked_advantages.permute(
                 1, 2, 0
             )  # [num_steps, num_envs, N_AGENTS]
-            routed_adv = torch.einsum("sten,ste->stn", buf_influence, adv_t)
+            # buf_influence is [num_steps, num_envs, N_AGENTS]
+            # adv_t is [num_steps, num_envs, N_AGENTS]
+            routed_adv = buf_influence * adv_t.mean(dim=-1, keepdim=True)
             adv_t_new = (1.0 - args.cir_coef) * adv_t + (args.cir_coef * routed_adv)
             stacked_advantages = adv_t_new.permute(2, 0, 1)
             stacked_returns = stacked_advantages + torch.stack(

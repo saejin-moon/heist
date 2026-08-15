@@ -263,21 +263,19 @@ if __name__ == "__main__":
                 actions_dict
             )
 
-            # --- CAR: Counterfactual Affordance Reward ---
+            # --- CAR: Causal Affordance Credit Tracking ---
             if args.car_coef > 0.0:
-                new_masks = next_obs["_stacked"]["action_mask"]
-                old_masks = mask_list.cpu().numpy()
-                delta_masks = new_masks.sum(axis=-1) - old_masks.sum(axis=-1)
                 for env_idx in range(args.num_envs):
-                    for idx_a, a in enumerate(AGENTS):
-                        if infos[env_idx].get(a, {}).get("car_unlocked", False):
-                            bonus = 0.0
-                            for idx_j in range(len(AGENTS)):
-                                if idx_j != idx_a:
-                                    bonus += max(
-                                        0.0, float(delta_masks[idx_j, env_idx])
-                                    )
-                            rewards[a][env_idx] += args.car_coef * bonus
+                    for a in AGENTS:
+                        if (
+                            isinstance(infos, list)
+                            and env_idx < len(infos)
+                            and infos[env_idx].get(a, {}).get("car_unlocked", False)
+                            or isinstance(infos, dict)
+                            and a in infos
+                            and infos[a].get("car_unlocked", False)
+                        ):
+                            rewards[a][env_idx] += args.car_coef
 
             next_terminations = torch.as_tensor(
                 terminations["scout"], device=device

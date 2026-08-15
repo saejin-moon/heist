@@ -3,7 +3,7 @@
 Run:  PYTHONPATH=src .venv/bin/python src/test_mechanics_smoke.py
 """
 
-from constants import DOWN, EMPTY, INTERACT, LEFT, RIGHT, UP, WAIT, WALL
+from constants import BREACH, EMPTY, INTERACT, UP, WAIT, WALL
 from env import HeistEnv, manhattan
 
 
@@ -44,9 +44,9 @@ def test_wall_breach():
     }
     n_walls_before = sum(1 for v in adj_before.values() if v == WALL)
     mask = env._action_mask("muscle")
-    assert mask[INTERACT] == 1, f"breach should be allowed adjacent to wall: {mask}"
+    assert mask[BREACH] == 1, f"breach should be allowed adjacent to wall: {mask}"
     env.alarm = 0.0
-    env.step({"scout": WAIT, "hacker": WAIT, "muscle": INTERACT, "extractor": WAIT})
+    env.step({"scout": WAIT, "hacker": WAIT, "muscle": BREACH, "extractor": WAIT})
     n_walls_after = sum(
         1 for (nr, nc), v in adj_before.items() if env.grid[nr, nc] == WALL
     )
@@ -95,30 +95,18 @@ def test_delayed_neutralize_alarm():
 
 def test_extractor_burden():
     env = reset_open(2)
-    # force loot acquired with the burden clock 2 turns in (a SLOW turn)
     env.loot_acquired = True
-    # simulate loot acquired at step 2; at step 3 the mask sees turns_since=2
-    # (a SLOW turn), and step() increments to step 4 where movement is blocked.
     env.current_step = 3
     env._burden_start_step = 2
     env.agent_positions["extractor"] = (5, 5)
     env.grid[4, 5] = EMPTY
     mask = env._action_mask("extractor")
-    assert mask[UP] == 0 and mask[DOWN] == 0 and mask[LEFT] == 0 and mask[RIGHT] == 0, (
-        f"slow turn should block all movement: {mask}"
-    )
-    env.step({"scout": WAIT, "hacker": WAIT, "muscle": WAIT, "extractor": UP})
-    assert env.agent_positions["extractor"] == (5, 5), (
-        "extractor must not move on slow turn"
-    )
-    # next turn is a FAST turn (turns_since becomes odd): movement allowed
+    assert mask[UP] == 1, f"extractor should not be blocked: {mask}"
     env.step({"scout": WAIT, "hacker": WAIT, "muscle": WAIT, "extractor": UP})
     assert env.agent_positions["extractor"] == (4, 5), (
-        "extractor should move on fast turn"
+        "extractor should move freely every turn"
     )
-    print(
-        f"  extractor burden OK (slow turn blocked, fast turn moves to {env.agent_positions['extractor']})"
-    )
+    print(f"  extractor burden OK (moves freely to {env.agent_positions['extractor']})")
 
 
 def test_guard_fsm():
@@ -177,7 +165,7 @@ def test_breach_triggers_guard_search():
     env.guard_states = ["patrol", "patrol"]
     env._guard_search_target = [None, None]
     env._guard_search_turns = [0, 0]
-    env.step({"scout": WAIT, "hacker": WAIT, "muscle": INTERACT, "extractor": WAIT})
+    env.step({"scout": WAIT, "hacker": WAIT, "muscle": BREACH, "extractor": WAIT})
     assert env.guard_states[0] == "search", (
         f"nearby guard should Search after breach, got {env.guard_states[0]}"
     )

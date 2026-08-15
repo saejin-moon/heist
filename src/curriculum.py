@@ -23,7 +23,7 @@ CURRICULUM = [
         "guard_count": 0,
         "camera_count": 0,
         "door_count": 0,
-        "max_steps": 60,
+        "max_steps": 100,
         "spawn_mode": "role",
     },
     {
@@ -67,6 +67,15 @@ CURRICULUM = [
         "spawn_mode": "role",
     },
 ]
+
+
+def get_stage_steps(stage_idx: int, base_steps: int = 120000) -> int:
+    """Calculate dynamic step budget for a stage based on spatial-entity scaling law."""
+    c = CURRICULUM[stage_idx]
+    area = c["map_size"][0] * c["map_size"][1]
+    entities = c["guard_count"] + c["camera_count"] + c["door_count"]
+    mu = 1.0 + 0.10 * entities
+    return int(round(base_steps * (area / 121.0) * mu))
 
 
 def env_config_str(config: dict) -> str:
