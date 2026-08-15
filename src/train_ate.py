@@ -73,7 +73,6 @@ def parse_args() -> Args:
     parser.add_argument("--num-steps", type=int, default=args.num_steps)
     parser.add_argument("--env-config", type=str, default=args.env_config)
     parser.add_argument("--eval-every", type=int, default=args.eval_every)
-    parser.add_argument("--cir-coef", type=float, default=args.cir_coef)
     parser.add_argument(
         "--use-rnd",
         action="store_true",

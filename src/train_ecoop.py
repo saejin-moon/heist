@@ -12,18 +12,19 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.distributions.categorical import Categorical
 
 from constants import ACTION_SPACE_SIZE as ACTION_DIM
 from constants import N_AGENTS, OBSERVATION_SIZE
 from env import AGENTS, parse_env_config
-from model import CoopAgent, CoopTopDownAgent
+from model import EcoopAgent
 from ppo_utils import compute_gae_simple, write_completion
 from vec_env import VectorEnv
 
 
 @dataclass
 class Args:
-    exp_name: str = "coop"
+    exp_name: str = "ecoop"
     seed: int = 0
     torch_deterministic: bool = True
     cuda: bool = True
@@ -39,22 +40,20 @@ class Args:
     ent_coef: float = 0.01
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
-    tau_spawn: float = -0.50
+    ecoop_pool_size: int = 8
     alpha_alarm: float = 1.5
     car_coef: float = 1.0
-    max_experts: int = 8
-    burn_in_frac: float = 0.10
-    burn_in_steps: int = 30_000
-    spawn_cooldown_steps: int = 20_000
-    complexity_penalty: float = 0.01
     prune_episodes: int = 150
     env_config: str = ""
     save_model: bool = True
     eval_every: int = 10
     load_checkpoint: str = ""
-    ablation_fixed: bool = False
-    ablation_no_car: bool = False
-    ablation_top_down: bool = False
+    ecoop_uniform_noise: bool = False
+    ecoop_reactive: bool = False
+    ecoop_no_grace: bool = False
+    ecoop_no_hysteresis: bool = False
+    tau_spawn: float = -0.50
+    spawn_cooldown_steps: int = 20_000
 
 
 def parse_args():
@@ -66,14 +65,14 @@ def parse_args():
     p.add_argument("--no-save-model", action="store_false", dest="save_model")
     p.add_argument("--eval-every", type=int, default=Args.eval_every)
     p.add_argument("--load-checkpoint", type=str, default="")
-    p.add_argument("--ablation-fixed", action="store_true")
-    p.add_argument("--ablation-no-car", action="store_true")
-    p.add_argument("--ablation-top-down", action="store_true")
+    p.add_argument("--ecoop-pool-size", type=int, default=Args.ecoop_pool_size)
+    p.add_argument("--ecoop-uniform-noise", action="store_true")
+    p.add_argument("--ecoop-reactive", action="store_true")
+    p.add_argument("--ecoop-no-grace", action="store_true")
+    p.add_argument("--ecoop-no-hysteresis", action="store_true")
     p.add_argument("--tau-spawn", type=float, default=Args.tau_spawn)
     p.add_argument("--alpha-alarm", type=float, default=Args.alpha_alarm)
-    p.add_argument("--burn-in-frac", type=float, default=Args.burn_in_frac)
     args, _ = p.parse_known_args()
-    args.burn_in_steps = int(args.total_timesteps * args.burn_in_frac)
     return Args(**vars(args))
 
 
@@ -93,10 +92,7 @@ def main():
     next_obs, next_state = envs.reset(seed=args.seed)
     state_dim = envs.state_dim
 
-    if args.ablation_top_down:
-        agent = CoopTopDownAgent(state_dim, max_experts=args.max_experts).to(device)
-    else:
-        agent = CoopAgent(state_dim, max_experts=args.max_experts).to(device)
+    agent = EcoopAgent(state_dim, max_experts=args.ecoop_pool_size).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     if args.load_checkpoint and os.path.exists(f"{args.load_checkpoint}/coop.pt"):
@@ -116,9 +112,7 @@ def main():
         print(f"  [Transfer] Loading previous stage checkpoint from {prev_ckpt}")
         load_matching_weights(agent, os.path.join(prev_ckpt, "coop.pt"), device)
 
-    active_experts = (
-        args.max_experts if args.ablation_fixed else 2
-    )  # Start with 2 experts unless fixed
+    active_experts = 1
 
     # Buffers
     obs_t = torch.zeros(
@@ -148,10 +142,6 @@ def main():
         (args.num_steps, N_AGENTS, args.num_envs), dtype=torch.bool
     ).to(device)
 
-    expert_last_used_episode = torch.zeros(
-        args.max_experts, dtype=torch.long, device=device
-    )
-
     last_spawn_step = 0
     global_step = 0
     global_episode_count = 0
@@ -162,6 +152,9 @@ def main():
         N_AGENTS * args.num_envs, dtype=torch.long, device=device
     )
     start_time = time.time()
+
+    grace_epochs_remaining = 0
+    current_grace_expert = None
 
     for update in range(1, num_updates + 1):
         for step in range(0, args.num_steps):
@@ -185,126 +178,34 @@ def main():
             states_t[step] = state_t
             dones_t[step] = next_done
 
+            # Update grace period
+            if grace_epochs_remaining > 0:
+                grace_epochs_remaining -= 1
+                if grace_epochs_remaining == 0:
+                    current_grace_expert = None
+
             with torch.no_grad():
-                if next_done.any():
-                    _, _, _, _, new_expert_idx = agent.get_action_and_value(
-                        obs_all.flatten(0, 1),
-                        state_t.repeat(N_AGENTS, 1),
-                        role_all.flatten(0, 1),
-                        mask_all.flatten(0, 1),
-                        active_experts,
-                    )
-                    done_mask = next_done.repeat(N_AGENTS).bool()
-                    env_expert_idx = torch.where(
-                        done_mask, new_expert_idx, env_expert_idx
-                    )
-
-                # For top-down ablation, lock the expert for the episode. Otherwise, per-step dynamic routing.
-                current_expert_idx = env_expert_idx if args.ablation_top_down else None
-
                 action, logprob, _, value, chosen_expert, true_expert = (
                     agent.get_action_and_value(
-                        obs_t.flatten(0, 1),
-                        state_t.repeat(N_AGENTS, 1),
-                        roles_t.flatten(0, 1),
-                        masks_t.flatten(0, 1),
+                        obs_t[step].flatten(0, 1),
+                        states_t[step].repeat(N_AGENTS, 1),
+                        roles_t[step].flatten(0, 1),
+                        masks_t[step].flatten(0, 1),
                         active_experts,
-                        expert_idx=current_expert_idx,
+                        previous_expert=env_expert_idx,
+                        grace_period_expert=current_grace_expert
+                        if not args.ecoop_no_grace
+                        else None,
+                        epsilon_abs=0.0 if args.ecoop_no_hysteresis else 0.05,
+                        epsilon_rel=0.0 if args.ecoop_no_hysteresis else 0.05,
                     )
                 )
-
-                # Check for spawning
-                min_conf = torch.min(value)
-                if (
-                    min_conf < args.tau_spawn
-                    and active_experts < args.max_experts
-                    and not args.ablation_fixed
-                    and global_step >= args.burn_in_steps
-                    and (global_step - last_spawn_step) >= args.spawn_cooldown_steps
-                ):
-                    active_experts += 1
-                    last_spawn_step = global_step
-                    expert_idx = active_experts - 1
-                    expert_last_used_episode[expert_idx] = global_episode_count
-
-                    # Warm-start the newly spawned expert from the best prior expert to retain navigation priors
-                    src = expert_idx - 1
-                    agent.experts[expert_idx].load_state_dict(
-                        agent.experts[src].state_dict()
-                    )
-
-                    # Inject parameter noise to encourage divergence
-                    with torch.no_grad():
-                        for param in agent.experts[expert_idx].parameters():
-                            param.add_(torch.randn_like(param) * 0.05)
-
-                    # Clear any stale optimizer momentum from when it was previously pruned
-                    for p in agent.experts[expert_idx].parameters():
-                        if p in optimizer.state:
-                            del optimizer.state[p]
-
-                    print(
-                        f"Spawning Expert {active_experts} at step {global_step} (min_conf={min_conf.item():.3f})!"
-                    )
+                env_expert_idx = chosen_expert
 
                 actions_t[step] = action.view(N_AGENTS, args.num_envs)
                 logprobs_t[step] = logprob.view(N_AGENTS, args.num_envs)
                 values_t[step] = value.view(N_AGENTS, args.num_envs)
                 expert_idx_t[step] = chosen_expert.view(N_AGENTS, args.num_envs)
-
-                # Update expert usage and check for pruning
-                true_expert_unique = true_expert.unique()
-                expert_last_used_episode[true_expert_unique] = global_episode_count
-
-                if not args.ablation_fixed and global_step >= args.burn_in_steps:
-                    for k in range(active_experts - 1, -1, -1):
-                        if (
-                            active_experts > 1
-                            and (global_episode_count - expert_last_used_episode[k])
-                            > args.prune_episodes
-                        ):
-                            print(
-                                f"Pruning Expert {k} at episode {global_episode_count} (unused for {global_episode_count - expert_last_used_episode[k]} episodes)!"
-                            )
-
-                            if k < active_experts - 1:
-                                # Shift weights and optimizer state to keep active experts contiguous
-                                src = active_experts - 1
-                                agent.experts[k].load_state_dict(
-                                    agent.experts[src].state_dict()
-                                )
-
-                                for p_target, p_source in zip(
-                                    agent.experts[k].parameters(),
-                                    agent.experts[src].parameters(),
-                                    strict=False,
-                                ):
-                                    if p_source in optimizer.state:
-                                        state_src = optimizer.state[p_source]
-                                        optimizer.state[p_target] = {
-                                            "step": state_src.get(
-                                                "step", torch.tensor(0.0)
-                                            ),
-                                            "exp_avg": state_src["exp_avg"].clone(),
-                                            "exp_avg_sq": state_src[
-                                                "exp_avg_sq"
-                                            ].clone(),
-                                        }
-                                        if "max_exp_avg_sq" in state_src:
-                                            optimizer.state[p_target][
-                                                "max_exp_avg_sq"
-                                            ] = state_src["max_exp_avg_sq"].clone()
-                                    else:
-                                        if p_target in optimizer.state:
-                                            del optimizer.state[p_target]
-
-                                expert_last_used_episode[k] = expert_last_used_episode[
-                                    src
-                                ]
-                                expert_idx_t[expert_idx_t == src] = k
-                                env_expert_idx[env_expert_idx == src] = k
-
-                            active_experts -= 1
 
             actions_dict = {
                 a: actions_t[step, i].cpu().numpy() for i, a in enumerate(AGENTS)
@@ -362,7 +263,12 @@ def main():
                 next_role_all.flatten(0, 1),
                 mask_all.flatten(0, 1),
                 active_experts,
-                expert_idx=current_expert_idx,
+                previous_expert=env_expert_idx,
+                grace_period_expert=current_grace_expert
+                if not args.ecoop_no_grace
+                else None,
+                epsilon_abs=0.0 if args.ecoop_no_hysteresis else 0.05,
+                epsilon_rel=0.0 if args.ecoop_no_hysteresis else 0.05,
             )
             next_value = next_value.view(N_AGENTS, args.num_envs)
 
@@ -462,6 +368,88 @@ def main():
                 loss.backward()
                 nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
+
+        # Evolutionary Crossover
+        do_crossover = False
+        if args.ecoop_reactive:
+            min_conf = torch.min(values_t)
+            if (
+                min_conf < args.tau_spawn
+                and (global_step - last_spawn_step) >= args.spawn_cooldown_steps
+            ):
+                do_crossover = True
+        else:
+            if update == 500 or (update > 500 and (update - 500) % 200 == 0):
+                do_crossover = True
+
+        if do_crossover and active_experts < args.ecoop_pool_size:
+            best_expert = -1
+            best_val = -1e9
+            for k in range(active_experts):
+                expert_vals = values_t[expert_idx_t == k]
+                if len(expert_vals) > 0:
+                    v = expert_vals.mean().item()
+                    if v > best_val:
+                        best_val = v
+                        best_expert = k
+
+            if best_expert == -1:
+                best_expert = 0
+
+            new_expert = active_experts
+            print(
+                f"[{run_name}] Generation Crossover! Cloning Expert {best_expert} to {new_expert} (val={best_val:.3f})"
+            )
+
+            agent.experts[new_expert].load_state_dict(
+                agent.experts[best_expert].state_dict()
+            )
+
+            if args.ecoop_uniform_noise:
+                with torch.no_grad():
+                    for param in agent.experts[new_expert].parameters():
+                        param.add_(torch.randn_like(param) * 0.05)
+            else:
+                fim = {}
+                for name, param in agent.experts[best_expert].named_parameters():
+                    fim[name] = torch.zeros_like(param)
+
+                N_samples = min(256, len(b_obs))
+                for i in range(N_samples):
+                    agent.zero_grad()
+                    x_act = torch.cat(
+                        [
+                            torch.flatten(b_obs[i : i + 1], start_dim=1).float(),
+                            b_roles[i : i + 1].float(),
+                        ],
+                        dim=1,
+                    )
+                    lgts = agent.experts[best_expert].actor(x_act)
+                    dist = Categorical(logits=lgts)
+                    act = b_actions[i : i + 1]
+                    lp = dist.log_prob(act)
+                    lp.backward()
+
+                    for name, param in agent.experts[best_expert].named_parameters():
+                        if param.grad is not None:
+                            fim[name] += (param.grad**2) / N_samples
+
+                with torch.no_grad():
+                    for name, param in agent.experts[new_expert].named_parameters():
+                        if name in fim:
+                            f = fim[name]
+                            scale = torch.clamp(1.0 / (torch.sqrt(f) + 1e-8), max=10.0)
+                            noise = torch.randn_like(param) * scale * 0.005
+                            param.add_(noise)
+
+            for p in agent.experts[new_expert].parameters():
+                if p in optimizer.state:
+                    del optimizer.state[p]
+
+            active_experts += 1
+            last_spawn_step = global_step
+            grace_epochs_remaining = 25
+            current_grace_expert = new_expert
 
         if update % 5 == 0 or update == num_updates:
             sps = int(global_step / (time.time() - start_time))

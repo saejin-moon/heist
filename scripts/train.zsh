@@ -235,7 +235,7 @@ run_campaign() {
     if [ -n "$MODELS" ]; then
         IFS=',' read -A model_names <<< "$MODELS"
     else
-        model_names=("ippo" "mappo" "coma" "mappo_car" "mappo_cir" "loo" "ate" "macca" "marc" "charm" "mahiro" "roma" "lrs" "coop")
+        model_names=("ippo" "mappo" "coma" "mappo_car" "mappo_cir" "loo" "ate" "macca" "marc" "charm" "mahiro" "roma" "lrs" "coop" "ecoop")
     fi
 
     local -a rnd_flags=()
@@ -531,6 +531,31 @@ run_campaign() {
                     ;;
                 coop_top_down)
                     nohup .venv/bin/python -u src/train_coop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --tau-spawn "$TAU_SPAWN" --ablation-top-down "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
+                ecoop)
+                    nohup .venv/bin/python -u src/train_ecoop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
+                ecoop_uniform_noise)
+                    nohup .venv/bin/python -u src/train_ecoop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ecoop-uniform-noise "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
+                ecoop_reactive)
+                    nohup .venv/bin/python -u src/train_ecoop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ecoop-reactive "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
+                ecoop_no_grace)
+                    nohup .venv/bin/python -u src/train_ecoop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ecoop-no-grace "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
+                    local launched_pid=$!
+                    task_pids[$next_t]=$launched_pid
+                    ;;
+                ecoop_no_hysteresis)
+                    nohup .venv/bin/python -u src/train_ecoop.py --total-timesteps "$steps" --num-envs 8 --num-steps 250 --seed 0 --env-config "$cfg" --exp-name "$exp_name_tag" --ecoop-no-hysteresis "${load_ckpt_flag[@]}" > "log/${log_name_tag}" 2>&1 &
                     local launched_pid=$!
                     task_pids[$next_t]=$launched_pid
                     ;;

@@ -35,7 +35,7 @@ $$$
 Here, $ O \in \{1.0, 0.5\} $ is the binary terminal outcome of the episode (using 0.5 to half the negative penalty on unshielded failing trajectories), and $ A_t $ is the global alarm level, normalized by $ A_{max} $. CO-OP multiplies the immediate rewards by $ \Omega_t $ before calculating the Generalized Advantage Estimate. It shields competent upstream experts from downstream incompetence. The decentralized router accurately assesses confidence.
 
 ### 6.2.3 Dynamic Capacity Evolution (Spawning and Pruning)
-CO-OP dynamically adjusts the size of the Expert pool $ K $. 
+CO-OP dynamically adjusts the size of the Expert pool $ K $ through reactive value-threshold spawning. 
 
 If an agent encounters a novel state space and the maximum confidence across all experts drops below a critical threshold $ \tau_{spawn} $:
 $$$
@@ -43,6 +43,32 @@ $$$
 $$$
 A new Expert $ E_{K+1} $ is appended to the pool. Spawning strictly requires all other experts to fall below $ \tau_{spawn} $. 
 
-Instead of random initialization, CO-OP uses weight cloning. The new Expert $ E_{K+1} $ is initialized as an exact parameter clone of the parent Expert $ E_K $. We inject standard Gaussian noise ($ \sigma = 0.05 $) into the cloned weights. This retains foundational movement and locomotion priors while forcing mechanical divergence in familiar state distributions. Because the clone retains the parent's value target (which has fallen below the negative threshold), it competes on parity. 
+Instead of random initialization, CO-OP uses weight cloning. The new Expert $ E_{K+1} $ is initialized as an exact parameter clone of the parent Expert $ E_K $. We inject standard Gaussian noise ($ \sigma = 0.05 $) into the cloned weights. This retains foundational movement and locomotion priors while forcing mechanical divergence in familiar state distributions. If an Expert $ E_k $ is not selected by any agent for a continuous window of $ W $ episodes, it is pruned from the pool.
 
-If the cloned expert simply mimics the parent, the injected parameter noise guarantees its policy is strictly sub-optimal compared to the converged parent. The clone will achieve a lower episodic return, which causes its value function $ V_{clone} $ to drop below $ V_{parent} $. The router will naturally stop selecting the clone. To survive, the new expert must locate unexploited structural affordances to overcome its noisy deficit. If an Expert $ E_k $ is not selected by any agent for a continuous window of $ W $ episodes, it is pruned from the pool.
+## 6.3 Evolutionary Confidence-Oriented Option Pool (E-COOP)
+Reactive spawning in CO-OP introduces catastrophic failure modes. Value functions in reinforcement learning scale dynamically with the episodic return. Hardcoding a static threshold $ \tau_{spawn} $ guarantees structural collapse across multi-stage curricula. Furthermore, uniform Gaussian noise destroys tightly correlated neural pathways.
+
+We introduce Evolutionary CO-OP (E-COOP). E-COOP replaces reactive spawning with a rigid generational cadence. E-COOP triggers an evolutionary crossover event at step 500, followed by subsequent crossovers every 200 updates. This cadence decouples expert generation from raw value magnitude.
+
+### 6.3.1 FIM-Scaled Asexual Mutation
+E-COOP abandons uniform noise injection. We compute the empirical Fisher Information Matrix (FIM) for the best-performing parent expert across a sampled microbatch. The FIM $ F_i $ quantifies the curvature of the log-likelihood space for parameter $ i $.
+
+We mutate the cloned child expert using inverse square-root FIM scaling:
+$$$
+\theta_{i}^{(child)} = \theta_{i}^{(parent)} + \mathcal{N}\left(0, \frac{\alpha}{\sqrt{F_i}}\right)
+$$$
+This scaling physically forces the mutation to respect the Proximal Policy Optimization (PPO) trust region. Parameters with high confidence (large $ F_i $) receive negligible noise. Parameters with flat gradients receive exploratory perturbations.
+
+### 6.3.2 Optimizer Cold Starts and Grace Periods
+Inheriting the Adam optimizer momentum tensors ($ m_t, v_t $) after a physical weight translation causes uncalibrated ballistic jumps. E-COOP deletes the Adam state for the child expert immediately after mutation. The optimizer executes a mathematical cold start. 
+
+To prevent premature algorithmic pruning during this cold start phase, E-COOP enforces a routing Grace Period. The global router overrides the standard value competition and forces the selection of the child expert for 25 epochs. The child establishes baseline competence before competing against the parent.
+
+### 6.3.3 Hybrid Routing Hysteresis
+At value zero-crossings, standard CO-OP suffers from routing chatter. Two experts with nearly identical value predictions trade control at every timestep. This fragments the recurrent state.
+
+E-COOP implements a Hybrid Routing Hysteresis mechanism. The router switches from the current expert to a rival expert only if the rival's value exceeds a compound threshold:
+$$$
+V_{rival} > V_{current} + \max(\epsilon_{abs}, \epsilon_{rel} \cdot |V_{current}|)
+$$$
+This mechanism provides a static absolute margin $ \epsilon_{abs} $ for value regions near zero, but transitions to a relative margin $ \epsilon_{rel} $ for large scale returns. This prevents chatter without requiring complex variance normalization.

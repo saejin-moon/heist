@@ -112,7 +112,7 @@ def load_policies(algo, run_dir, state_dim, device):
         p.load_state_dict(sd)
         p.to(device).eval()
         return {a: p for a in AGENTS}
-    if algo in ["coop", "coop_fixed", "coop_no_car"]:
+    if algo == "coop":
         filename = (
             "coop.pt"
             if os.path.exists(os.path.join(run_dir, "coop.pt"))
@@ -135,7 +135,32 @@ def load_policies(algo, run_dir, state_dim, device):
         p.active_experts = active_k
         p.to(device).eval()
         return {a: p for a in AGENTS}
-    if algo == "coop_top_down":
+    elif algo == "ecoop":
+        filename = (
+            "coop.pt"
+            if os.path.exists(os.path.join(run_dir, "coop.pt"))
+            else f"{algo}.pt"
+        )
+        sd = torch.load(
+            os.path.join(run_dir, filename), map_location=device, weights_only=True
+        )
+        active_k = int(sd.pop("active_experts").item()) if "active_experts" in sd else 1
+
+        expert_indices = {int(k.split(".")[1]) for k in sd if k.startswith("experts.")}
+        max_exp = max(expert_indices) + 1 if expert_indices else 6
+        ckpt_state_dim = (
+            sd["experts.0.critic.0.weight"].shape[1] - 4
+            if "experts.0.critic.0.weight" in sd
+            else state_dim
+        )
+        from model import EcoopAgent
+
+        p = EcoopAgent(state_dim=ckpt_state_dim, max_experts=max_exp)
+        p.load_state_dict(sd)
+        p.active_experts = active_k
+        p.to(device).eval()
+        return {a: p for a in AGENTS}
+    elif algo == "coop_top_down":
         filename = (
             "coop.pt"
             if os.path.exists(os.path.join(run_dir, "coop.pt"))
@@ -186,7 +211,6 @@ def main():
             "roma",
             "lrs",
             "coop",
-            "coop_top_down",
         ],
     )
 

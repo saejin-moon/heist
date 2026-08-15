@@ -113,6 +113,7 @@ def test_default_algos_keys_and_classes():
         "roma",
         "coop",
         "coop_top_down",
+        "ecoop",
     }
 
     for m in expected_models:

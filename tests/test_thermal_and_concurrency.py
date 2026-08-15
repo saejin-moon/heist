@@ -20,7 +20,7 @@ def test_thermal_guard_execution():
 def test_curriculum_area_scaling_formula():
     """Verify spatial area step scaling formula across all 5 curriculum stages."""
     base_steps = 1_000_000
-    expected_areas = [121, 289, 625, 1225, 2500]
+    expected_areas = [121, 289, 625, 1225, 2500, 2500]
 
     for i, stage in enumerate(CURRICULUM):
         w, h = stage["map_size"]

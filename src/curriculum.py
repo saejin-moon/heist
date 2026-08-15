@@ -24,7 +24,7 @@ CURRICULUM = [
         "camera_count": 0,
         "door_count": 0,
         "max_steps": 100,
-        "spawn_mode": "role",
+        "spawn_mode": "room0",
     },
     {
         # Stage 1: small map (17x17), 1 guard, no cameras. Learn patrol avoidance.
@@ -34,7 +34,7 @@ CURRICULUM = [
         "camera_count": 0,
         "door_count": 1,
         "max_steps": 120,
-        "spawn_mode": "role",
+        "spawn_mode": "room0",
     },
     {
         # Stage 2: medium map (25x25), 2 guards, 1 camera. Learn camera evasion & terminal hack.
@@ -44,7 +44,7 @@ CURRICULUM = [
         "camera_count": 1,
         "door_count": 2,
         "max_steps": 180,
-        "spawn_mode": "role",
+        "spawn_mode": "room0",
     },
     {
         # Stage 3: large facility (35x35), 3 guards, 2 cameras. Multi-security coordination.
@@ -54,7 +54,7 @@ CURRICULUM = [
         "camera_count": 2,
         "door_count": 3,
         "max_steps": 240,
-        "spawn_mode": "role",
+        "spawn_mode": "room0",
     },
     {
         # Stage 4: full benchmark facility (50x50), 4 guards, 3 cameras. Full facility heist.
@@ -64,7 +64,18 @@ CURRICULUM = [
         "camera_count": 3,
         "door_count": 4,
         "max_steps": 300,
-        "spawn_mode": "role",
+        "spawn_mode": "room0",
+    },
+    {
+        # Stage 5: Evaluation Stage. Full 50x50 facility with side-tasks enabled.
+        "map_size": (50, 50),
+        "num_rooms_range": (8, 12),
+        "guard_count": 4,
+        "camera_count": 3,
+        "door_count": 4,
+        "max_steps": 300,
+        "spawn_mode": "room0",
+        "enable_side_tasks": True,
     },
 ]
 

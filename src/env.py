@@ -582,19 +582,7 @@ class HeistEnv(ParallelEnv):
 
     # ------------------------------------------------------------------
     # Internals: movement and reveals
-    # ------------------------------------------------------------------
     def _move_agent(self, agent, action):
-        # REV-6 (REVISION_PLAN.md §5): while loot_acquired the extractor may
-        # only move 1 tile every 2 turns (escort dynamic); mirror the slow-turn
-        # gate in _action_mask so the policy sees the constraint.
-        if agent == "extractor" and self.loot_acquired and self._burden_start_step >= 0:
-            turns_since = self.current_step - self._burden_start_step
-            if (
-                turns_since > 0
-                and self.config["extractor_burden"] > 1
-                and turns_since % self.config["extractor_burden"] == 0
-            ):
-                return
         row, col = self.agent_positions[agent]
         dr, dc = ACTION_DELTAS[action]
         nr, nc = row + dr, col + dc
@@ -649,7 +637,7 @@ class HeistEnv(ParallelEnv):
             + self.door_positions
         )
         for p in pois:
-            if p not in self.tagged_pois and manhattan(pos, p) <= 1:
+            if p not in self.tagged_pois and manhattan(pos, p) <= 3:
                 self.tagged_pois.add(p)
                 rewards["scout"] += self.config["reward_tag"]
                 return
@@ -734,12 +722,15 @@ class HeistEnv(ParallelEnv):
                 )
                 if (nr, nc) not in self._rewarded_breached_walls:
                     self._rewarded_breached_walls.add((nr, nc))
-                    rewards["muscle"] += self.config["reward_task"]
+                    # Check if the breach structurally shortened pathfinding
+                    breach_unlocked = self._evaluate_objective_affordance(grid_pre, pos)
+                    self._last_car_unlocked = breach_unlocked
+                    if breach_unlocked:
+                        rewards["muscle"] += self.config["reward_task"] * 2.0
+                    else:
+                        rewards["muscle"] += self.config["reward_task"]
                 if self.config["breach_search_trigger"]:
                     self._trigger_breach_search(nr, nc)
-                self._last_car_unlocked = self._evaluate_objective_affordance(
-                    grid_pre, pos
-                )
                 return
 
     def _trigger_breach_search(self, br, bc):

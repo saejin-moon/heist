@@ -51,7 +51,6 @@ def parse_args():
     p.add_argument("--seed", type=int, default=Args.seed)
     p.add_argument("--total-timesteps", type=int, default=Args.total_timesteps)
     p.add_argument("--env-config", type=str, default=Args.env_config)
-    p.add_argument("--car-coef", type=float, default=Args.car_coef)
     p.add_argument("--macro-step", type=int, default=Args.macro_step)
     p.add_argument("--eval-every", type=int, default=Args.eval_every)
     p.add_argument("--no-save-model", action="store_false", dest="save_model")

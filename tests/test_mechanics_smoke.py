@@ -53,7 +53,7 @@ def test_wall_breach():
     assert n_walls_before >= 1 and n_walls_after == n_walls_before - 1, (
         "breach should destroy exactly one adjacent wall"
     )
-    assert env.alarm >= 29.9, f"breach alarm should jump ~30, got {env.alarm}"
+    assert env.alarm >= 9.9, f"breach alarm should jump ~10, got {env.alarm}"
     print(f"  wall breach OK (alarm -> {env.alarm:.0f})")
 
 

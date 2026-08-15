@@ -141,7 +141,7 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
                             "active_experts",
                             len(getattr(policy, "experts", [None] * 8)),
                         )
-                        _, _, _, _, chosen_expert = policy.get_action_and_value(
+                        _, _, _, _, chosen_expert, _ = policy.get_action_and_value(
                             obs_t, state_t, role_t, mask_t, active_k
                         )
                         current_goals[a] = chosen_expert
@@ -162,7 +162,7 @@ def run_episode(env, policies, device, greedy=True, seed=None, noop_agent=None):
                             )
                             actions[a] = int(masked_logits.argmax(dim=-1).item())
                         else:
-                            action, _, _, _, _ = policy.get_action_and_value(
+                            action, _, _, _, _, _ = policy.get_action_and_value(
                                 obs_t,
                                 state_t,
                                 role_t,

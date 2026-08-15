@@ -142,7 +142,7 @@ NEUTRALIZE_TURNS = 8  # turns a guard stays neutralized
 # M1 mechanics (REV-5/6/8/9): wall breach, extractor burden, guard AI,
 # delayed alarm
 # ---------------------------------------------------------------------------
-ALARM_BREACH = 30.0  # instant global-alarm cost of a wall breach
+ALARM_BREACH = 10.0  # instant global-alarm cost of a wall breach
 BREACH_RADIUS = 10  # guards within this range repath to the breach
 EXTRACTOR_BURDEN_TURNS = 1  # loot-carrying extractor moves 1 tile per N turns
 ALARM_NEUTRALIZE_DELAY = 15  # turns until command notices a missing guard

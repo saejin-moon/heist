@@ -935,12 +935,17 @@ class CoopAgent(nn.Module):
         if action is None:
             action = probs.sample()
 
+        true_expert = (
+            torch.argmax(values_stack, dim=1) if expert_idx is None else expert_idx
+        )
+
         return (
             action,
             probs.log_prob(action),
             probs.entropy(),
             chosen_values,
             chosen_expert,
+            true_expert,
         )
 
 
@@ -1027,4 +1032,124 @@ class CoopTopDownAgent(nn.Module):
         total_logprob = manager_logprob + probs.log_prob(action)
         total_entropy = manager_entropy + probs.entropy()
 
-        return action, total_logprob, total_entropy, manager_value, chosen_expert
+        return (
+            action,
+            total_logprob,
+            total_entropy,
+            manager_value,
+            chosen_expert,
+            chosen_expert,
+        )
+
+
+class EcoopExpert(nn.Module):
+    def __init__(self, state_dim, hidden_dim=HIDDEN_DIM):
+        super().__init__()
+        self.state_dim = state_dim
+        self.hidden_dim = hidden_dim
+        self.reset()
+
+    def reset(self, device=None):
+        if device is None:
+            try:
+                device = next(self.parameters()).device
+            except (StopIteration, RuntimeError):
+                device = torch.device("cpu")
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(LOCAL_INPUT_DIM, self.hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(self.hidden_dim, self.hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(self.hidden_dim, ACTION_DIM), std=0.01),
+        )
+        self.critic = nn.Sequential(
+            layer_init(nn.Linear(self.state_dim + 4, self.hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(self.hidden_dim, self.hidden_dim)),
+            nn.Tanh(),
+            layer_init(nn.Linear(self.hidden_dim, 1), std=1e-5),
+        )
+        self.to(device)
+
+
+class EcoopAgent(nn.Module):
+    def __init__(self, state_dim, max_experts=8, hidden_dim=HIDDEN_DIM):
+        super().__init__()
+        self.max_experts = max_experts
+        self.experts = nn.ModuleList(
+            [EcoopExpert(state_dim, hidden_dim) for _ in range(max_experts)]
+        )
+
+    def get_action_and_value(
+        self,
+        obs,
+        state,
+        role_id,
+        action_mask,
+        active_experts,
+        previous_expert,
+        grace_period_expert=None,
+        action=None,
+        expert_idx=None,
+        epsilon_abs=0.05,
+        epsilon_rel=0.05,
+    ):
+        B = obs.shape[0]
+        x_actor = torch.cat(
+            [torch.flatten(obs, start_dim=1).float(), role_id.float()], dim=1
+        )
+        x_critic = torch.cat([state, role_id.float()], dim=1)
+
+        all_logits = []
+        all_values = []
+        for k in range(active_experts):
+            all_logits.append(self.experts[k].actor(x_actor))
+            all_values.append(self.experts[k].critic(x_critic))
+
+        logits_stack = torch.stack(all_logits, dim=1)
+        values_stack = torch.stack(all_values, dim=1).squeeze(-1)
+
+        if expert_idx is not None:
+            chosen_expert = expert_idx
+        elif grace_period_expert is not None and grace_period_expert < active_experts:
+            chosen_expert = torch.full(
+                (B,), grace_period_expert, device=obs.device, dtype=torch.long
+            )
+        else:
+            rival_expert = torch.argmax(values_stack, dim=1)
+            batch_indices = torch.arange(B, device=obs.device)
+            current_values = values_stack[batch_indices, previous_expert]
+            rival_values = values_stack[batch_indices, rival_expert]
+
+            threshold = current_values + torch.clamp(
+                epsilon_abs * torch.ones_like(current_values), min=0.0
+            )
+            threshold = torch.max(
+                threshold, current_values + epsilon_rel * torch.abs(current_values)
+            )
+
+            switch_mask = rival_values > threshold
+            chosen_expert = torch.where(switch_mask, rival_expert, previous_expert)
+
+        batch_indices = torch.arange(B, device=obs.device)
+        chosen_logits = logits_stack[batch_indices, chosen_expert]
+        chosen_values = values_stack[batch_indices, chosen_expert].unsqueeze(-1)
+
+        masked_logits = chosen_logits.masked_fill(action_mask != 1, -1e9)
+        probs = Categorical(logits=masked_logits)
+
+        if action is None:
+            action = probs.sample()
+
+        true_expert = (
+            torch.argmax(values_stack, dim=1) if expert_idx is None else expert_idx
+        )
+
+        return (
+            action,
+            probs.log_prob(action),
+            probs.entropy(),
+            chosen_values,
+            chosen_expert,
+            true_expert,
+        )

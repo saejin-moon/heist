@@ -84,14 +84,15 @@ def test_coop_agent_shapes():
     mask = torch.ones(2, ACTION_DIM)
     state = torch.zeros(2, STATE_DIM)
 
-    action, log_prob, entropy, value, chosen_expert = agent.get_action_and_value(
-        obs, state, role, mask, active_experts=3
+    action, log_prob, entropy, value, chosen_expert, true_expert = (
+        agent.get_action_and_value(obs, state, role, mask, active_experts=3)
     )
     assert action.shape == (2,)
     assert log_prob.shape == (2,)
     assert entropy.shape == (2,)
     assert value.shape == (2, 1)
     assert chosen_expert.shape == (2,)
+    assert true_expert.shape == (2,)
 
 
 def test_qmix_mixing_network():
